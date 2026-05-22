@@ -1,0 +1,106 @@
+import SwiftUI
+import SwiftData
+import QuickLook
+import UniformTypeIdentifiers
+
+struct DocumentDetailView: View {
+    @Bindable var document: Document
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var previewURL: URL?
+    @State private var showingFilePicker = false
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Description") {
+                    TextField("Description", text: Binding(
+                        get: { document.documentDescription ?? "" },
+                        set: { document.documentDescription = $0.isEmpty ? nil : $0 }
+                    ), axis: .vertical)
+                }
+
+                Section("Attachments (\(document.attachments.count))") {
+                    ForEach(document.attachments) { attachment in
+                        AttachmentRow(attachment: attachment, onPreview: { previewURL = attachment.fileURL })
+                    }
+                    .onDelete { offsets in
+                        for i in offsets { modelContext.delete(document.attachments[i]) }
+                    }
+                    Button { showingFilePicker = true } label: {
+                        Label("Add File", systemImage: "plus")
+                    }
+                }
+            }
+            .navigationTitle("Document")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
+            }
+        }
+        .quickLookPreview($previewURL)
+        .fileImporter(isPresented: $showingFilePicker,
+                      allowedContentTypes: [.pdf, .image, .item],
+                      allowsMultipleSelection: true) { result in
+            handleImport(result)
+        }
+        #if os(macOS)
+        .frame(minWidth: 480, minHeight: 400)
+        #endif
+    }
+
+    private func handleImport(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result else { return }
+        for url in urls {
+            guard url.startAccessingSecurityScopedResource() else { continue }
+            defer { url.stopAccessingSecurityScopedResource() }
+            let bookmark = try? url.bookmarkData(options: .withSecurityScope,
+                                                  includingResourceValuesForKeys: nil,
+                                                  relativeTo: nil)
+            let kind: AttachmentKind
+            if url.pathExtension.lowercased() == "pdf" { kind = .pdf }
+            else if ["png","jpg","jpeg","heic","gif","tiff","webp"].contains(url.pathExtension.lowercased()) { kind = .image }
+            else { kind = .other }
+
+            let att = Attachment(fileName: url.lastPathComponent, fileURL: url, kind: kind)
+            att.bookmarkData = bookmark
+            att.fileSizeBytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+            att.document = document
+            modelContext.insert(att)
+            document.attachments.append(att)
+        }
+    }
+}
+
+private struct AttachmentRow: View {
+    let attachment: Attachment
+    let onPreview: () -> Void
+
+    private var icon: String {
+        switch attachment.kind {
+        case .pdf:   "doc.richtext"
+        case .image: "photo"
+        case .other: "doc"
+        }
+    }
+
+    var body: some View {
+        HStack {
+            Image(systemName: icon)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(attachment.fileName)
+                if let size = attachment.fileSizeBytes {
+                    Text(ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Button(action: onPreview) {
+                Image(systemName: "eye")
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}

@@ -1,66 +1,60 @@
-//
-//  ContentView.swift
-//  gbpDiary
-//
-//  Created by Gregory Brian Poole on 22/5/2026.
-//
-
 import SwiftUI
 import SwiftData
 
+enum AppTab: String, CaseIterable {
+    case day = "Day"
+    case week = "Week"
+    case timesheet = "Timesheet"
+    case projects = "Projects"
+    case people = "People"
+}
+
 struct ContentView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query private var items: [Item]
+    @State private var selectedTab: AppTab = .day
+    @State private var currentDate: Date = Calendar.current.startOfDay(for: Date())
 
     var body: some View {
-        NavigationSplitView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))")
-                    } label: {
-                        Text(item.timestamp, format: Date.FormatStyle(date: .numeric, time: .standard))
-                    }
-                }
-                .onDelete(perform: deleteItems)
+        Group {
+            switch selectedTab {
+            case .day:        DayView(date: currentDate)
+            case .week:       WeekView(weekOf: currentDate)
+            case .timesheet:  TimesheetView()
+            case .projects:   ProjectsView()
+            case .people:     PeopleView()
             }
-#if os(macOS)
-            .navigationSplitViewColumnWidth(min: 180, ideal: 200)
-#endif
-            .toolbar {
-#if os(iOS)
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-#endif
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
+        }
+        .toolbar {
+            #if os(macOS)
+            if selectedTab == .day {
+                ToolbarItemGroup(placement: .navigation) {
+                    Button { stepDay(-1) } label: { Image(systemName: "chevron.left") }
+                    Button { stepDay(1) }  label: { Image(systemName: "chevron.right") }
+                    Button("Today") { currentDate = Calendar.current.startOfDay(for: Date()) }
+                        .disabled(Calendar.current.isDateInToday(currentDate))
                 }
             }
-        } detail: {
-            Text("Select an item")
+            ToolbarItem(placement: .principal) {
+                Picker("", selection: $selectedTab) {
+                    ForEach(AppTab.allCases, id: \.self) { tab in
+                        Text(tab.rawValue).tag(tab)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(minWidth: 380)
+            }
+            #endif
         }
     }
 
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(timestamp: Date())
-            modelContext.insert(newItem)
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            for index in offsets {
-                modelContext.delete(items[index])
-            }
-        }
+    private func stepDay(_ delta: Int) {
+        currentDate = Calendar.current.date(byAdding: .day, value: delta, to: currentDate) ?? currentDate
     }
 }
 
 #Preview {
     ContentView()
-        .modelContainer(for: Item.self, inMemory: true)
+        .modelContainer(for: [Task.self, DayRecord.self, Project.self,
+                               Person.self, Institution.self, Minutes.self,
+                               Attachment.self, Document.self, Note.self],
+                        inMemory: true)
 }

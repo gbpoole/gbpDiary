@@ -1,10 +1,3 @@
-//
-//  gbpDiaryApp.swift
-//  gbpDiary
-//
-//  Created by Gregory Brian Poole on 22/5/2026.
-//
-
 import SwiftUI
 import SwiftData
 
@@ -12,12 +5,19 @@ import SwiftData
 struct gbpDiaryApp: App {
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            Item.self,
+            Task.self,
+            DayRecord.self,
+            Project.self,
+            Person.self,
+            Institution.self,
+            Minutes.self,
+            Attachment.self,
+            Document.self,
+            Note.self,
         ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            return try ModelContainer(for: schema, configurations: [config])
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
         }
@@ -28,5 +28,17 @@ struct gbpDiaryApp: App {
             ContentView()
         }
         .modelContainer(sharedModelContainer)
+        .commands {
+            AppCommands()
+        }
+    }
+}
+
+struct AppCommands: Commands {
+    var body: some Commands {
+        CommandMenu("Task") {
+            Button("New Task") {}
+                .keyboardShortcut("n", modifiers: .command)
+        }
     }
 }

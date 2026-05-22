@@ -1,0 +1,48 @@
+# Xcode build output
+build/
+DerivedData/
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+
+# Xcode per-user settings (keybindings, window layout, breakpoints)
+xcuserdata/
+*.xcuserstate
+
+# Xcode Previews
+.build/
+
+# Swift Package Manager
+.swiftpm/
+.build/
+Packages/
+Package.resolved
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+*.icloud
+
+# Instruments
+*.trace
+
+# App bundles produced locally
+*.app
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# TestFlight / App Store archives
+*.xcarchive
+
+# Fastlane (if added later)
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/**/*.png
+fastlane/test_output
+
+# Secrets / local config (never commit)
+*.env
+Secrets.swift
+Config.local.swift
