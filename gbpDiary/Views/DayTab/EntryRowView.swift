@@ -63,11 +63,6 @@ struct EntryRowView: View {
                     if let move = onMoveToNext { move(); return .handled }
                     return .ignored
                 }
-                .onKeyPress(.delete, phases: .down) { _ in
-                    guard entry.text.isEmpty, let del = onDeleteEmpty else { return .ignored }
-                    del()
-                    return .handled
-                }
         }
         .padding(.horizontal)
         .padding(.vertical, 4)
@@ -119,11 +114,6 @@ struct EntryRowView: View {
                         if let move = onMoveToNext { move(); return .handled }
                         return .ignored
                     }
-                    .onKeyPress(.delete, phases: .down) { _ in
-                        guard entry.text.isEmpty, let del = onDeleteEmpty else { return .ignored }
-                        del()
-                        return .handled
-                    }
             }
             Spacer()
         }
@@ -150,11 +140,6 @@ struct EntryRowView: View {
                 .onKeyPress(.downArrow, phases: .down) { _ in
                     if let move = onMoveToNext { move(); return .handled }
                     return .ignored
-                }
-                .onKeyPress(.delete, phases: .down) { _ in
-                    guard entry.text.isEmpty, let del = onDeleteEmpty else { return .ignored }
-                    del()
-                    return .handled
                 }
             if let dur = entry.duration {
                 Chip(label: dur.displayString, color: .orange)

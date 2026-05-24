@@ -1,6 +1,32 @@
 import SwiftUI
 import SwiftData
 
+// MARK: - NSEvent-level delete key monitor
+
+// onKeyPress(.delete) cannot intercept ⌫ in a TextField because NSTextField's
+// deleteBackward: action fires inside interpretKeyEvents:, which SwiftUI runs
+// after onKeyPress is consulted but before the closure can suppress it.
+// A local NSEvent monitor fires before any responder touches the event.
+#if os(macOS)
+private final class DeleteKeyMonitor: @unchecked Sendable {
+    private var monitor: Any?
+    var action: (() -> Bool)?
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 51 else { return event }  // 51 = ⌫
+            let handled = MainActor.assumeIsolated { self?.action?() ?? false }
+            return handled ? nil : event
+        }
+    }
+
+    func stop() {
+        if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
+    }
+}
+#endif
+
 // MARK: - Shared day content (used by DayView and WeekView)
 
 struct DayPageContent: View {
@@ -15,6 +41,9 @@ struct DayPageContent: View {
     @State private var showingAddTask = false
     @State private var showingAddTimesheet = false
     @State private var editingTask: Task?
+    #if os(macOS)
+    @State private var deleteMonitor = DeleteKeyMonitor()
+    #endif
 
     @Query(sort: \Project.name) private var projects: [Project]
     @Query(sort: \Minutes.meetingAt, order: .reverse) private var allMinutes: [Minutes]
@@ -152,6 +181,13 @@ struct DayPageContent: View {
                 pendingFocusId = nil
             }
         }
+        #if os(macOS)
+        .onAppear { deleteMonitor.start() }
+        .onDisappear { deleteMonitor.stop() }
+        .onChange(of: focusedEntryId) { _, newId in
+            updateDeleteAction(for: newId)
+        }
+        #endif
     }
 
     // MARK: - Add entry bar
@@ -221,6 +257,23 @@ struct DayPageContent: View {
         if let id = focusingId { pendingFocusId = id }
         modelContext.delete(entry)
     }
+
+    #if os(macOS)
+    private func updateDeleteAction(for focusId: UUID?) {
+        guard let focusId,
+              let idx = entries.firstIndex(where: { $0.id == focusId }) else {
+            deleteMonitor.action = nil
+            return
+        }
+        let entry = entries[idx]
+        let prevId = idx > 0 ? entries[idx - 1].id : nil
+        deleteMonitor.action = {
+            guard entry.text.isEmpty else { return false }
+            deleteEntry(entry, focusingId: prevId)
+            return true
+        }
+    }
+    #endif
 
     private func addMeeting() {
         let record = findOrCreateDayRecord()
