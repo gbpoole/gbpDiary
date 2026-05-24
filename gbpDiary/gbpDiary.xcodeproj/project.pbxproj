@@ -27,7 +27,6 @@
 		EA82C9B22FC0B46D00FCDE26 /* gbpDiary.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = gbpDiary.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		EA82C9C12FC0B46F00FCDE26 /* gbpDiaryTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = gbpDiaryTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		EA82C9CB2FC0B46F00FCDE26 /* gbpDiaryUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = gbpDiaryUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		EA82C9FD2FC121FD00FCDE26 /* gbpDiary.xcodeproj */ = {isa = PBXFileReference; lastKnownFileType = "wrapper.pb-project"; path = gbpDiary.xcodeproj; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -89,13 +88,6 @@
 				EA82C9B22FC0B46D00FCDE26 /* gbpDiary.app */,
 				EA82C9C12FC0B46F00FCDE26 /* gbpDiaryTests.xctest */,
 				EA82C9CB2FC0B46F00FCDE26 /* gbpDiaryUITests.xctest */,
-			);
-			name = Products;
-			sourceTree = "<group>";
-		};
-		EA82C9FF2FC121FD00FCDE26 /* Products */ = {
-			isa = PBXGroup;
-			children = (
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -206,12 +198,6 @@
 			preferredProjectObjectVersion = 77;
 			productRefGroup = EA82C9B32FC0B46D00FCDE26 /* Products */;
 			projectDirPath = "";
-			projectReferences = (
-				{
-					ProductGroup = EA82C9FF2FC121FD00FCDE26 /* Products */;
-					ProjectRef = EA82C9FD2FC121FD00FCDE26 /* gbpDiary.xcodeproj */;
-				},
-			);
 			projectRoot = "";
 			targets = (
 				EA82C9B12FC0B46D00FCDE26 /* gbpDiary */,

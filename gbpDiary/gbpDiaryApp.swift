@@ -7,6 +7,7 @@ struct gbpDiaryApp: App {
         let schema = Schema([
             Task.self,
             DayRecord.self,
+            DayEntry.self,
             Project.self,
             Person.self,
             Institution.self,

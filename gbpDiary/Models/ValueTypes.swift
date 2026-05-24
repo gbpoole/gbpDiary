@@ -54,6 +54,27 @@ struct Duration: Codable, Equatable {
     }
 }
 
+enum DayEntryKind: String, Codable {
+    case note
+    case task
+    case meeting
+    case timesheet
+}
+
+// MARK: - JSON helpers for array attributes
+// SwiftData/CoreData cannot materialize Array<String> or Array<Date> at runtime.
+// Store them as JSON strings and expose via computed properties instead.
+
+func jsonEncode<T: Encodable>(_ value: T) -> String {
+    let data = (try? JSONEncoder().encode(value)) ?? Data()
+    return String(data: data, encoding: .utf8) ?? "[]"
+}
+
+func jsonDecode<T: Decodable>(_ type: T.Type, _ json: String) -> T? {
+    guard let data = json.data(using: .utf8) else { return nil }
+    return try? JSONDecoder().decode(type, from: data)
+}
+
 struct SourceContext: Codable, Equatable {
     var externalSourceId: String?
     var sourceRecordId: String?

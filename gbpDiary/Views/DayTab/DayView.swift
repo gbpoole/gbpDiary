@@ -1,39 +1,58 @@
 import SwiftUI
 import SwiftData
 
-struct DayView: View {
+// MARK: - Shared day content (used by DayView and WeekView)
+
+struct DayPageContent: View {
     let date: Date
+    var dayRecord: DayRecord?
+    let allTasks: [Task]
+    var showBacklog: Bool = true
 
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \Task.createdAt) private var allTasks: [Task]
+    @FocusState private var focusedEntryId: UUID?
+    @State private var pendingFocusId: UUID?
     @State private var showingAddTask = false
+    @State private var showingAddTimesheet = false
     @State private var editingTask: Task?
 
-    private var dayStart: Date { Calendar.current.startOfDay(for: date) }
-    private var dayEnd: Date { Calendar.current.date(byAdding: .day, value: 1, to: dayStart)! }
+    @Query(sort: \Project.name) private var projects: [Project]
+    @Query(sort: \Minutes.meetingAt, order: .reverse) private var allMinutes: [Minutes]
 
-    var scheduled: [Task] {
+    private var dayStart: Date { Calendar.current.startOfDay(for: date) }
+    private var dayEnd: Date   { Calendar.current.date(byAdding: .day, value: 1, to: dayStart)! }
+
+    private var entries: [DayEntry] {
+        (dayRecord?.entries ?? []).sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    private var taskEntryIds: Set<PersistentIdentifier> {
+        Set(entries.compactMap { $0.task?.persistentModelID })
+    }
+
+    private var scheduled: [Task] {
         allTasks.filter {
             guard let s = $0.scheduledAt else { return false }
             return s >= dayStart && s < dayEnd && $0.status == .open
+                && !taskEntryIds.contains($0.persistentModelID)
         }
     }
 
-    var followUpsDue: [Task] {
+    private var followUpsDue: [Task] {
         allTasks.filter {
             guard let fu = $0.followUpAt else { return false }
             return fu < dayEnd && $0.status == .followUpPending
         }
     }
 
-    var backlog: [Task] {
+    private var backlog: [Task] {
         allTasks.filter {
             $0.status == .open && $0.parent == nil &&
             ($0.scheduledAt == nil || $0.scheduledAt! < dayStart)
         }
     }
 
-    var completedToday: [Task] {
+    private var completedToday: [Task] {
         allTasks.filter {
             guard let c = $0.completedAt else { return false }
             return c >= dayStart && c < dayEnd
@@ -41,24 +60,36 @@ struct DayView: View {
     }
 
     var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                dayHeader
-
-                if !scheduled.isEmpty {
-                    SectionHeader(title: "Scheduled")
-                    ForEach(scheduled) { task in
-                        TaskRowView(task: task, onEdit: { editingTask = task })
-                    }
+        VStack(alignment: .leading, spacing: 0) {
+            // Free-form entries (notes, tasks added to day, meetings, timesheet)
+            if !entries.isEmpty {
+                ForEach(entries) { entry in
+                    EntryRowView(
+                        entry: entry,
+                        focusedEntryId: $focusedEntryId,
+                        onAddNoteAfter: entry.kind == .note ? { insertNoteAfter(entry) } : nil
+                    )
                 }
+            }
 
-                if !followUpsDue.isEmpty {
-                    SectionHeader(title: "Follow-ups Due")
-                    ForEach(followUpsDue) { task in
-                        TaskRowView(task: task, onEdit: { editingTask = task })
-                    }
+            addEntryBar
+
+            // Auto-queried task sections (tasks not already in entries)
+            if !scheduled.isEmpty {
+                SectionHeader(title: "Scheduled")
+                ForEach(scheduled) { task in
+                    TaskRowView(task: task, onEdit: { editingTask = task })
                 }
+            }
 
+            if !followUpsDue.isEmpty {
+                SectionHeader(title: "Follow-ups Due")
+                ForEach(followUpsDue) { task in
+                    TaskRowView(task: task, onEdit: { editingTask = task })
+                }
+            }
+
+            if showBacklog {
                 SectionHeader(title: "Backlog")
                 if backlog.isEmpty {
                     Text("Nothing in the backlog.")
@@ -70,36 +101,153 @@ struct DayView: View {
                         TaskRowView(task: task, onEdit: { editingTask = task })
                     }
                 }
-
-                if !completedToday.isEmpty {
-                    SectionHeader(title: "Completed Today")
-                    ForEach(completedToday) { task in
-                        TaskRowView(task: task, onEdit: { editingTask = task })
-                    }
-                }
-
-                QuickAddBar(onAdd: { showingAddTask = true })
-                    .padding(.top, 8)
             }
-            .padding(.vertical)
+
+            if !completedToday.isEmpty {
+                SectionHeader(title: "Completed Today")
+                ForEach(completedToday) { task in
+                    TaskRowView(task: task, onEdit: { editingTask = task })
+                }
+            }
+
+            if entries.isEmpty && scheduled.isEmpty && followUpsDue.isEmpty &&
+               (!showBacklog || backlog.isEmpty) && completedToday.isEmpty {
+                Text("Nothing here.")
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal)
+                    .padding(.vertical, 6)
+            }
         }
         .sheet(isPresented: $showingAddTask) {
-            TaskEditorSheet(task: nil, defaultDate: date)
+            TaskEditorSheet(task: nil, defaultDate: date) { newTask in
+                let record = findOrCreateDayRecord()
+                let entry = DayEntry(kind: .task, sortOrder: nextSortOrder(record))
+                entry.task = newTask
+                entry.dayRecord = record
+                modelContext.insert(entry)
+            }
+        }
+        .sheet(isPresented: $showingAddTimesheet) {
+            AddTimesheetSheet(date: date, projects: projects) { text, duration, project in
+                let record = findOrCreateDayRecord()
+                let entry = DayEntry(kind: .timesheet, text: text, sortOrder: nextSortOrder(record))
+                entry.duration = duration
+                entry.project = project
+                entry.dayRecord = record
+                modelContext.insert(entry)
+            }
         }
         .sheet(item: $editingTask) { task in
             TaskEditorSheet(task: task, defaultDate: date)
         }
+        .onChange(of: pendingFocusId) { _, newId in
+            if let id = newId {
+                focusedEntryId = id
+                pendingFocusId = nil
+            }
+        }
     }
 
-    private var dayHeader: some View {
-        Text(date, format: .dateTime.weekday(.wide).day().month(.wide).year())
-            .font(.title2.bold())
-            .padding(.horizontal)
-            .padding(.bottom, 4)
+    // MARK: - Add entry bar
+
+    private var addEntryBar: some View {
+        HStack(spacing: 4) {
+            Button(action: addNote) {
+                Label("Add Note", systemImage: "plus")
+                    .labelStyle(.titleAndIcon)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Menu {
+                Button("Note")      { addNote() }
+                Button("Task")      { showingAddTask = true }
+                Button("Meeting")   { addMeeting() }
+                Button("Timesheet") { showingAddTimesheet = true }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.caption)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        }
+        .padding(.horizontal)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+    }
+
+    // MARK: - Entry creation helpers
+
+    private func findOrCreateDayRecord() -> DayRecord {
+        if let existing = dayRecord { return existing }
+        let record = DayRecord(date: date)
+        modelContext.insert(record)
+        return record
+    }
+
+    private func nextSortOrder(_ record: DayRecord) -> Int {
+        (record.entries.map(\.sortOrder).max() ?? -1) + 1
+    }
+
+    private func addNote() {
+        let record = findOrCreateDayRecord()
+        let entry = DayEntry(kind: .note, text: "", sortOrder: nextSortOrder(record))
+        entry.dayRecord = record
+        modelContext.insert(entry)
+        pendingFocusId = entry.id
+    }
+
+    private func insertNoteAfter(_ current: DayEntry) {
+        let record = findOrCreateDayRecord()
+        for e in record.entries where e.sortOrder > current.sortOrder {
+            e.sortOrder += 1
+        }
+        let entry = DayEntry(kind: .note, text: "", sortOrder: current.sortOrder + 1)
+        entry.dayRecord = record
+        modelContext.insert(entry)
+        pendingFocusId = entry.id
+    }
+
+    private func addMeeting() {
+        let record = findOrCreateDayRecord()
+        let entry = DayEntry(kind: .meeting, text: "", sortOrder: nextSortOrder(record))
+        entry.dayRecord = record
+        modelContext.insert(entry)
     }
 }
 
-private struct SectionHeader: View {
+// MARK: - Day tab root view
+
+struct DayView: View {
+    let date: Date
+
+    @Query(sort: \Task.createdAt) private var allTasks: [Task]
+    @Query private var allDayRecords: [DayRecord]
+
+    private var dayRecord: DayRecord? {
+        allDayRecords.first { Calendar.current.isDate($0.date, inSameDayAs: date) }
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(date, format: .dateTime.weekday(.wide).day().month(.wide).year())
+                    .font(.title2.bold())
+                    .padding(.horizontal)
+                    .padding(.bottom, 4)
+
+                DayPageContent(date: date, dayRecord: dayRecord, allTasks: allTasks)
+            }
+            .padding(.vertical)
+        }
+    }
+}
+
+// MARK: - Shared sub-views
+
+struct SectionHeader: View {
     let title: String
 
     var body: some View {
@@ -112,23 +260,78 @@ private struct SectionHeader: View {
     }
 }
 
-private struct QuickAddBar: View {
-    let onAdd: () -> Void
+// MARK: - Add timesheet sheet
+
+private struct AddTimesheetSheet: View {
+    let date: Date
+    let projects: [Project]
+    let onSave: (String, Duration?, Project?) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+    @State private var durationText = ""
+    @State private var durationError = false
+    @State private var selectedProject: Project?
 
     var body: some View {
-        HStack(spacing: 8) {
-            Button("+ Task", action: onAdd)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
+        NavigationStack {
+            Form {
+                Section("Time Entry") {
+                    TextField("Description", text: $text)
+                    HStack {
+                        TextField("Duration (e.g. 1.5h, 2d)", text: $durationText)
+                            .onChange(of: durationText) { _, _ in durationError = false }
+                        if durationError {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .foregroundStyle(.red)
+                        }
+                    }
+                    Text("Units: h (hours), d (days ≈7.6h), w (weeks ≈38h)")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Section("Links") {
+                    Picker("Project", selection: $selectedProject) {
+                        Text("None").tag(Optional<Project>.none)
+                        ForEach(projects) { p in
+                            Text(p.name).tag(Optional(p))
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Add Timesheet Entry")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") { save() }
+                        .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty && durationText.isEmpty)
+                }
+            }
         }
-        .padding(.horizontal)
-        .padding(.top, 8)
+        #if os(macOS)
+        .frame(minWidth: 400, minHeight: 280)
+        #endif
+    }
+
+    private func save() {
+        var parsed: Duration?
+        let trimmed = durationText.trimmingCharacters(in: .whitespaces)
+        if !trimmed.isEmpty {
+            guard let d = Duration.parse(trimmed) else {
+                durationError = true
+                return
+            }
+            parsed = d
+        }
+        onSave(text, parsed, selectedProject)
+        dismiss()
     }
 }
 
 #Preview {
     DayView(date: Date())
-        .modelContainer(for: [Task.self, DayRecord.self, Project.self,
+        .modelContainer(for: [Task.self, DayRecord.self, DayEntry.self, Project.self,
                                Person.self, Institution.self, Minutes.self],
                         inMemory: true)
         .frame(width: 600, height: 700)

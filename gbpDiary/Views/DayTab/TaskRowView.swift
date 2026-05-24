@@ -6,13 +6,14 @@ struct TaskRowView: View {
     let onEdit: () -> Void
 
     @Environment(\.modelContext) private var modelContext
+    @State private var showingFollowUpPicker = false
+    @State private var followUpPickerDate = Date()
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .center, spacing: 10) {
             statusButton
-            VStack(alignment: .leading, spacing: 3) {
-                titleRow
-                metaRow
+            VStack(alignment: .leading, spacing: 0) {
+                contentRow
                 if !task.children.isEmpty {
                     childrenList
                 }
@@ -22,6 +23,12 @@ struct TaskRowView: View {
         .padding(.vertical, 5)
         .contentShape(Rectangle())
         .contextMenu { contextMenuItems }
+        .sheet(isPresented: $showingFollowUpPicker) {
+            FollowUpDateSheet(
+                initialDate: task.followUpAt ?? Calendar.current.date(byAdding: .day, value: 1, to: .now)!,
+                onSave: { date in task.setFollowUp(date: date) }
+            )
+        }
     }
 
     private var statusButton: some View {
@@ -32,7 +39,6 @@ struct TaskRowView: View {
                 .frame(width: 22, height: 22)
         }
         .buttonStyle(.plain)
-        .padding(.top, 1)
     }
 
     private var statusIcon: String {
@@ -53,23 +59,12 @@ struct TaskRowView: View {
         }
     }
 
-    private var titleRow: some View {
-        HStack(spacing: 6) {
+    private var contentRow: some View {
+        HStack(alignment: .center, spacing: 6) {
             Text(task.title)
+                .lineLimit(1)
                 .strikethrough(task.status == .cancelled)
                 .foregroundStyle(task.status == .cancelled ? .secondary : .primary)
-            Spacer()
-            Button(action: onEdit) {
-                Image(systemName: "pencil")
-                    .foregroundStyle(.tertiary)
-                    .font(.caption)
-            }
-            .buttonStyle(.plain)
-        }
-    }
-
-    private var metaRow: some View {
-        HStack(spacing: 6) {
             if let project = task.project {
                 Chip(label: project.name, color: .blue)
             }
@@ -87,6 +82,13 @@ struct TaskRowView: View {
                 Chip(label: "↻ \(fu.formatted(.dateTime.day().month()))",
                      color: overdue ? .red : .orange)
             }
+            Spacer()
+            Button(action: onEdit) {
+                Image(systemName: "pencil")
+                    .foregroundStyle(.tertiary)
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -103,15 +105,27 @@ struct TaskRowView: View {
     private var contextMenuItems: some View {
         Button("Edit…", action: onEdit)
         Divider()
+        if task.status != .open {
+            Button("Open") {
+                switch task.status {
+                case .completed:       task.unmarkCompleted()
+                case .cancelled:       task.unmarkCancelled()
+                case .followUpPending: task.unmarkCompleted()
+                case .open: break
+                }
+            }
+        }
         if task.status != .completed {
             Button("Mark Complete") { task.markCompleted() }
-        } else {
-            Button("Unmark Complete") { task.unmarkCompleted() }
+        }
+        Button("Set Follow-up Date…") {
+            followUpPickerDate = task.followUpAt
+                ?? Calendar.current.date(byAdding: .day, value: 1,
+                                         to: Calendar.current.startOfDay(for: .now))!
+            showingFollowUpPicker = true
         }
         if task.status != .cancelled {
             Button("Cancel Task") { task.markCancelled() }
-        } else {
-            Button("Uncancel") { task.unmarkCancelled() }
         }
         Divider()
         Button("Delete", role: .destructive) {
@@ -121,11 +135,50 @@ struct TaskRowView: View {
 
     private func toggleStatus() {
         switch task.status {
-        case .open:            task.markCompleted()
-        case .completed:       task.unmarkCompleted()
-        case .cancelled:       task.unmarkCancelled()
-        case .followUpPending: task.markFollowUpDone()
+        case .open:
+            task.markCompleted()
+        case .completed:
+            let tomorrow = Calendar.current.date(
+                byAdding: .day, value: 1,
+                to: Calendar.current.startOfDay(for: .now))!
+            task.setFollowUp(date: tomorrow)
+        case .followUpPending:
+            task.markCancelled()
+        case .cancelled:
+            task.unmarkCancelled()
         }
+    }
+}
+
+private struct FollowUpDateSheet: View {
+    let initialDate: Date
+    let onSave: (Date) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var selectedDate: Date
+
+    init(initialDate: Date, onSave: @escaping (Date) -> Void) {
+        self.initialDate = initialDate
+        self.onSave = onSave
+        _selectedDate = State(initialValue: initialDate)
+    }
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                DatePicker("Follow-up date", selection: $selectedDate, displayedComponents: .date)
+            }
+            .navigationTitle("Set Follow-up Date")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { onSave(selectedDate); dismiss() }
+                }
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 320, minHeight: 140)
+        #endif
     }
 }
 

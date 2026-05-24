@@ -7,6 +7,7 @@ struct TaskEditorSheet: View {
 
     let task: Task?
     let defaultDate: Date
+    var onTaskCreated: ((Task) -> Void)? = nil
 
     @Query(sort: \Project.name) private var projects: [Project]
     @Query(sort: \Person.name) private var people: [Person]
@@ -119,7 +120,13 @@ struct TaskEditorSheet: View {
                 }
             }
         }
-        .onAppear { populateFromTask() }
+        .onAppear {
+            if task != nil {
+                populateFromTask()
+            } else {
+                scheduledDate = defaultDate
+            }
+        }
         #if os(macOS)
         .frame(minWidth: 480, minHeight: 560)
         #endif
@@ -181,6 +188,7 @@ struct TaskEditorSheet: View {
             newTask.minutes = selectedMinutes
             newTask.tags = tags
             modelContext.insert(newTask)
+            onTaskCreated?(newTask)
         }
         dismiss()
     }

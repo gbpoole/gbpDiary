@@ -121,7 +121,9 @@ Each `@Model` has `@Attribute(.unique) var id: UUID` for stable external identit
 
 ### Swift 6 / strict concurrency
 
-All types are implicitly `@MainActor` (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`). Model mutations happen synchronously on the main actor. Use `Swift.Task { }` (module-qualified) when you need a concurrency task in files that also reference the `Task` model.
+All types are implicitly `@MainActor` (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor`). Model mutations happen synchronously on the main actor.
+
+**`Swift.Task` does not compile** in this module — the app's `@Model final class Task` shadows the concurrency type and the `Swift.` qualifier does not pierce it. Avoid Swift concurrency tasks entirely where possible. For deferred work on the main thread, prefer `.onChange(of:)` to react to state changes after a render cycle rather than using `DispatchQueue` or async/await.
 
 ### Adding new files
 

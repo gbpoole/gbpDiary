@@ -13,11 +13,23 @@ import SwiftData
     var completedAt: Date?
     var cancelledAt: Date?
     var followUpAt: Date?
-    var followedUpHistory: [Date]
-    var tags: [String]
     var createdAt: Date
     var updatedAt: Date
     var sourceContext: SourceContext?
+
+    // Array attributes stored as JSON strings (CoreData cannot materialize Array<T>)
+    var tagsJSON: String
+    var followedUpHistoryJSON: String
+
+    var tags: [String] {
+        get { jsonDecode([String].self, tagsJSON) ?? [] }
+        set { tagsJSON = jsonEncode(newValue) }
+    }
+
+    var followedUpHistory: [Date] {
+        get { jsonDecode([Date].self, followedUpHistoryJSON) ?? [] }
+        set { followedUpHistoryJSON = jsonEncode(newValue) }
+    }
 
     var assignee: Person?
     var project: Project?
@@ -36,8 +48,8 @@ import SwiftData
         self.id = id
         self.title = title
         self.status = status
-        self.followedUpHistory = []
-        self.tags = []
+        self.tagsJSON = "[]"
+        self.followedUpHistoryJSON = "[]"
         self.children = []
         self.createdAt = createdAt
         self.updatedAt = createdAt
@@ -81,7 +93,7 @@ extension Task {
 
     func markFollowUpDone() {
         if let due = followUpAt {
-            followedUpHistory.append(due)
+            followedUpHistory = followedUpHistory + [due]
         }
         followUpAt = nil
         status = .completed

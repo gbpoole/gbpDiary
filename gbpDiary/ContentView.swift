@@ -53,7 +53,7 @@ struct ContentView: View {
 
 #Preview {
     ContentView()
-        .modelContainer(for: [Task.self, DayRecord.self, Project.self,
+        .modelContainer(for: [Task.self, DayRecord.self, DayEntry.self, Project.self,
                                Person.self, Institution.self, Minutes.self,
                                Attachment.self, Document.self, Note.self],
                         inMemory: true)
