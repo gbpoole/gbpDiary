@@ -5,9 +5,14 @@ struct EntryRowView: View {
     @Bindable var entry: DayEntry
     var focusedEntryId: FocusState<UUID?>.Binding
     var onAddNoteAfter: (() -> Void)? = nil
+    var onMoveToPrevious: (() -> Void)? = nil
+    var onMoveToNext: (() -> Void)? = nil
+    var onDeleteEmpty: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var editingTask: Task?
+
+    private static let indentStep: CGFloat = 20
 
     var body: some View {
         Group {
@@ -18,6 +23,15 @@ struct EntryRowView: View {
             case .timesheet: timesheetRow
             }
         }
+        .padding(.leading, CGFloat(entry.indentLevel) * Self.indentStep)
+    }
+
+    private func indent() {
+        entry.indentLevel = min(entry.indentLevel + 1, 6)
+    }
+
+    private func outdent() {
+        entry.indentLevel = max(entry.indentLevel - 1, 0)
     }
 
     // MARK: - Note
@@ -37,6 +51,21 @@ struct EntryRowView: View {
                         return .handled
                     }
                     onAddNoteAfter?()
+                    return .handled
+                }
+                .onKeyPress(.tab, phases: .down) { _ in indent(); return .handled }
+                .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in outdent(); return .handled }
+                .onKeyPress(.upArrow, phases: .down) { _ in
+                    if let move = onMoveToPrevious { move(); return .handled }
+                    return .ignored
+                }
+                .onKeyPress(.downArrow, phases: .down) { _ in
+                    if let move = onMoveToNext { move(); return .handled }
+                    return .ignored
+                }
+                .onKeyPress(.delete, phases: .down) { _ in
+                    guard entry.text.isEmpty, let del = onDeleteEmpty else { return .ignored }
+                    del()
                     return .handled
                 }
         }
@@ -80,6 +109,21 @@ struct EntryRowView: View {
             } else {
                 TextField("Meeting description", text: $entry.text)
                     .textFieldStyle(.plain)
+                    .onKeyPress(.tab, phases: .down) { _ in indent(); return .handled }
+                    .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in outdent(); return .handled }
+                    .onKeyPress(.upArrow, phases: .down) { _ in
+                        if let move = onMoveToPrevious { move(); return .handled }
+                        return .ignored
+                    }
+                    .onKeyPress(.downArrow, phases: .down) { _ in
+                        if let move = onMoveToNext { move(); return .handled }
+                        return .ignored
+                    }
+                    .onKeyPress(.delete, phases: .down) { _ in
+                        guard entry.text.isEmpty, let del = onDeleteEmpty else { return .ignored }
+                        del()
+                        return .handled
+                    }
             }
             Spacer()
         }
@@ -97,6 +141,21 @@ struct EntryRowView: View {
                 .frame(width: 22, height: 22)
             TextField("Description", text: $entry.text)
                 .textFieldStyle(.plain)
+                .onKeyPress(.tab, phases: .down) { _ in indent(); return .handled }
+                .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in outdent(); return .handled }
+                .onKeyPress(.upArrow, phases: .down) { _ in
+                    if let move = onMoveToPrevious { move(); return .handled }
+                    return .ignored
+                }
+                .onKeyPress(.downArrow, phases: .down) { _ in
+                    if let move = onMoveToNext { move(); return .handled }
+                    return .ignored
+                }
+                .onKeyPress(.delete, phases: .down) { _ in
+                    guard entry.text.isEmpty, let del = onDeleteEmpty else { return .ignored }
+                    del()
+                    return .handled
+                }
             if let dur = entry.duration {
                 Chip(label: dur.displayString, color: .orange)
             }

@@ -63,11 +63,17 @@ struct DayPageContent: View {
         VStack(alignment: .leading, spacing: 0) {
             // Free-form entries (notes, tasks added to day, meetings, timesheet)
             if !entries.isEmpty {
-                ForEach(entries) { entry in
+                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                     EntryRowView(
                         entry: entry,
                         focusedEntryId: $focusedEntryId,
-                        onAddNoteAfter: entry.kind == .note ? { insertNoteAfter(entry) } : nil
+                        onAddNoteAfter: entry.kind == .note ? { insertNoteAfter(entry) } : nil,
+                        onMoveToPrevious: index > 0 ? { pendingFocusId = entries[index - 1].id } : nil,
+                        onMoveToNext: index < entries.count - 1 ? { pendingFocusId = entries[index + 1].id } : nil,
+                        onDeleteEmpty: {
+                            let prevId = index > 0 ? entries[index - 1].id : nil
+                            deleteEntry(entry, focusingId: prevId)
+                        }
                     )
                 }
             }
@@ -204,10 +210,16 @@ struct DayPageContent: View {
         for e in record.entries where e.sortOrder > current.sortOrder {
             e.sortOrder += 1
         }
-        let entry = DayEntry(kind: .note, text: "", sortOrder: current.sortOrder + 1)
+        let entry = DayEntry(kind: .note, text: "", sortOrder: current.sortOrder + 1,
+                             indentLevel: current.indentLevel)
         entry.dayRecord = record
         modelContext.insert(entry)
         pendingFocusId = entry.id
+    }
+
+    private func deleteEntry(_ entry: DayEntry, focusingId: UUID?) {
+        if let id = focusingId { pendingFocusId = id }
+        modelContext.delete(entry)
     }
 
     private func addMeeting() {
