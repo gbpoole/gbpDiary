@@ -297,15 +297,8 @@ struct DayView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                Text(date, format: .dateTime.weekday(.wide).day().month(.wide).year())
-                    .font(.title2.bold())
-                    .padding(.horizontal)
-                    .padding(.bottom, 4)
-
-                DayPageContent(date: date, dayRecord: dayRecord, allTasks: allTasks)
-            }
-            .padding(.vertical)
+            DayPageContent(date: date, dayRecord: dayRecord, allTasks: allTasks)
+                .padding(.vertical)
         }
     }
 }
@@ -395,7 +388,7 @@ private struct AddTimesheetSheet: View {
 }
 
 #Preview {
-    DayView(date: Date())
+    DiaryView()
         .modelContainer(for: [Task.self, DayRecord.self, DayEntry.self, Project.self,
                                Person.self, Institution.self, Minutes.self],
                         inMemory: true)

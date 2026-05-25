@@ -2,22 +2,19 @@ import SwiftUI
 import SwiftData
 
 enum AppTab: String, CaseIterable {
-    case day = "Day"
-    case week = "Week"
+    case diary = "Diary"
     case timesheet = "Timesheet"
     case projects = "Projects"
     case people = "People"
 }
 
 struct ContentView: View {
-    @State private var selectedTab: AppTab = .day
-    @State private var currentDate: Date = Calendar.current.startOfDay(for: Date())
+    @State private var selectedTab: AppTab = .diary
 
     var body: some View {
         Group {
             switch selectedTab {
-            case .day:        DayView(date: currentDate)
-            case .week:       WeekView(weekOf: currentDate)
+            case .diary:      DiaryView()
             case .timesheet:  TimesheetView()
             case .projects:   ProjectsView()
             case .people:     PeopleView()
@@ -25,14 +22,6 @@ struct ContentView: View {
         }
         .toolbar {
             #if os(macOS)
-            if selectedTab == .day {
-                ToolbarItemGroup(placement: .navigation) {
-                    Button { stepDay(-1) } label: { Image(systemName: "chevron.left") }
-                    Button { stepDay(1) }  label: { Image(systemName: "chevron.right") }
-                    Button("Today") { currentDate = Calendar.current.startOfDay(for: Date()) }
-                        .disabled(Calendar.current.isDateInToday(currentDate))
-                }
-            }
             ToolbarItem(placement: .principal) {
                 Picker("", selection: $selectedTab) {
                     ForEach(AppTab.allCases, id: \.self) { tab in
@@ -40,14 +29,10 @@ struct ContentView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                .frame(minWidth: 380)
+                .frame(minWidth: 320)
             }
             #endif
         }
-    }
-
-    private func stepDay(_ delta: Int) {
-        currentDate = Calendar.current.date(byAdding: .day, value: delta, to: currentDate) ?? currentDate
     }
 }
 
