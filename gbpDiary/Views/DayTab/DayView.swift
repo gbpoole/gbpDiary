@@ -40,13 +40,11 @@ struct DayPageContent: View {
     @FocusState private var focusedEntryId: UUID?
     @State private var pendingFocusId: UUID?
     @State private var showingAddTask = false
-    @State private var showingAddTimesheet = false
     @State private var editingTask: Task?
     #if os(macOS)
     @State private var deleteMonitor = DeleteKeyMonitor()
     #endif
 
-    @Query(sort: \Project.name) private var projects: [Project]
     @Query(sort: \Minutes.meetingAt, order: .reverse) private var allMinutes: [Minutes]
 
     private var dayStart: Date { Calendar.current.startOfDay(for: date) }
@@ -63,7 +61,7 @@ struct DayPageContent: View {
     private var scheduled: [Task] {
         allTasks.filter {
             guard let s = $0.scheduledAt else { return false }
-            return s >= dayStart && s < dayEnd && $0.status == .open
+            return s >= dayStart && s < dayEnd && ($0.status == .todo || $0.status == .started)
                 && !taskEntryIds.contains($0.persistentModelID)
         }
     }
@@ -77,7 +75,7 @@ struct DayPageContent: View {
 
     private var backlog: [Task] {
         allTasks.filter {
-            $0.status == .open && $0.parent == nil &&
+            ($0.status == .todo || $0.status == .started) && $0.parent == nil &&
             ($0.scheduledAt == nil || $0.scheduledAt! < dayStart)
         }
     }
@@ -166,16 +164,6 @@ struct DayPageContent: View {
                 modelContext.insert(entry)
             }
         }
-        .sheet(isPresented: $showingAddTimesheet) {
-            AddTimesheetSheet(date: date, projects: projects) { text, duration, project in
-                let record = findOrCreateDayRecord()
-                let entry = DayEntry(kind: .timesheet, text: text, sortOrder: nextSortOrder(record))
-                entry.duration = duration
-                entry.project = project
-                entry.dayRecord = record
-                modelContext.insert(entry)
-            }
-        }
         .sheet(item: $editingTask) { task in
             TaskEditorSheet(task: task, defaultDate: date)
         }
@@ -206,10 +194,9 @@ struct DayPageContent: View {
             .controlSize(.small)
 
             Menu {
-                Button("Note")      { addNote() }
-                Button("Task")      { showingAddTask = true }
-                Button("Meeting")   { addMeeting() }
-                Button("Timesheet") { showingAddTimesheet = true }
+                Button("Note")    { addNote() }
+                Button("Task")    { showingAddTask = true }
+                Button("Meeting") { addMeeting() }
             } label: {
                 Image(systemName: "chevron.down")
                     .font(.caption)
@@ -304,9 +291,13 @@ struct DayPageContent: View {
 
     private func addMeeting() {
         let record = findOrCreateDayRecord()
+        let meeting = Minutes(meetingAt: date)
+        modelContext.insert(meeting)
         let entry = DayEntry(kind: .meeting, text: "", sortOrder: nextSortOrder(record))
+        entry.minutes = meeting
         entry.dayRecord = record
         modelContext.insert(entry)
+        pendingFocusId = entry.id
     }
 }
 
@@ -349,7 +340,7 @@ struct DayTaskSidebar: View {
     private var scheduled: [Task] {
         allTasks.filter {
             guard let s = $0.scheduledAt else { return false }
-            return s >= dayStart && s < dayEnd && $0.status == .open
+            return s >= dayStart && s < dayEnd && ($0.status == .todo || $0.status == .started)
                 && !taskEntryIds.contains($0.persistentModelID)
         }
     }
@@ -363,7 +354,7 @@ struct DayTaskSidebar: View {
 
     private var backlog: [Task] {
         allTasks.filter {
-            $0.status == .open && $0.parent == nil &&
+            ($0.status == .todo || $0.status == .started) && $0.parent == nil &&
             ($0.scheduledAt == nil || $0.scheduledAt! < dayStart)
         }
     }
@@ -458,74 +449,6 @@ struct SectionHeader: View {
     }
 }
 
-// MARK: - Add timesheet sheet
-
-private struct AddTimesheetSheet: View {
-    let date: Date
-    let projects: [Project]
-    let onSave: (String, Duration?, Project?) -> Void
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var text = ""
-    @State private var durationText = ""
-    @State private var durationError = false
-    @State private var selectedProject: Project?
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Time Entry") {
-                    TextField("Description", text: $text)
-                    HStack {
-                        TextField("Duration (e.g. 1.5h, 2d)", text: $durationText)
-                            .onChange(of: durationText) { _, _ in durationError = false }
-                        if durationError {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .foregroundStyle(.red)
-                        }
-                    }
-                    Text("Units: h (hours), d (days ≈7.6h), w (weeks ≈38h)")
-                        .font(.caption).foregroundStyle(.secondary)
-                }
-                Section("Links") {
-                    Picker("Project", selection: $selectedProject) {
-                        Text("None").tag(Optional<Project>.none)
-                        ForEach(projects) { p in
-                            Text(p.name).tag(Optional(p))
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Add Timesheet Entry")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Add") { save() }
-                        .disabled(text.trimmingCharacters(in: .whitespaces).isEmpty && durationText.isEmpty)
-                }
-            }
-        }
-        #if os(macOS)
-        .frame(minWidth: 400, minHeight: 280)
-        #endif
-    }
-
-    private func save() {
-        var parsed: Duration?
-        let trimmed = durationText.trimmingCharacters(in: .whitespaces)
-        if !trimmed.isEmpty {
-            guard let d = Duration.parse(trimmed) else {
-                durationError = true
-                return
-            }
-            parsed = d
-        }
-        onSave(text, parsed, selectedProject)
-        dismiss()
-    }
-}
 
 #Preview {
     DiaryView()

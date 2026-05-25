@@ -1,7 +1,8 @@
 import Foundation
 
 enum TaskStatus: String, Codable {
-    case open
+    case todo
+    case started
     case completed
     case cancelled
     case followUpPending
@@ -58,7 +59,6 @@ enum DayEntryKind: String, Codable {
     case note
     case task
     case meeting
-    case timesheet
 }
 
 // MARK: - JSON helpers for array attributes

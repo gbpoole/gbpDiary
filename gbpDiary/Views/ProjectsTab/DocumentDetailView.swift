@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 
 struct DocumentDetailView: View {
     @Bindable var document: Document
+    var asSheet: Bool = false
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
@@ -12,29 +13,49 @@ struct DocumentDetailView: View {
     @State private var showingFilePicker = false
 
     var body: some View {
-        NavigationStack {
-            List {
-                Section("Description") {
-                    TextField("Description", text: Binding(
-                        get: { document.documentDescription ?? "" },
-                        set: { document.documentDescription = $0.isEmpty ? nil : $0 }
-                    ), axis: .vertical)
-                }
+        if asSheet {
+            NavigationStack {
+                coreContent
+            }
+            #if os(macOS)
+            .frame(minWidth: 480, minHeight: 400)
+            #endif
+        } else {
+            coreContent
+        }
+    }
 
-                Section("Attachments (\(document.attachments.count))") {
-                    ForEach(document.attachments) { attachment in
-                        AttachmentRow(attachment: attachment, onPreview: { previewURL = attachment.fileURL })
-                    }
-                    .onDelete { offsets in
-                        for i in offsets { modelContext.delete(document.attachments[i]) }
-                    }
-                    Button { showingFilePicker = true } label: {
-                        Label("Add File", systemImage: "plus")
-                    }
+    @ViewBuilder private var coreContent: some View {
+        List {
+            Section("Summary") {
+                TextField("Summary", text: Binding(
+                    get: { document.summary ?? "" },
+                    set: { document.summary = $0.isEmpty ? nil : $0 }
+                ))
+            }
+
+            Section("Description") {
+                TextField("Description", text: Binding(
+                    get: { document.documentDescription ?? "" },
+                    set: { document.documentDescription = $0.isEmpty ? nil : $0 }
+                ), axis: .vertical)
+            }
+
+            Section("Attachments (\(document.attachments.count))") {
+                ForEach(document.attachments) { attachment in
+                    AttachmentRow(attachment: attachment, onPreview: { previewURL = attachment.fileURL })
+                }
+                .onDelete { offsets in
+                    for i in offsets { modelContext.delete(document.attachments[i]) }
+                }
+                Button { showingFilePicker = true } label: {
+                    Label("Add File", systemImage: "plus")
                 }
             }
-            .navigationTitle("Document")
-            .toolbar {
+        }
+        .navigationTitle("Document")
+        .toolbar {
+            if asSheet {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
         }
@@ -44,9 +65,6 @@ struct DocumentDetailView: View {
                       allowsMultipleSelection: true) { result in
             handleImport(result)
         }
-        #if os(macOS)
-        .frame(minWidth: 480, minHeight: 400)
-        #endif
     }
 
     private func handleImport(_ result: Result<[URL], Error>) {

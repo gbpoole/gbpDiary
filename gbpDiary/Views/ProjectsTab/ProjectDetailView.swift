@@ -11,10 +11,11 @@ struct ProjectDetailView: View {
     @State private var showingAddMinutes = false
     @State private var showingAddDocument = false
     @State private var selectedMinutes: Minutes?
+    @State private var selectedDocument: Document?
     @State private var editingTask: Task?
 
     private var openTasks: [Task] {
-        allTasks.filter { $0.project?.id == project.id && $0.status == .open }
+        allTasks.filter { $0.project?.id == project.id && ($0.status == .todo || $0.status == .started) }
     }
 
     private var completedTasks: [Task] {
@@ -45,7 +46,9 @@ struct ProjectDetailView: View {
         }
         .sheet(isPresented: $showingEditProject) { ProjectEditorSheet(project: project) }
         .sheet(isPresented: $showingAddMinutes) { MinutesEditorSheet(minutes: nil, project: project) }
-        .sheet(item: $selectedMinutes) { m in MinutesDetailView(minutes: m) }
+        .sheet(item: $selectedMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
+        .sheet(isPresented: $showingAddDocument) { DocumentEditorSheet(document: nil) }
+        .sheet(item: $selectedDocument) { doc in DocumentDetailView(document: doc, asSheet: true) }
         .sheet(item: $editingTask) { t in TaskEditorSheet(task: t, defaultDate: Date()) }
     }
 
@@ -120,13 +123,25 @@ struct ProjectDetailView: View {
     }
 
     private var documentsSection: some View {
-        GroupBox("Documents (\(project.documents.count))") {
+        GroupBox {
             if project.documents.isEmpty {
                 Text("No documents.").foregroundStyle(.secondary)
             } else {
                 ForEach(project.documents) { doc in
-                    Text(doc.documentDescription ?? "Untitled document")
-                        .padding(.vertical, 2)
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(doc.summary ?? "Untitled document").font(.subheadline)
+                            if let desc = doc.documentDescription {
+                                Text(desc).foregroundStyle(.secondary).font(.caption).lineLimit(1)
+                            }
+                        }
+                        Spacer()
+                        Button { selectedDocument = doc } label: {
+                            Image(systemName: "doc.text")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.vertical, 2)
                 }
             }
             Button { showingAddDocument = true } label: {
@@ -135,6 +150,8 @@ struct ProjectDetailView: View {
             .buttonStyle(.plain)
             .foregroundStyle(Color.accentColor)
             .padding(.top, 4)
+        } label: {
+            Text("Documents (\(project.documents.count))")
         }
     }
 }

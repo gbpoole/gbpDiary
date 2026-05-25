@@ -3,6 +3,7 @@ import SwiftData
 
 @Model final class Document {
     @Attribute(.unique) var id: UUID
+    var summary: String?
     var documentDescription: String?
     var createdAt: Date
     var updatedAt: Date
@@ -13,8 +14,9 @@ import SwiftData
     @Relationship(inverse: \Project.documents)
     var projects: [Project]
 
-    init(id: UUID = UUID()) {
+    init(id: UUID = UUID(), summary: String? = nil) {
         self.id = id
+        self.summary = summary
         self.attachments = []
         self.projects = []
         let now = Date()

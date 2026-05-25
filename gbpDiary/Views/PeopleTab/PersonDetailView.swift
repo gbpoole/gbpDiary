@@ -12,7 +12,7 @@ struct PersonDetailView: View {
     @State private var selectedMinutes: Minutes?
 
     private var openTasks: [Task] {
-        allTasks.filter { $0.assignee?.id == person.id && $0.status == .open }
+        allTasks.filter { $0.assignee?.id == person.id && ($0.status == .todo || $0.status == .started) }
     }
 
     private var completedTasks: [Task] {

@@ -11,16 +11,14 @@ struct TaskEditorSheet: View {
 
     @Query(sort: \Project.name) private var projects: [Project]
     @Query(sort: \Person.name) private var people: [Person]
-    @Query(sort: \Minutes.meetingAt, order: .reverse) private var allMinutes: [Minutes]
 
-    @State private var title = ""
+    @State private var summary = ""
     @State private var taskDescription = ""
-    @State private var status: TaskStatus = .open
+    @State private var status: TaskStatus = .todo
     @State private var durationText = ""
     @State private var durationError = false
     @State private var selectedProject: Project?
     @State private var selectedAssignee: Person?
-    @State private var selectedMinutes: Minutes?
     @State private var scheduledDate: Date?
     @State private var followUpDate: Date?
     @State private var tagsText = ""
@@ -31,15 +29,15 @@ struct TaskEditorSheet: View {
         NavigationStack {
             Form {
                 Section("Task") {
-                    TextField("Title", text: $title)
+                    TextField("Summary", text: $summary)
                     TextField("Description (optional)", text: $taskDescription, axis: .vertical)
                         .lineLimit(3...6)
                 }
 
                 Section("Status") {
                     Picker("Status", selection: $status) {
-                        Text("Open").tag(TaskStatus.open)
-                        Text("In Progress").tag(TaskStatus.open)
+                        Text("To Do").tag(TaskStatus.todo)
+                        Text("Started").tag(TaskStatus.started)
                         Text("Completed").tag(TaskStatus.completed)
                         Text("Follow-up Pending").tag(TaskStatus.followUpPending)
                         Text("Cancelled").tag(TaskStatus.cancelled)
@@ -96,13 +94,6 @@ struct TaskEditorSheet: View {
                             Text(p.name).tag(Optional(p))
                         }
                     }
-                    Picker("Minutes", selection: $selectedMinutes) {
-                        Text("None").tag(Optional<Minutes>.none)
-                        ForEach(allMinutes) { m in
-                            Text(m.summary ?? m.meetingAt.formatted(.dateTime.day().month().year()))
-                                .tag(Optional(m))
-                        }
-                    }
                 }
 
                 Section("Tags") {
@@ -116,7 +107,7 @@ struct TaskEditorSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isNew ? "Add" : "Save") { save() }
-                        .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
+                        .disabled(summary.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
         }
@@ -128,18 +119,17 @@ struct TaskEditorSheet: View {
             }
         }
         #if os(macOS)
-        .frame(minWidth: 480, minHeight: 560)
+        .frame(minWidth: 480, minHeight: 520)
         #endif
     }
 
     private func populateFromTask() {
         guard let t = task else { return }
-        title = t.title
+        summary = t.summary
         taskDescription = t.taskDescription ?? ""
         status = t.status
         selectedProject = t.project
         selectedAssignee = t.assignee
-        selectedMinutes = t.minutes
         scheduledDate = t.scheduledAt
         followUpDate = t.followUpAt
         tagsText = t.tags.joined(separator: ", ")
@@ -147,8 +137,8 @@ struct TaskEditorSheet: View {
     }
 
     private func save() {
-        let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
-        guard !trimmedTitle.isEmpty else { return }
+        let trimmedSummary = summary.trimmingCharacters(in: .whitespaces)
+        guard !trimmedSummary.isEmpty else { return }
 
         var parsedDuration: Duration?
         if !durationText.trimmingCharacters(in: .whitespaces).isEmpty {
@@ -165,7 +155,7 @@ struct TaskEditorSheet: View {
             .filter { !$0.isEmpty }
 
         if let t = task {
-            t.title = trimmedTitle
+            t.summary = trimmedSummary
             t.taskDescription = taskDescription.isEmpty ? nil : taskDescription
             t.status = status
             t.duration = parsedDuration
@@ -173,11 +163,10 @@ struct TaskEditorSheet: View {
             t.followUpAt = (status == .followUpPending) ? followUpDate : nil
             t.project = selectedProject
             t.assignee = selectedAssignee
-            t.minutes = selectedMinutes
             t.tags = tags
             t.updatedAt = Date()
         } else {
-            let newTask = Task(title: trimmedTitle)
+            let newTask = Task(summary: trimmedSummary)
             newTask.taskDescription = taskDescription.isEmpty ? nil : taskDescription
             newTask.status = status
             newTask.duration = parsedDuration
@@ -185,7 +174,6 @@ struct TaskEditorSheet: View {
             newTask.followUpAt = (status == .followUpPending) ? followUpDate : nil
             newTask.project = selectedProject
             newTask.assignee = selectedAssignee
-            newTask.minutes = selectedMinutes
             newTask.tags = tags
             modelContext.insert(newTask)
             onTaskCreated?(newTask)

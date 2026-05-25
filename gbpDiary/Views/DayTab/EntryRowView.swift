@@ -13,17 +13,19 @@ struct EntryRowView: View {
 
     @Environment(\.modelContext) private var modelContext
     @State private var editingTask: Task?
-    @State private var showingEditMeeting = false
+    @State private var editingMinutes: Minutes?
+    @State private var showingDeleteConfirm = false
+
+    private var isEntryFocused: Bool { focusedEntryId.wrappedValue == entry.id }
 
     private static let indentStep: CGFloat = 20
 
     var body: some View {
         Group {
             switch entry.kind {
-            case .note:      noteRow
-            case .task:      taskRow
-            case .meeting:   meetingRow
-            case .timesheet: timesheetRow
+            case .note:    noteRow
+            case .task:    taskRow
+            case .meeting: meetingRow
             }
         }
         .padding(.leading, CGFloat(entry.indentLevel) * Self.indentStep)
@@ -122,7 +124,9 @@ struct EntryRowView: View {
                     focusBinding: focusedEntryId,
                     focusId: entry.id,
                     onMoveToPrevious: onMoveToPrevious,
-                    onMoveToNext: onMoveToNext
+                    onMoveToNext: onMoveToNext,
+                    onIndent: onIndent,
+                    onOutdent: onOutdent
                 )
             } else {
                 HStack(alignment: .center, spacing: 10) {
@@ -147,50 +151,54 @@ struct EntryRowView: View {
         HStack(alignment: .center, spacing: 10) {
             Image(systemName: "calendar")
                 .foregroundStyle(.blue)
+                .font(.system(size: 17))
                 .frame(width: 22, height: 22)
-            if let m = entry.minutes {
-                Text(m.summary ?? m.meetingAt.formatted(.dateTime.hour().minute().day().month()))
-            } else {
-                TextField("Meeting description", text: $entry.text)
-                    .textFieldStyle(.plain)
-                    .focused(focusedEntryId, equals: entry.id)
-                    .onKeyPress(.tab, phases: .down) { _ in indent(); return .handled }
-                    .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in outdent(); return .handled }
-                    .onKeyPress(.upArrow, phases: .down) { _ in
-                        if let move = onMoveToPrevious { move(); return .handled }
-                        return .ignored
+            HStack(alignment: .center, spacing: 6) {
+                entryTextView(placeholder: "Meeting description")
+                if let m = entry.minutes {
+                    Chip(label: m.meetingAt.formatted(.dateTime.hour().minute()), color: .blue)
+                    Button {
+                        editingMinutes = m
+                    } label: {
+                        Image(systemName: "pencil").foregroundStyle(.tertiary).font(.caption)
                     }
-                    .onKeyPress(.downArrow, phases: .down) { _ in
-                        if let move = onMoveToNext { move(); return .handled }
-                        return .ignored
-                    }
+                    .buttonStyle(.plain)
+                }
+                if !isEntryFocused { Spacer(minLength: 0) }
             }
-            Button { showingEditMeeting = true } label: {
-                Image(systemName: "pencil")
-                    .foregroundStyle(.tertiary)
-                    .font(.caption)
-            }
-            .buttonStyle(.plain)
-            Spacer()
         }
         .padding(.horizontal)
         .padding(.vertical, 5)
         .contextMenu { deleteButton }
-        .sheet(isPresented: $showingEditMeeting) {
-            MeetingEntryEditorSheet(entry: entry)
+        .sheet(item: $editingMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
+        .alert("Delete Meeting?", isPresented: $showingDeleteConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                if let m = entry.minutes { modelContext.delete(m) }
+                modelContext.delete(entry)
+            }
+        } message: {
+            Text("This will also delete the associated meeting notes.")
         }
     }
 
-    // MARK: - Timesheet
-
-    private var timesheetRow: some View {
-        HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "clock")
-                .foregroundStyle(.orange)
-                .frame(width: 22, height: 22)
-            TextField("Description", text: $entry.text)
+    // Shared ZStack text element for meeting rows:
+    // Text controls layout width when unfocused; TextField (always present) handles
+    // focus machinery and inline editing when focused.
+    @ViewBuilder
+    private func entryTextView(placeholder: String) -> some View {
+        ZStack(alignment: .leading) {
+            Text(entry.text.isEmpty ? " " : entry.text)
+                .lineLimit(1)
+                .opacity(isEntryFocused ? 0 : 1)
+            TextField(placeholder, text: $entry.text)
                 .textFieldStyle(.plain)
+                .lineLimit(1)
                 .focused(focusedEntryId, equals: entry.id)
+                .frame(maxWidth: isEntryFocused ? .infinity : 0)
+                .clipped()
+                .opacity(isEntryFocused ? 1 : 0)
+                .allowsHitTesting(isEntryFocused)
                 .onKeyPress(.tab, phases: .down) { _ in indent(); return .handled }
                 .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in outdent(); return .handled }
                 .onKeyPress(.upArrow, phases: .down) { _ in
@@ -201,62 +209,23 @@ struct EntryRowView: View {
                     if let move = onMoveToNext { move(); return .handled }
                     return .ignored
                 }
-            if let dur = entry.duration {
-                Chip(label: dur.displayString, color: .orange)
-            }
-            if let proj = entry.project {
-                Chip(label: proj.name, color: .blue)
-            }
-            Spacer()
         }
-        .padding(.horizontal)
-        .padding(.vertical, 5)
-        .contextMenu { deleteButton }
+        .frame(maxWidth: isEntryFocused ? .infinity : nil)
+        .contentShape(Rectangle())
+        .onTapGesture { focusedEntryId.wrappedValue = entry.id }
     }
 
     // MARK: - Shared
 
     private var deleteButton: some View {
         Button("Delete", role: .destructive) {
-            modelContext.delete(entry)
+            if entry.kind == .meeting && entry.minutes != nil {
+                showingDeleteConfirm = true
+            } else {
+                modelContext.delete(entry)
+            }
         }
     }
 }
 
-private struct MeetingEntryEditorSheet: View {
-    @Bindable var entry: DayEntry
-    @Environment(\.dismiss) private var dismiss
-    @State private var text = ""
 
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Description") {
-                    TextField("Meeting description", text: $text, axis: .vertical)
-                        .lineLimit(3...8)
-                }
-                if let m = entry.minutes {
-                    Section("Linked Meeting") {
-                        LabeledContent("Time") {
-                            Text(m.meetingAt, format: .dateTime.weekday(.wide).hour().minute())
-                        }
-                        if let summary = m.summary, !summary.isEmpty {
-                            LabeledContent("Summary") { Text(summary) }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Edit Meeting")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { entry.text = text; dismiss() }
-                }
-            }
-        }
-        .onAppear { text = entry.text }
-        #if os(macOS)
-        .frame(minWidth: 360, minHeight: 220)
-        #endif
-    }
-}

@@ -5,7 +5,7 @@ import SwiftData
 // accessed as `Swift.Task { }` when needed in the same file.
 @Model final class Task {
     @Attribute(.unique) var id: UUID
-    var title: String
+    var summary: String
     var taskDescription: String?
     var status: TaskStatus
     var duration: Duration?
@@ -33,20 +33,19 @@ import SwiftData
 
     var assignee: Person?
     var project: Project?
-    var minutes: Minutes?
     var originDay: DayRecord?
     var parent: Task?
     @Relationship(deleteRule: .cascade)
     var children: [Task]
 
     init(
-        title: String,
+        summary: String,
         id: UUID = UUID(),
-        status: TaskStatus = .open,
+        status: TaskStatus = .todo,
         createdAt: Date = Date()
     ) {
         self.id = id
-        self.title = title
+        self.summary = summary
         self.status = status
         self.tagsJSON = "[]"
         self.followedUpHistoryJSON = "[]"
@@ -66,7 +65,7 @@ extension Task {
     }
 
     func unmarkCompleted() {
-        status = .open
+        status = .todo
         completedAt = nil
         updatedAt = Date()
     }
@@ -80,7 +79,7 @@ extension Task {
     }
 
     func unmarkCancelled() {
-        status = .open
+        status = .todo
         cancelledAt = nil
         updatedAt = Date()
     }
@@ -103,7 +102,7 @@ extension Task {
 
     func setDuration(_ dur: Duration) {
         duration = dur
-        if completedAt == nil && status == .open {
+        if completedAt == nil && (status == .todo || status == .started) {
             markCompleted()
         }
         updatedAt = Date()

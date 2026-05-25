@@ -3,39 +3,41 @@ import SwiftData
 
 struct MinutesDetailView: View {
     @Bindable var minutes: Minutes
+    var asSheet: Bool = false
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    @Query(sort: \Task.createdAt) private var allTasks: [Task]
-    @State private var editingTask: Task?
-
-    private var linkedTasks: [Task] {
-        allTasks.filter { $0.minutes?.id == minutes.id }
+    var body: some View {
+        if asSheet {
+            NavigationStack {
+                coreContent
+            }
+            #if os(macOS)
+            .frame(minWidth: 500, minHeight: 500)
+            #endif
+        } else {
+            coreContent
+        }
     }
 
-    var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    metadataSection
-                    attendeesSection
-                    projectsSection
-                    notesSection
-                    tasksSection
-                }
-                .padding()
+    @ViewBuilder private var coreContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                metadataSection
+                attendeesSection
+                projectsSection
+                notesSection
             }
-            .navigationTitle(minutes.meetingAt.formatted(.dateTime.day().month(.wide).year()))
-            .toolbar {
+            .padding()
+        }
+        .navigationTitle(minutes.meetingAt.formatted(.dateTime.day().month(.wide).year()))
+        .toolbar {
+            if asSheet {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
         }
-        .sheet(item: $editingTask) { t in TaskEditorSheet(task: t, defaultDate: minutes.meetingAt) }
-        #if os(macOS)
-        .frame(minWidth: 500, minHeight: 500)
-        #endif
     }
 
     private var metadataSection: some View {
@@ -89,17 +91,6 @@ struct MinutesDetailView: View {
         }
     }
 
-    private var tasksSection: some View {
-        GroupBox("Tasks from this Meeting (\(linkedTasks.count))") {
-            if linkedTasks.isEmpty {
-                Text("No tasks linked to this meeting.").foregroundStyle(.secondary)
-            } else {
-                ForEach(linkedTasks) { task in
-                    TaskRowView(task: task, onEdit: { editingTask = task })
-                }
-            }
-        }
-    }
 }
 
 struct MinutesEditorSheet: View {

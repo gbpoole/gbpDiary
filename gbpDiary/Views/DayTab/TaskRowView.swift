@@ -12,6 +12,8 @@ struct TaskRowView: View {
     var focusId: UUID? = nil
     var onMoveToPrevious: (() -> Void)? = nil
     var onMoveToNext: (() -> Void)? = nil
+    var onIndent: (() -> Void)? = nil
+    var onOutdent: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var showingFollowUpPicker = false
@@ -51,7 +53,8 @@ struct TaskRowView: View {
 
     private var statusIcon: String {
         switch task.status {
-        case .open:            "circle"
+        case .todo:            "circle"
+        case .started:         "play.circle.fill"
         case .completed:       "checkmark.circle.fill"
         case .cancelled:       "xmark.circle.fill"
         case .followUpPending: "arrow.clockwise.circle.fill"
@@ -60,7 +63,8 @@ struct TaskRowView: View {
 
     private var statusColor: Color {
         switch task.status {
-        case .open:            .secondary
+        case .todo:            .secondary
+        case .started:         .blue
         case .completed:       .green
         case .cancelled:       .secondary
         case .followUpPending: .orange
@@ -81,12 +85,12 @@ struct TaskRowView: View {
     private var inlineTitleView: some View {
         if inlineEditing, let fb = focusBinding, let fid = focusId {
             ZStack(alignment: .leading) {
-                Text(task.title.isEmpty ? " " : task.title)
+                Text(task.summary.isEmpty ? " " : task.summary)
                     .lineLimit(1)
                     .strikethrough(task.status == .cancelled)
                     .foregroundStyle(task.status == .cancelled ? Color.secondary : Color.primary)
                     .opacity(isFocusedInline ? 0 : 1)
-                TextField("", text: $task.title)
+                TextField("", text: $task.summary)
                     .textFieldStyle(.plain)
                     .lineLimit(1)
                     .focused(fb, equals: fid)
@@ -95,6 +99,14 @@ struct TaskRowView: View {
                     .clipped()
                     .opacity(isFocusedInline ? 1 : 0)
                     .allowsHitTesting(isFocusedInline)
+                    .onKeyPress(.tab, phases: .down) { _ in
+                        if let move = onIndent { move(); return .handled }
+                        return .ignored
+                    }
+                    .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in
+                        if let move = onOutdent { move(); return .handled }
+                        return .ignored
+                    }
                     .onKeyPress(.upArrow, phases: .down) { _ in
                         if let move = onMoveToPrevious { move(); return .handled }
                         return .ignored
@@ -108,7 +120,7 @@ struct TaskRowView: View {
             .contentShape(Rectangle())
             .onTapGesture { fb.wrappedValue = fid }
         } else {
-            Text(task.title)
+            Text(task.summary)
                 .lineLimit(1)
                 .strikethrough(task.status == .cancelled)
                 .foregroundStyle(task.status == .cancelled ? Color.secondary : Color.primary)
@@ -160,13 +172,13 @@ struct TaskRowView: View {
     private var contextMenuItems: some View {
         Button("Edit…", action: onEdit)
         Divider()
-        if task.status != .open {
-            Button("Open") {
+        if task.status != .todo && task.status != .started {
+            Button("Reopen") {
                 switch task.status {
                 case .completed:       task.unmarkCompleted()
                 case .cancelled:       task.unmarkCancelled()
                 case .followUpPending: task.unmarkCompleted()
-                case .open: break
+                default: break
                 }
             }
         }
@@ -190,7 +202,10 @@ struct TaskRowView: View {
 
     private func toggleStatus() {
         switch task.status {
-        case .open:
+        case .todo:
+            task.status = .started
+            task.updatedAt = Date()
+        case .started:
             task.markCompleted()
         case .completed:
             let tomorrow = Calendar.current.date(
