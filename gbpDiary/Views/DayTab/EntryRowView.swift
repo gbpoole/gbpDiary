@@ -34,6 +34,38 @@ struct EntryRowView: View {
         entry.indentLevel = max(entry.indentLevel - 1, 0)
     }
 
+    // MARK: - Visual line helpers (note row only)
+
+    // Inspect the focused NSTextView's layout manager to determine whether the
+    // insertion point sits on the topmost or bottommost visual line. Used to
+    // decide whether an arrow key should move between entries or stay within
+    // the multi-line note text. Defaults to true (navigate between entries) on
+    // any platform or state where the check isn't possible.
+#if os(macOS)
+    private var cursorIsOnFirstVisualLine: Bool {
+        guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
+              let lm = tv.layoutManager,
+              lm.numberOfGlyphs > 0 else { return true }
+        let pos = min(tv.selectedRange().location, tv.string.utf16.count)
+        let glyph = min(lm.glyphIndexForCharacter(at: pos), lm.numberOfGlyphs - 1)
+        let curY = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
+        let topY = lm.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil).minY
+        return curY <= topY + 1
+    }
+
+    private var cursorIsOnLastVisualLine: Bool {
+        guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
+              let lm = tv.layoutManager,
+              lm.numberOfGlyphs > 0 else { return true }
+        let sel = tv.selectedRange()
+        let pos = min(sel.location + sel.length, tv.string.utf16.count)
+        let glyph = min(lm.glyphIndexForCharacter(at: pos), lm.numberOfGlyphs - 1)
+        let curY = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
+        let botY = lm.lineFragmentRect(forGlyphAt: lm.numberOfGlyphs - 1, effectiveRange: nil).minY
+        return curY >= botY - 1
+    }
+#endif
+
     // MARK: - Note
 
     private var noteRow: some View {
@@ -56,10 +88,16 @@ struct EntryRowView: View {
                 .onKeyPress(.tab, phases: .down) { _ in indent(); return .handled }
                 .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in outdent(); return .handled }
                 .onKeyPress(.upArrow, phases: .down) { _ in
+                    #if os(macOS)
+                    guard cursorIsOnFirstVisualLine else { return .ignored }
+                    #endif
                     if let move = onMoveToPrevious { move(); return .handled }
                     return .ignored
                 }
                 .onKeyPress(.downArrow, phases: .down) { _ in
+                    #if os(macOS)
+                    guard cursorIsOnLastVisualLine else { return .ignored }
+                    #endif
                     if let move = onMoveToNext { move(); return .handled }
                     return .ignored
                 }
@@ -74,7 +112,15 @@ struct EntryRowView: View {
     private var taskRow: some View {
         Group {
             if let task = entry.task {
-                TaskRowView(task: task, onEdit: { editingTask = task })
+                TaskRowView(
+                    task: task,
+                    onEdit: { editingTask = task },
+                    inlineEditing: true,
+                    focusBinding: focusedEntryId,
+                    focusId: entry.id,
+                    onMoveToPrevious: onMoveToPrevious,
+                    onMoveToNext: onMoveToNext
+                )
             } else {
                 HStack(alignment: .center, spacing: 10) {
                     Image(systemName: "checkmark.circle")
@@ -104,6 +150,7 @@ struct EntryRowView: View {
             } else {
                 TextField("Meeting description", text: $entry.text)
                     .textFieldStyle(.plain)
+                    .focused(focusedEntryId, equals: entry.id)
                     .onKeyPress(.tab, phases: .down) { _ in indent(); return .handled }
                     .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in outdent(); return .handled }
                     .onKeyPress(.upArrow, phases: .down) { _ in
@@ -131,6 +178,7 @@ struct EntryRowView: View {
                 .frame(width: 22, height: 22)
             TextField("Description", text: $entry.text)
                 .textFieldStyle(.plain)
+                .focused(focusedEntryId, equals: entry.id)
                 .onKeyPress(.tab, phases: .down) { _ in indent(); return .handled }
                 .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in outdent(); return .handled }
                 .onKeyPress(.upArrow, phases: .down) { _ in

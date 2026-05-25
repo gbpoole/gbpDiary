@@ -5,6 +5,14 @@ struct TaskRowView: View {
     @Bindable var task: Task
     let onEdit: () -> Void
 
+    // Optional inline-editing parameters (used by EntryRowView in the day/week view).
+    // When set, the title renders as an editable TextField instead of Text.
+    var inlineEditing: Bool = false
+    var focusBinding: FocusState<UUID?>.Binding? = nil
+    var focusId: UUID? = nil
+    var onMoveToPrevious: (() -> Void)? = nil
+    var onMoveToNext: (() -> Void)? = nil
+
     @Environment(\.modelContext) private var modelContext
     @State private var showingFollowUpPicker = false
     @State private var followUpPickerDate = Date()
@@ -61,10 +69,26 @@ struct TaskRowView: View {
 
     private var contentRow: some View {
         HStack(alignment: .center, spacing: 6) {
-            Text(task.title)
-                .lineLimit(1)
-                .strikethrough(task.status == .cancelled)
-                .foregroundStyle(task.status == .cancelled ? .secondary : .primary)
+            if inlineEditing, let fb = focusBinding, let fid = focusId {
+                TextField("", text: $task.title)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1)
+                    .focused(fb, equals: fid)
+                    .foregroundStyle(task.status == .cancelled ? Color.secondary : Color.primary)
+                    .onKeyPress(.upArrow, phases: .down) { _ in
+                        if let move = onMoveToPrevious { move(); return .handled }
+                        return .ignored
+                    }
+                    .onKeyPress(.downArrow, phases: .down) { _ in
+                        if let move = onMoveToNext { move(); return .handled }
+                        return .ignored
+                    }
+            } else {
+                Text(task.title)
+                    .lineLimit(1)
+                    .strikethrough(task.status == .cancelled)
+                    .foregroundStyle(task.status == .cancelled ? Color.secondary : Color.primary)
+            }
             if let project = task.project {
                 Chip(label: project.name, color: .blue)
             }
