@@ -185,27 +185,18 @@ struct DayPageContent: View {
     // MARK: - Add entry bar
 
     private var addEntryBar: some View {
-        HStack(spacing: 4) {
-            Button(action: addNote) {
-                Label("Add Note", systemImage: "plus")
-                    .labelStyle(.titleAndIcon)
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
-            Menu {
-                Button("Note")    { addNote() }
-                Button("Task")    { showingAddTask = true }
-                Button("Meeting") { addMeeting() }
-            } label: {
-                Image(systemName: "chevron.down")
-                    .font(.caption)
-            }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .buttonStyle(.bordered)
-            .controlSize(.small)
+        Menu {
+            Button("Task")    { showingAddTask = true }
+            Button("Meeting") { addMeeting() }
+        } label: {
+            Label("Add Note", systemImage: "plus")
+        } primaryAction: {
+            addNote()
         }
+        .menuStyle(.automatic)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .fixedSize()
         .padding(.horizontal)
         .padding(.top, 8)
         .padding(.bottom, 4)
