@@ -103,7 +103,9 @@ struct DayPageContent: View {
                         onDeleteEmpty: {
                             let prevId = index > 0 ? entries[index - 1].id : nil
                             deleteEntry(entry, focusingId: prevId)
-                        }
+                        },
+                        onIndent: { indentEntry(entry) },
+                        onOutdent: { outdentEntry(entry) }
                     )
                 }
             }
@@ -260,6 +262,29 @@ struct DayPageContent: View {
         modelContext.delete(entry)
     }
 
+    private func indentEntry(_ entry: DayEntry) {
+        let sorted = entries
+        guard let idx = sorted.firstIndex(where: { $0.id == entry.id }) else { return }
+        let base = entry.indentLevel
+        entry.indentLevel = min(base + 1, 6)
+        for child in sorted.dropFirst(idx + 1) {
+            guard child.indentLevel > base else { break }
+            child.indentLevel = min(child.indentLevel + 1, 6)
+        }
+    }
+
+    private func outdentEntry(_ entry: DayEntry) {
+        guard entry.indentLevel > 0 else { return }
+        let sorted = entries
+        guard let idx = sorted.firstIndex(where: { $0.id == entry.id }) else { return }
+        let base = entry.indentLevel
+        entry.indentLevel = max(base - 1, 0)
+        for child in sorted.dropFirst(idx + 1) {
+            guard child.indentLevel > base else { break }
+            child.indentLevel = max(child.indentLevel - 1, 0)
+        }
+    }
+
     #if os(macOS)
     private func updateDeleteAction(for focusId: UUID?) {
         guard let focusId,
@@ -309,6 +334,10 @@ struct DayTaskSidebar: View {
     let allTasks: [Task]
 
     @State private var editingTask: Task?
+    @State private var scheduledExpanded = true
+    @State private var followUpsExpanded = true
+    @State private var backlogExpanded = true
+    @State private var completedExpanded = true
 
     private var dayStart: Date { Calendar.current.startOfDay(for: date) }
     private var dayEnd: Date   { Calendar.current.date(byAdding: .day, value: 1, to: dayStart)! }
@@ -347,44 +376,70 @@ struct DayTaskSidebar: View {
     }
 
     var body: some View {
-        List {
-            if !scheduled.isEmpty {
-                Section("Scheduled") {
-                    ForEach(scheduled) { task in
-                        TaskRowView(task: task, onEdit: { editingTask = task })
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                if !scheduled.isEmpty {
+                    sectionHeader("Scheduled", expanded: $scheduledExpanded)
+                    if scheduledExpanded {
+                        ForEach(scheduled) { task in
+                            TaskRowView(task: task, onEdit: { editingTask = task })
+                        }
+                    }
+                }
+                if !followUpsDue.isEmpty {
+                    sectionHeader("Follow-ups Due", expanded: $followUpsExpanded)
+                    if followUpsExpanded {
+                        ForEach(followUpsDue) { task in
+                            TaskRowView(task: task, onEdit: { editingTask = task })
+                        }
+                    }
+                }
+                sectionHeader("Backlog", expanded: $backlogExpanded)
+                if backlogExpanded {
+                    if backlog.isEmpty {
+                        Text("Nothing in the backlog.")
+                            .foregroundStyle(.secondary)
+                            .font(.callout)
+                            .padding(.horizontal)
+                            .padding(.vertical, 6)
+                    } else {
+                        ForEach(backlog) { task in
+                            TaskRowView(task: task, onEdit: { editingTask = task })
+                        }
+                    }
+                }
+                if !completedToday.isEmpty {
+                    sectionHeader("Completed Today", expanded: $completedExpanded)
+                    if completedExpanded {
+                        ForEach(completedToday) { task in
+                            TaskRowView(task: task, onEdit: { editingTask = task })
+                        }
                     }
                 }
             }
-            if !followUpsDue.isEmpty {
-                Section("Follow-ups Due") {
-                    ForEach(followUpsDue) { task in
-                        TaskRowView(task: task, onEdit: { editingTask = task })
-                    }
-                }
-            }
-            Section("Backlog") {
-                if backlog.isEmpty {
-                    Text("Nothing in the backlog.")
-                        .foregroundStyle(.secondary)
-                        .font(.callout)
-                } else {
-                    ForEach(backlog) { task in
-                        TaskRowView(task: task, onEdit: { editingTask = task })
-                    }
-                }
-            }
-            if !completedToday.isEmpty {
-                Section("Completed Today") {
-                    ForEach(completedToday) { task in
-                        TaskRowView(task: task, onEdit: { editingTask = task })
-                    }
-                }
-            }
+            .padding(.vertical, 8)
         }
-        .listStyle(.sidebar)
         .sheet(item: $editingTask) { task in
             TaskEditorSheet(task: task, defaultDate: date)
         }
+    }
+
+    private func sectionHeader(_ title: String, expanded: Binding<Bool>) -> some View {
+        Button(action: { expanded.wrappedValue.toggle() }) {
+            HStack {
+                Text(title)
+                    .font(.subheadline.bold())
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Image(systemName: expanded.wrappedValue ? "chevron.down" : "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal)
+            .padding(.top, 12)
+            .padding(.bottom, 4)
+        }
+        .buttonStyle(.plain)
     }
 }
 

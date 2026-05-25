@@ -67,14 +67,34 @@ struct TaskRowView: View {
         }
     }
 
-    private var contentRow: some View {
-        HStack(alignment: .center, spacing: 6) {
-            if inlineEditing, let fb = focusBinding, let fid = focusId {
+    // True only when this specific row is the active inline editor.
+    private var isFocusedInline: Bool {
+        guard inlineEditing, let fb = focusBinding, let fid = focusId else { return false }
+        return fb.wrappedValue == fid
+    }
+
+    // Title element: always keeps both Text (layout/display) and TextField (focus
+    // machinery) in the hierarchy. The TextField is collapsed to zero width when
+    // unfocused so it doesn't affect layout, but stays present so SwiftUI can
+    // assign focus to it the instant the entry is navigated to via arrow keys.
+    @ViewBuilder
+    private var inlineTitleView: some View {
+        if inlineEditing, let fb = focusBinding, let fid = focusId {
+            ZStack(alignment: .leading) {
+                Text(task.title.isEmpty ? " " : task.title)
+                    .lineLimit(1)
+                    .strikethrough(task.status == .cancelled)
+                    .foregroundStyle(task.status == .cancelled ? Color.secondary : Color.primary)
+                    .opacity(isFocusedInline ? 0 : 1)
                 TextField("", text: $task.title)
                     .textFieldStyle(.plain)
                     .lineLimit(1)
                     .focused(fb, equals: fid)
                     .foregroundStyle(task.status == .cancelled ? Color.secondary : Color.primary)
+                    .frame(maxWidth: isFocusedInline ? .infinity : 0)
+                    .clipped()
+                    .opacity(isFocusedInline ? 1 : 0)
+                    .allowsHitTesting(isFocusedInline)
                     .onKeyPress(.upArrow, phases: .down) { _ in
                         if let move = onMoveToPrevious { move(); return .handled }
                         return .ignored
@@ -83,12 +103,21 @@ struct TaskRowView: View {
                         if let move = onMoveToNext { move(); return .handled }
                         return .ignored
                     }
-            } else {
-                Text(task.title)
-                    .lineLimit(1)
-                    .strikethrough(task.status == .cancelled)
-                    .foregroundStyle(task.status == .cancelled ? Color.secondary : Color.primary)
             }
+            .frame(maxWidth: isFocusedInline ? .infinity : nil)
+            .contentShape(Rectangle())
+            .onTapGesture { fb.wrappedValue = fid }
+        } else {
+            Text(task.title)
+                .lineLimit(1)
+                .strikethrough(task.status == .cancelled)
+                .foregroundStyle(task.status == .cancelled ? Color.secondary : Color.primary)
+        }
+    }
+
+    private var contentRow: some View {
+        HStack(alignment: .center, spacing: 6) {
+            inlineTitleView
             if let project = task.project {
                 Chip(label: project.name, color: .blue)
             }
@@ -106,13 +135,15 @@ struct TaskRowView: View {
                 Chip(label: "↻ \(fu.formatted(.dateTime.day().month()))",
                      color: overdue ? .red : .orange)
             }
-            Spacer()
             Button(action: onEdit) {
                 Image(systemName: "pencil")
                     .foregroundStyle(.tertiary)
                     .font(.caption)
             }
             .buttonStyle(.plain)
+            if !isFocusedInline {
+                Spacer(minLength: 0)
+            }
         }
     }
 

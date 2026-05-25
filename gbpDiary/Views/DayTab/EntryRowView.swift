@@ -8,9 +8,12 @@ struct EntryRowView: View {
     var onMoveToPrevious: (() -> Void)? = nil
     var onMoveToNext: (() -> Void)? = nil
     var onDeleteEmpty: (() -> Void)? = nil
+    var onIndent: (() -> Void)? = nil
+    var onOutdent: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var editingTask: Task?
+    @State private var showingEditMeeting = false
 
     private static let indentStep: CGFloat = 20
 
@@ -27,11 +30,11 @@ struct EntryRowView: View {
     }
 
     private func indent() {
-        entry.indentLevel = min(entry.indentLevel + 1, 6)
+        if let handler = onIndent { handler() } else { entry.indentLevel = min(entry.indentLevel + 1, 6) }
     }
 
     private func outdent() {
-        entry.indentLevel = max(entry.indentLevel - 1, 0)
+        if let handler = onOutdent { handler() } else { entry.indentLevel = max(entry.indentLevel - 1, 0) }
     }
 
     // MARK: - Visual line helpers (note row only)
@@ -162,11 +165,20 @@ struct EntryRowView: View {
                         return .ignored
                     }
             }
+            Button { showingEditMeeting = true } label: {
+                Image(systemName: "pencil")
+                    .foregroundStyle(.tertiary)
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
             Spacer()
         }
         .padding(.horizontal)
         .padding(.vertical, 5)
         .contextMenu { deleteButton }
+        .sheet(isPresented: $showingEditMeeting) {
+            MeetingEntryEditorSheet(entry: entry)
+        }
     }
 
     // MARK: - Timesheet
@@ -208,5 +220,43 @@ struct EntryRowView: View {
         Button("Delete", role: .destructive) {
             modelContext.delete(entry)
         }
+    }
+}
+
+private struct MeetingEntryEditorSheet: View {
+    @Bindable var entry: DayEntry
+    @Environment(\.dismiss) private var dismiss
+    @State private var text = ""
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Description") {
+                    TextField("Meeting description", text: $text, axis: .vertical)
+                        .lineLimit(3...8)
+                }
+                if let m = entry.minutes {
+                    Section("Linked Meeting") {
+                        LabeledContent("Time") {
+                            Text(m.meetingAt, format: .dateTime.weekday(.wide).hour().minute())
+                        }
+                        if let summary = m.summary, !summary.isEmpty {
+                            LabeledContent("Summary") { Text(summary) }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Edit Meeting")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { entry.text = text; dismiss() }
+                }
+            }
+        }
+        .onAppear { text = entry.text }
+        #if os(macOS)
+        .frame(minWidth: 360, minHeight: 220)
+        #endif
     }
 }
