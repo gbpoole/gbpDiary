@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 enum DiaryMode: String, CaseIterable {
     case day = "Day"
@@ -9,13 +10,29 @@ struct DiaryView: View {
     @State private var mode: DiaryMode = .day
     @State private var currentDate: Date = Calendar.current.startOfDay(for: Date())
 
+    @Query(sort: \Task.createdAt) private var allTasks: [Task]
+    @Query private var allDayRecords: [DayRecord]
+
+    private var dayRecord: DayRecord? {
+        allDayRecords.first { Calendar.current.isDate($0.date, inSameDayAs: currentDate) }
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            diaryBar
-            Divider()
-            switch mode {
-            case .day:  DayView(date: currentDate)
-            case .week: WeekView(weekOf: currentDate)
+        if mode == .day {
+            NavigationSplitView {
+                DayTaskSidebar(date: currentDate, dayRecord: dayRecord, allTasks: allTasks)
+            } detail: {
+                VStack(spacing: 0) {
+                    diaryBar
+                    Divider()
+                    DayView(date: currentDate, dayRecord: dayRecord, allTasks: allTasks)
+                }
+            }
+        } else {
+            VStack(spacing: 0) {
+                diaryBar
+                Divider()
+                WeekView(weekOf: currentDate)
             }
         }
     }

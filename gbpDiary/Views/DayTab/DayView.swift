@@ -34,6 +34,7 @@ struct DayPageContent: View {
     var dayRecord: DayRecord?
     let allTasks: [Task]
     var showBacklog: Bool = true
+    var showTaskSections: Bool = true
 
     @Environment(\.modelContext) private var modelContext
     @FocusState private var focusedEntryId: UUID?
@@ -109,44 +110,45 @@ struct DayPageContent: View {
 
             addEntryBar
 
-            // Auto-queried task sections (tasks not already in entries)
-            if !scheduled.isEmpty {
-                SectionHeader(title: "Scheduled")
-                ForEach(scheduled) { task in
-                    TaskRowView(task: task, onEdit: { editingTask = task })
+            if showTaskSections {
+                if !scheduled.isEmpty {
+                    SectionHeader(title: "Scheduled")
+                    ForEach(scheduled) { task in
+                        TaskRowView(task: task, onEdit: { editingTask = task })
+                    }
                 }
-            }
 
-            if !followUpsDue.isEmpty {
-                SectionHeader(title: "Follow-ups Due")
-                ForEach(followUpsDue) { task in
-                    TaskRowView(task: task, onEdit: { editingTask = task })
+                if !followUpsDue.isEmpty {
+                    SectionHeader(title: "Follow-ups Due")
+                    ForEach(followUpsDue) { task in
+                        TaskRowView(task: task, onEdit: { editingTask = task })
+                    }
                 }
-            }
 
-            if showBacklog {
-                SectionHeader(title: "Backlog")
-                if backlog.isEmpty {
-                    Text("Nothing in the backlog.")
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal)
-                        .padding(.vertical, 6)
-                } else {
-                    ForEach(backlog) { task in
+                if showBacklog {
+                    SectionHeader(title: "Backlog")
+                    if backlog.isEmpty {
+                        Text("Nothing in the backlog.")
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal)
+                            .padding(.vertical, 6)
+                    } else {
+                        ForEach(backlog) { task in
+                            TaskRowView(task: task, onEdit: { editingTask = task })
+                        }
+                    }
+                }
+
+                if !completedToday.isEmpty {
+                    SectionHeader(title: "Completed Today")
+                    ForEach(completedToday) { task in
                         TaskRowView(task: task, onEdit: { editingTask = task })
                     }
                 }
             }
 
-            if !completedToday.isEmpty {
-                SectionHeader(title: "Completed Today")
-                ForEach(completedToday) { task in
-                    TaskRowView(task: task, onEdit: { editingTask = task })
-                }
-            }
-
-            if entries.isEmpty && scheduled.isEmpty && followUpsDue.isEmpty &&
-               (!showBacklog || backlog.isEmpty) && completedToday.isEmpty {
+            if entries.isEmpty && (!showTaskSections || (scheduled.isEmpty && followUpsDue.isEmpty &&
+               (!showBacklog || backlog.isEmpty) && completedToday.isEmpty)) {
                 Text("Nothing here.")
                     .foregroundStyle(.tertiary)
                     .padding(.horizontal)
@@ -287,18 +289,101 @@ struct DayPageContent: View {
 
 struct DayView: View {
     let date: Date
-
-    @Query(sort: \Task.createdAt) private var allTasks: [Task]
-    @Query private var allDayRecords: [DayRecord]
-
-    private var dayRecord: DayRecord? {
-        allDayRecords.first { Calendar.current.isDate($0.date, inSameDayAs: date) }
-    }
+    let dayRecord: DayRecord?
+    let allTasks: [Task]
 
     var body: some View {
         ScrollView {
-            DayPageContent(date: date, dayRecord: dayRecord, allTasks: allTasks)
+            DayPageContent(date: date, dayRecord: dayRecord, allTasks: allTasks,
+                           showTaskSections: false)
                 .padding(.vertical)
+        }
+    }
+}
+
+// MARK: - Day task sidebar
+
+struct DayTaskSidebar: View {
+    let date: Date
+    let dayRecord: DayRecord?
+    let allTasks: [Task]
+
+    @State private var editingTask: Task?
+
+    private var dayStart: Date { Calendar.current.startOfDay(for: date) }
+    private var dayEnd: Date   { Calendar.current.date(byAdding: .day, value: 1, to: dayStart)! }
+
+    private var taskEntryIds: Set<PersistentIdentifier> {
+        Set((dayRecord?.entries ?? []).compactMap { $0.task?.persistentModelID })
+    }
+
+    private var scheduled: [Task] {
+        allTasks.filter {
+            guard let s = $0.scheduledAt else { return false }
+            return s >= dayStart && s < dayEnd && $0.status == .open
+                && !taskEntryIds.contains($0.persistentModelID)
+        }
+    }
+
+    private var followUpsDue: [Task] {
+        allTasks.filter {
+            guard let fu = $0.followUpAt else { return false }
+            return fu < dayEnd && $0.status == .followUpPending
+        }
+    }
+
+    private var backlog: [Task] {
+        allTasks.filter {
+            $0.status == .open && $0.parent == nil &&
+            ($0.scheduledAt == nil || $0.scheduledAt! < dayStart)
+        }
+    }
+
+    private var completedToday: [Task] {
+        allTasks.filter {
+            guard let c = $0.completedAt else { return false }
+            return c >= dayStart && c < dayEnd
+        }
+    }
+
+    var body: some View {
+        List {
+            if !scheduled.isEmpty {
+                Section("Scheduled") {
+                    ForEach(scheduled) { task in
+                        TaskRowView(task: task, onEdit: { editingTask = task })
+                    }
+                }
+            }
+            if !followUpsDue.isEmpty {
+                Section("Follow-ups Due") {
+                    ForEach(followUpsDue) { task in
+                        TaskRowView(task: task, onEdit: { editingTask = task })
+                    }
+                }
+            }
+            Section("Backlog") {
+                if backlog.isEmpty {
+                    Text("Nothing in the backlog.")
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                } else {
+                    ForEach(backlog) { task in
+                        TaskRowView(task: task, onEdit: { editingTask = task })
+                    }
+                }
+            }
+            if !completedToday.isEmpty {
+                Section("Completed Today") {
+                    ForEach(completedToday) { task in
+                        TaskRowView(task: task, onEdit: { editingTask = task })
+                    }
+                }
+            }
+        }
+        .listStyle(.sidebar)
+        .sheet(item: $editingTask) { task in
+            TaskEditorSheet(task: task, defaultDate: date)
         }
     }
 }

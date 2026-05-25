@@ -8,7 +8,6 @@ struct PeopleView: View {
 
     @State private var selectedPerson: Person?
     @State private var showingAddPerson = false
-    @State private var showingAddInstitution = false
 
     private var grouped: [(institution: Institution?, people: [Person])] {
         var result: [(Institution?, [Person])] = []
@@ -37,12 +36,9 @@ struct PeopleView: View {
             }
             .navigationTitle("People")
             .toolbar {
-                ToolbarItemGroup {
-                    Button { showingAddInstitution = true } label: {
-                        Label("Institution", systemImage: "building.2")
-                    }
+                ToolbarItem {
                     Button { showingAddPerson = true } label: {
-                        Image(systemName: "person.badge.plus")
+                        Image(systemName: "plus")
                     }
                 }
             }
@@ -56,7 +52,6 @@ struct PeopleView: View {
             }
         }
         .sheet(isPresented: $showingAddPerson) { PersonEditorSheet(person: nil) }
-        .sheet(isPresented: $showingAddInstitution) { InstitutionEditorSheet(institution: nil) }
     }
 }
 
@@ -124,42 +119,3 @@ struct PersonEditorSheet: View {
     }
 }
 
-struct InstitutionEditorSheet: View {
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.dismiss) private var dismiss
-
-    let institution: Institution?
-    @State private var name = ""
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                TextField("Name", text: $name)
-            }
-            .navigationTitle(institution == nil ? "New Institution" : "Edit Institution")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button(institution == nil ? "Add" : "Save") { save() }
-                        .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-            }
-        }
-        .onAppear { name = institution?.name ?? "" }
-        #if os(macOS)
-        .frame(minWidth: 320, minHeight: 160)
-        #endif
-    }
-
-    private func save() {
-        let trimmed = name.trimmingCharacters(in: .whitespaces)
-        guard !trimmed.isEmpty else { return }
-        if let inst = institution {
-            inst.name = trimmed
-            inst.updatedAt = Date()
-        } else {
-            modelContext.insert(Institution(name: trimmed))
-        }
-        dismiss()
-    }
-}

@@ -3,9 +3,10 @@ import SwiftData
 
 enum AppTab: String, CaseIterable {
     case diary = "Diary"
-    case timesheet = "Timesheet"
     case projects = "Projects"
     case people = "People"
+    case institutions = "Institutions"
+    case timesheet = "Timesheet"
 }
 
 struct ContentView: View {
@@ -14,10 +15,11 @@ struct ContentView: View {
     var body: some View {
         Group {
             switch selectedTab {
-            case .diary:      DiaryView()
-            case .timesheet:  TimesheetView()
-            case .projects:   ProjectsView()
-            case .people:     PeopleView()
+            case .diary:         DiaryView()
+            case .projects:      ProjectsView()
+            case .people:        PeopleView()
+            case .institutions:  InstitutionsView()
+            case .timesheet:     TimesheetView()
             }
         }
         .toolbar {
