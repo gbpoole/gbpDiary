@@ -54,4 +54,27 @@ struct DayEntryReorderTests {
         #expect(b.sortOrder == 3)
         #expect(b.indentLevel == 0)
     }
+
+    @Test func outdent_atZeroIndent_doesNothing() {
+        let parent = DayEntry(kind: .note, sortOrder: 0, indentLevel: 0)
+        let child = DayEntry(kind: .note, sortOrder: 1, indentLevel: 1)
+
+        DayEntryOrdering.outdent(entry: parent, in: [parent, child])
+
+        #expect(parent.indentLevel == 0)
+        #expect(child.indentLevel == 1)
+    }
+
+    @Test func moveEntry_whenEntryNotInList_doesNothing() {
+        let a = DayEntry(kind: .note, sortOrder: 0, indentLevel: 0)
+        let b = DayEntry(kind: .note, sortOrder: 1, indentLevel: 1)
+        let external = DayEntry(kind: .note, sortOrder: 99, indentLevel: 3)
+
+        DayEntryOrdering.moveEntry(external, toDropIndex: 0, in: [a, b])
+
+        #expect(a.sortOrder == 0)
+        #expect(b.sortOrder == 1)
+        #expect(external.sortOrder == 99)
+        #expect(external.indentLevel == 3)
+    }
 }

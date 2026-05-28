@@ -62,6 +62,29 @@ struct DayTaskFilteringTests {
         #expect(result.map(\.id) == [shown.id])
     }
 
+    @Test func scheduled_requiresTodoOrStartedAndWithinDayBounds() {
+        let dayStart = FixedDates.dayStart()
+        let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
+
+        let todoWithin = Task(summary: "todo-within", status: .todo)
+        todoWithin.scheduledAt = FixedDates.atHour(9)
+
+        let completedWithin = Task(summary: "completed-within", status: .completed)
+        completedWithin.scheduledAt = FixedDates.atHour(10)
+
+        let atEndBoundary = Task(summary: "at-end", status: .todo)
+        atEndBoundary.scheduledAt = dayEnd
+
+        let result = DayTaskFiltering.scheduledTasks(
+            allTasks: [todoWithin, completedWithin, atEndBoundary],
+            dayStart: dayStart,
+            dayEnd: dayEnd,
+            taskEntryIds: []
+        )
+
+        #expect(result.map(\.id) == [todoWithin.id])
+    }
+
     @Test func backlog_requiresTopLevelTodoOrStartedBeforeDayStart() {
         let dayStart = FixedDates.dayStart()
 
