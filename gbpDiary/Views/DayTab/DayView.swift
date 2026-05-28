@@ -50,8 +50,8 @@ struct DayPageContent: View {
 
     @Query(sort: \Minutes.meetingAt, order: .reverse) private var allMinutes: [Minutes]
 
-    private var dayStart: Date { Calendar.current.startOfDay(for: date) }
-    private var dayEnd: Date   { Calendar.current.date(byAdding: .day, value: 1, to: dayStart)! }
+    private var dayStart: Date { DayTaskFiltering.dayBounds(for: date).dayStart }
+    private var dayEnd: Date { DayTaskFiltering.dayBounds(for: date).dayEnd }
 
     private var entries: [DayEntry] {
         (dayRecord?.entries ?? []).sorted { $0.sortOrder < $1.sortOrder }
@@ -62,32 +62,19 @@ struct DayPageContent: View {
     }
 
     private var scheduled: [Task] {
-        allTasks.filter {
-            guard let s = $0.scheduledAt else { return false }
-            return s >= dayStart && s < dayEnd && ($0.status == .todo || $0.status == .started)
-                && !taskEntryIds.contains($0.persistentModelID)
-        }
+        DayTaskFiltering.scheduledTasks(allTasks: allTasks, dayStart: dayStart, dayEnd: dayEnd, taskEntryIds: taskEntryIds)
     }
 
     private var followUpsDue: [Task] {
-        allTasks.filter {
-            guard let fu = $0.followUpAt else { return false }
-            return fu < dayEnd && $0.status == .followUpPending
-        }
+        DayTaskFiltering.followUpsDueTasks(allTasks: allTasks, dayEnd: dayEnd)
     }
 
     private var backlog: [Task] {
-        allTasks.filter {
-            ($0.status == .todo || $0.status == .started) && $0.parent == nil &&
-            ($0.scheduledAt == nil || $0.scheduledAt! < dayStart)
-        }
+        DayTaskFiltering.backlogTasks(allTasks: allTasks, dayStart: dayStart)
     }
 
     private var completedToday: [Task] {
-        allTasks.filter {
-            guard let c = $0.completedAt else { return false }
-            return c >= dayStart && c < dayEnd
-        }
+        DayTaskFiltering.completedTodayTasks(allTasks: allTasks, dayStart: dayStart, dayEnd: dayEnd)
     }
 
     var body: some View {
@@ -315,26 +302,11 @@ struct DayPageContent: View {
     }
 
     private func indentEntry(_ entry: DayEntry) {
-        let sorted = entries
-        guard let idx = sorted.firstIndex(where: { $0.id == entry.id }) else { return }
-        let base = entry.indentLevel
-        entry.indentLevel = min(base + 1, 6)
-        for child in sorted.dropFirst(idx + 1) {
-            guard child.indentLevel > base else { break }
-            child.indentLevel = min(child.indentLevel + 1, 6)
-        }
+        DayEntryOrdering.indent(entry: entry, in: entries)
     }
 
     private func outdentEntry(_ entry: DayEntry) {
-        guard entry.indentLevel > 0 else { return }
-        let sorted = entries
-        guard let idx = sorted.firstIndex(where: { $0.id == entry.id }) else { return }
-        let base = entry.indentLevel
-        entry.indentLevel = max(base - 1, 0)
-        for child in sorted.dropFirst(idx + 1) {
-            guard child.indentLevel > base else { break }
-            child.indentLevel = max(child.indentLevel - 1, 0)
-        }
+        DayEntryOrdering.outdent(entry: entry, in: entries)
     }
 
     #if os(macOS)
@@ -361,15 +333,7 @@ struct DayPageContent: View {
     #endif
 
     private func moveEntry(_ dragged: DayEntry, toDropIndex dropIndex: Int) {
-        var sorted = entries
-        guard let fromIndex = sorted.firstIndex(where: { $0.id == dragged.id }) else { return }
-        sorted.remove(at: fromIndex)
-        let target = min(dropIndex > fromIndex ? dropIndex - 1 : dropIndex, sorted.count)
-        let prevLevel = target > 0             ? sorted[target - 1].indentLevel : 0
-        let nextLevel = target < sorted.count  ? sorted[target].indentLevel     : 0
-        dragged.indentLevel = nextLevel > prevLevel ? nextLevel : prevLevel
-        sorted.insert(dragged, at: target)
-        for (i, e) in sorted.enumerated() { e.sortOrder = i }
+        DayEntryOrdering.moveEntry(dragged, toDropIndex: dropIndex, in: entries)
     }
 
     private func addMeeting() {
@@ -413,40 +377,27 @@ struct DayTaskSidebar: View {
     @State private var backlogExpanded = true
     @State private var completedExpanded = true
 
-    private var dayStart: Date { Calendar.current.startOfDay(for: date) }
-    private var dayEnd: Date   { Calendar.current.date(byAdding: .day, value: 1, to: dayStart)! }
+    private var dayStart: Date { DayTaskFiltering.dayBounds(for: date).dayStart }
+    private var dayEnd: Date { DayTaskFiltering.dayBounds(for: date).dayEnd }
 
     private var taskEntryIds: Set<PersistentIdentifier> {
-        Set((dayRecord?.entries ?? []).compactMap { $0.task?.persistentModelID })
+        DayTaskFiltering.taskEntryIds(from: dayRecord)
     }
 
     private var scheduled: [Task] {
-        allTasks.filter {
-            guard let s = $0.scheduledAt else { return false }
-            return s >= dayStart && s < dayEnd && ($0.status == .todo || $0.status == .started)
-                && !taskEntryIds.contains($0.persistentModelID)
-        }
+        DayTaskFiltering.scheduledTasks(allTasks: allTasks, dayStart: dayStart, dayEnd: dayEnd, taskEntryIds: taskEntryIds)
     }
 
     private var followUpsDue: [Task] {
-        allTasks.filter {
-            guard let fu = $0.followUpAt else { return false }
-            return fu < dayEnd && $0.status == .followUpPending
-        }
+        DayTaskFiltering.followUpsDueTasks(allTasks: allTasks, dayEnd: dayEnd)
     }
 
     private var backlog: [Task] {
-        allTasks.filter {
-            ($0.status == .todo || $0.status == .started) && $0.parent == nil &&
-            ($0.scheduledAt == nil || $0.scheduledAt! < dayStart)
-        }
+        DayTaskFiltering.backlogTasks(allTasks: allTasks, dayStart: dayStart)
     }
 
     private var completedToday: [Task] {
-        allTasks.filter {
-            guard let c = $0.completedAt else { return false }
-            return c >= dayStart && c < dayEnd
-        }
+        DayTaskFiltering.completedTodayTasks(allTasks: allTasks, dayStart: dayStart, dayEnd: dayEnd)
     }
 
     var body: some View {

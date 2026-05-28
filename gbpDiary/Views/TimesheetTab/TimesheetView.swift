@@ -1,15 +1,6 @@
 import SwiftUI
 import SwiftData
 
-enum TimesheetRange: String, CaseIterable {
-    case today = "Today"
-    case yesterday = "Yesterday"
-    case pastWeek = "Past Week"
-    case currentMonth = "This Month"
-    case currentYear = "This Year"
-    case custom = "Custom"
-}
-
 struct TimesheetView: View {
     @Query(sort: \Task.completedAt, order: .reverse) private var allTasks: [Task]
     @Query(sort: \Project.name) private var projects: [Project]
@@ -19,47 +10,23 @@ struct TimesheetView: View {
     @State private var customEnd: Date = Date()
 
     private var rangeInterval: DateInterval {
-        let cal = Calendar.current
-        let now = Date()
-        switch selectedRange {
-        case .today:
-            let start = cal.startOfDay(for: now)
-            return DateInterval(start: start, end: cal.date(byAdding: .day, value: 1, to: start)!)
-        case .yesterday:
-            let yesterday = cal.date(byAdding: .day, value: -1, to: now)!
-            let start = cal.startOfDay(for: yesterday)
-            return DateInterval(start: start, end: cal.date(byAdding: .day, value: 1, to: start)!)
-        case .pastWeek:
-            return DateInterval(start: cal.date(byAdding: .day, value: -7, to: now)!, end: now)
-        case .currentMonth:
-            let comps = cal.dateComponents([.year, .month], from: now)
-            let start = cal.date(from: comps)!
-            return DateInterval(start: start, end: now)
-        case .currentYear:
-            let comps = cal.dateComponents([.year], from: now)
-            let start = cal.date(from: comps)!
-            return DateInterval(start: start, end: now)
-        case .custom:
-            return DateInterval(start: customStart, end: customEnd)
-        }
+        TimesheetComputation.rangeInterval(
+            selectedRange: selectedRange,
+            customStart: customStart,
+            customEnd: customEnd
+        )
     }
 
     private var tasksInRange: [Task] {
-        allTasks.filter {
-            guard let c = $0.completedAt, let _ = $0.duration else { return false }
-            return rangeInterval.contains(c)
-        }
+        TimesheetComputation.tasksInRange(allTasks: allTasks, interval: rangeInterval)
     }
 
     private var totalHours: Double {
-        tasksInRange.compactMap { $0.duration?.hoursNormalized }.reduce(0, +)
+        TimesheetComputation.totalHours(tasks: tasksInRange)
     }
 
     private func hours(for project: Project) -> Double {
-        tasksInRange
-            .filter { $0.project?.id == project.id }
-            .compactMap { $0.duration?.hoursNormalized }
-            .reduce(0, +)
+        TimesheetComputation.hours(for: project, tasks: tasksInRange)
     }
 
     var body: some View {

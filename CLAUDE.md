@@ -228,3 +228,51 @@ Use `#if os(macOS)` for macOS-specific sizing (`.frame(minWidth:minHeight:)` on 
 - **`DayRecord` notes editor**: model has `notes` and `focusTags` fields, not exposed in UI.
 - **Timesheet hierarchy validation**: child duration > parent duration warning.
 - **Week view drag-to-reorder**: drag-and-drop works per-day in WeekView but reorder logic is independent per day section.
+
+---
+
+## Testing Contract (Required)
+
+### 1) Behavior-change rule
+Any change to business behavior MUST include corresponding unit test changes in the same PR.
+
+Business behavior includes:
+- model state transitions
+- date/range filtering rules
+- reorder/indent algorithms
+- timesheet aggregation logic
+- relationship integrity expectations
+
+### 2) Spec -> Tests Traceability (Required)
+Maintain this table and keep it current whenever this file changes behavior rules.
+
+| Rule / Requirement | Source Section | Test File | Test Name(s) |
+|---|---|---|---|
+| Task markCompleted sets status/completedAt and clears cancelledAt | Task state transitions | gbpDiaryTests/Models/TaskStateTransitionTests.swift | `markCompleted_setsExpectedFields` |
+| Follow-ups Due filter uses `followUpAt < dayEnd` and `.followUpPending` | Day view sections | gbpDiaryTests/Domain/DayTaskFilteringTests.swift | `followUpsDue_includesPendingBeforeDayEnd` |
+| Duration parsing + normalization (`h/d/w`) | Duration | gbpDiaryTests/Models/DurationTests.swift | `parse_validInputs_normalizesHours`, `parse_invalidInputs_returnsNil` |
+| Drag-to-reorder infers indent from neighbours and renumbers sortOrder | Drag-to-reorder diary blocks | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `moveEntry_reordersAndInfersIndent` |
+| Timesheet includes only completed tasks with duration in selected interval | Timesheet | gbpDiaryTests/Domain/TimesheetComputationTests.swift | `tasksInRange_requiresCompletedAtAndDuration` |
+
+When new rules are added to this document, add at least one row linking each rule to test coverage.
+
+### 3) PR checklist (Required)
+- [ ] Added/updated tests for all behavior changes
+- [ ] Updated Spec -> Tests Traceability table
+- [ ] Ran: `xcodebuild -scheme gbpDiary -destination 'platform=macOS' test`
+- [ ] Coverage for changed files did not decrease
+- [ ] If no tests changed, justification included in PR description
+
+### 4) Refactor-for-testability rule
+If behavior cannot be unit tested in place (for example logic embedded in SwiftUI views), extract pure helper/domain logic first, then test it.
+
+### 5) CLAUDE.md update rule
+Any update to architecture, rules, filters, or state transitions in this document MUST include:
+1. Updated traceability entries
+2. Test updates in the same change set
+3. A brief note in the PR description listing affected rows
+
+### 6) Coverage policy
+- Initial target: at least 80% coverage for model + domain helper code.
+- Coverage should ratchet upward over time.
+- Do not merge behavior changes that reduce coverage in changed model/domain files unless explicitly approved.
