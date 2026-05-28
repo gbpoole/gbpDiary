@@ -4,6 +4,7 @@ import SwiftData
 @main
 struct gbpDiaryApp: App {
     var sharedModelContainer: ModelContainer = {
+        let isUITesting = ProcessInfo.processInfo.arguments.contains("-ui-testing")
         let schema = Schema([
             Task.self,
             DayRecord.self,
@@ -16,7 +17,7 @@ struct gbpDiaryApp: App {
             Document.self,
             Note.self,
         ])
-        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+        let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: isUITesting)
         do {
             return try ModelContainer(for: schema, configurations: [config])
         } catch {

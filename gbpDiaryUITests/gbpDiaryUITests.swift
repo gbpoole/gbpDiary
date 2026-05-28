@@ -24,11 +24,11 @@ final class gbpDiaryUITests: XCTestCase {
 
     @MainActor
     func testExample() throws {
-        throw XCTSkip("Template smoke test is redundant with launch tests and is flaky when a prior app instance cannot be terminated.")
+        throw XCTSkip("Redundant with launch assertions in other UI tests; this duplicate launch path is flaky in local CLI runs.")
     }
 
     @MainActor
     func testLaunchPerformance() throws {
-        throw XCTSkip("Disabled in local CLI runs due to flaky terminate/launch behavior for existing app instances.")
+        throw XCTSkip("Launch performance test is flaky in local CLI runs due to terminate/launch race with existing app instances.")
     }
 }

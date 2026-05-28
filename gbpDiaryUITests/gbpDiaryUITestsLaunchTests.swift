@@ -10,7 +10,7 @@ import XCTest
 final class gbpDiaryUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
-        true
+        false
     }
 
     override func setUpWithError() throws {
@@ -19,6 +19,6 @@ final class gbpDiaryUITestsLaunchTests: XCTestCase {
 
     @MainActor
     func testLaunch() throws {
-        throw XCTSkip("Disabled in local CLI runs due to flaky terminate/launch behavior for existing app instances.")
+        throw XCTSkip("Launch UI test is flaky in local CLI runs due to terminate/launch race with existing app instances.")
     }
 }
