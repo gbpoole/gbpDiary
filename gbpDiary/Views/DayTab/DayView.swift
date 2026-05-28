@@ -273,7 +273,13 @@ struct DayPageContent: View {
         let entry = entries[idx]
         let prevId = idx > 0 ? entries[idx - 1].id : nil
         deleteMonitor.action = {
-            guard entry.text.isEmpty else { return false }
+            let isEmpty: Bool
+            switch entry.kind {
+            case .task:    isEmpty = entry.task?.summary.isEmpty ?? true
+            case .meeting: isEmpty = entry.minutes?.summary?.isEmpty ?? true
+            case .note:    isEmpty = entry.text.isEmpty
+            }
+            guard isEmpty else { return false }
             deleteEntry(entry, focusingId: prevId)
             return true
         }

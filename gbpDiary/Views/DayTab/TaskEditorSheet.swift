@@ -13,7 +13,7 @@ struct TaskEditorSheet: View {
     @Query(sort: \Person.name) private var people: [Person]
 
     @State private var summary = ""
-    @State private var taskDescription = ""
+    @State private var notes = ""
     @State private var status: TaskStatus = .todo
     @State private var durationText = ""
     @State private var durationError = false
@@ -30,7 +30,7 @@ struct TaskEditorSheet: View {
             Form {
                 Section("Task") {
                     TextField("Summary", text: $summary)
-                    TextField("Description (optional)", text: $taskDescription, axis: .vertical)
+                    TextField("Notes (optional)", text: $notes, axis: .vertical)
                         .lineLimit(3...6)
                 }
 
@@ -126,7 +126,7 @@ struct TaskEditorSheet: View {
     private func populateFromTask() {
         guard let t = task else { return }
         summary = t.summary
-        taskDescription = t.taskDescription ?? ""
+        notes = t.notes ?? ""
         status = t.status
         selectedProject = t.project
         selectedAssignee = t.assignee
@@ -156,7 +156,7 @@ struct TaskEditorSheet: View {
 
         if let t = task {
             t.summary = trimmedSummary
-            t.taskDescription = taskDescription.isEmpty ? nil : taskDescription
+            t.notes = notes.isEmpty ? nil : notes
             t.status = status
             t.duration = parsedDuration
             t.scheduledAt = scheduledDate
@@ -167,7 +167,7 @@ struct TaskEditorSheet: View {
             t.updatedAt = Date()
         } else {
             let newTask = Task(summary: trimmedSummary)
-            newTask.taskDescription = taskDescription.isEmpty ? nil : taskDescription
+            newTask.notes = notes.isEmpty ? nil : notes
             newTask.status = status
             newTask.duration = parsedDuration
             newTask.scheduledAt = scheduledDate

@@ -148,13 +148,19 @@ struct EntryRowView: View {
     // MARK: - Meeting
 
     private var meetingRow: some View {
-        HStack(alignment: .center, spacing: 10) {
+        let summaryBinding = Binding<String>(
+            get: { entry.minutes?.summary ?? "" },
+            set: { newValue in
+                if let m = entry.minutes { m.summary = newValue.isEmpty ? nil : newValue }
+            }
+        )
+        return HStack(alignment: .center, spacing: 10) {
             Image(systemName: "calendar")
                 .foregroundStyle(.blue)
                 .font(.system(size: 17))
                 .frame(width: 22, height: 22)
             HStack(alignment: .center, spacing: 6) {
-                entryTextView(placeholder: "Meeting description")
+                entryTextView(placeholder: "Meeting summary", text: summaryBinding)
                 if let m = entry.minutes {
                     Chip(label: m.meetingAt.formatted(.dateTime.hour().minute()), color: .blue)
                     Button {
@@ -182,16 +188,16 @@ struct EntryRowView: View {
         }
     }
 
-    // Shared ZStack text element for meeting rows:
+    // ZStack text element for meeting rows:
     // Text controls layout width when unfocused; TextField (always present) handles
     // focus machinery and inline editing when focused.
     @ViewBuilder
-    private func entryTextView(placeholder: String) -> some View {
+    private func entryTextView(placeholder: String, text: Binding<String>) -> some View {
         ZStack(alignment: .leading) {
-            Text(entry.text.isEmpty ? " " : entry.text)
+            Text(text.wrappedValue.isEmpty ? " " : text.wrappedValue)
                 .lineLimit(1)
                 .opacity(isEntryFocused ? 0 : 1)
-            TextField(placeholder, text: $entry.text)
+            TextField(placeholder, text: text)
                 .textFieldStyle(.plain)
                 .lineLimit(1)
                 .focused(focusedEntryId, equals: entry.id)

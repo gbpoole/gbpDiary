@@ -47,9 +47,11 @@ struct MinutesDetailView: View {
                       systemImage: "calendar")
                 Spacer()
             }
-            if let summary = minutes.summary {
-                Text(summary).foregroundStyle(.secondary)
-            }
+            TextField("Summary", text: Binding(
+                get: { minutes.summary ?? "" },
+                set: { minutes.summary = $0.isEmpty ? nil : $0 }
+            ))
+            .textFieldStyle(.plain)
         }
     }
 

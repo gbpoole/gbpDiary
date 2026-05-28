@@ -6,7 +6,7 @@ import SwiftData
 @Model final class Task {
     @Attribute(.unique) var id: UUID
     var summary: String
-    var taskDescription: String?
+    var notes: String?
     var status: TaskStatus
     var duration: Duration?
     var scheduledAt: Date?
