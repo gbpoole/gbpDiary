@@ -46,3 +46,6 @@ fastlane/test_output
 *.env
 Secrets.swift
 Config.local.swift
+
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
