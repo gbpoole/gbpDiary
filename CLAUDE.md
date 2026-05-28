@@ -32,11 +32,13 @@ Targets: macOS 15.7 · iOS 26 · Swift 6 (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainA
 
 ```
 ContentView
-  ├── Day tab    → DayView(date:)
-  ├── Week tab   → WeekView(weekOf:)
-  ├── Timesheet  → TimesheetView()
-  ├── Projects   → ProjectsView()  [NavigationSplitView internally]
-  └── People     → PeopleView()    [NavigationSplitView internally]
+  ├── Day tab       → DayView(date:)
+  ├── Week tab      → WeekView(weekOf:)
+  ├── Timesheet     → TimesheetView()
+  ├── Projects      → ProjectsView()      [NavigationSplitView internally]
+  ├── People        → PeopleView()        [NavigationSplitView internally]
+  ├── Minutes       → MinutesListView()   [NavigationSplitView internally]
+  └── Documents     → DocumentsListView() [NavigationSplitView internally]
 ```
 
 ### Data layer
@@ -45,23 +47,42 @@ All persistence is SwiftData. Models live in `gbpDiary/Models/`. The `ModelConta
 
 **Task is the canonical domain object.** Tasks are identity-stable across all views. They do not "belong" to a day via a stored list — they appear in day sections through date predicate queries on `scheduledAt` and `completedAt`.
 
-### Day view sections (query logic, in `DayView`)
+### Day view architecture
+
+The Day tab renders a `DayPageContent` view. The diary area is a vertical stack of `DayEntry` blocks, each rendered by `EntryRowView`. Clicking a task or meeting block opens `EntryDetailPanel` — a 280pt animated panel on the right showing the task's notes or the meeting's minutes content.
+
+```
+DayPageContent
+  ├── ScrollView
+  │     └── VStack
+  │           ├── drop zone (drag-to-reorder)
+  │           ├── EntryRowView [note | task | meeting]  .draggable(uuid)
+  │           ├── drop zone
+  │           ├── EntryRowView ...
+  │           └── ...
+  └── EntryDetailPanel (280pt, conditional on selectedEntry)
+```
+
+Blocks are draggable (`.draggable()` / `.dropDestination(for: String.self)`). Drop zones between entries show a 2pt accent-colour line when targeted. On drop, `moveEntry(_:toDropIndex:)` renumbers all `sortOrder` values and infers the dropped block's `indentLevel` from its new neighbours (deeper next-entry → adopt deeper level).
+
+### Day view sections (sidebar / task sections)
 
 | Section | Filter |
 |---------|--------|
-| Scheduled | `scheduledAt` in `[dayStart, dayEnd)` AND `status == .open` |
+| Scheduled | `scheduledAt` in `[dayStart, dayEnd)` AND `status == .todo` or `.started` |
 | Follow-ups Due | `followUpAt < dayEnd` AND `status == .followUpPending` |
-| Backlog | `status == .open` AND `parent == nil` AND (`scheduledAt == nil` OR `scheduledAt < dayStart`) |
+| Backlog | `status == .todo` or `.started` AND `parent == nil` AND (`scheduledAt == nil` OR `scheduledAt < dayStart`) |
 | Completed Today | `completedAt` in `[dayStart, dayEnd)` |
 
-All four use `@Query(sort: \Task.createdAt) var allTasks` filtered in-memory. This is intentional: the task list for a personal app stays small, and SwiftData predicate support for complex enum/date combinations is easier to read in-memory.
+All four use `@Query(sort: \Task.createdAt) var allTasks` filtered in-memory.
 
 ---
 
 ## Data model
 
 Value types (Codable structs, not `@Model`) in `Models/ValueTypes.swift`:
-- `TaskStatus`: `open | completed | cancelled | followUpPending`
+- `TaskStatus`: `todo | started | completed | cancelled | followUpPending`
+- `DayEntryKind`: `note | task | meeting`
 - `DurationUnit`: `h | d | w` (hours / days≈7.6h / weeks≈38h)
 - `Duration`: `value + unit + hoursNormalized`. Use `Duration.parse("1.5h")` for user input.
 - `SourceContext`: import provenance metadata (not used by UI, preserved for import pipeline)
@@ -70,14 +91,26 @@ Value types (Codable structs, not `@Model`) in `Models/ValueTypes.swift`:
 
 ```
 Task
+  summary  : String          (was `title` in earlier versions)
+  notes    : String?         (was `taskDescription` in earlier versions)
   assignee → Person?
   project  → Project?
-  minutes  → Minutes?
   originDay→ DayRecord?      (where captured; not the day-view link)
   parent   → Task?
   children → [Task]          cascade delete
+  NOTE: Task no longer has a `minutes` relationship.
+
+DayEntry                     (a single diary block for one day)
+  kind      : DayEntryKind   (.note | .task | .meeting)
+  text      : String         (note content; unused for task/meeting)
+  sortOrder : Int            (display order within the day)
+  indentLevel: Int           (0–6; visual indent in 20pt steps)
+  task     → Task?           (set when kind == .task)
+  minutes  → Minutes?        (set when kind == .meeting)
+  dayRecord→ DayRecord?
 
 DayRecord                    (date, notes?, focusTags[])
+  entries  → [DayEntry]      (cascade delete)
                              No stored Task list — queried by date
 
 Project
@@ -100,10 +133,12 @@ Institution
   projects → [Project]
 
 Minutes
+  summary   : String?        (one-line summary; editable inline in diary)
   projects  → [Project]  ↔ Project.meetings
   attendees → [Person]   ↔ Person.minutesAttended
 
 Document
+  summary     : String?
   attachments → [Attachment]  cascade delete ↔ Attachment.document
   projects    → [Project]     ↔ Project.documents
 
@@ -140,18 +175,41 @@ Prefer `@Query` at the top of a view for simple sorts/filters. For dynamic filte
 
 All transitions are in `Task` extension methods (`markCompleted()`, `unmarkCompleted()`, `markCancelled()`, `unmarkCancelled()`, `setFollowUp(date:)`, `markFollowUpDone()`, `setDuration(_:)`). Call these methods from views; do not mutate `status`, `completedAt`, `cancelledAt`, or `followUpAt` directly.
 
+Status cycle (via tap on status icon in `TaskRowView`): `.todo` → `.started` → `.completed`. Long-press / context menu provides access to cancel, follow-up, and reopen.
+
 The full state transition table is in the handoff spec (`/Users/gbpoole/swift_app_handoff_spec.md`, section 3).
 
 ### Duration
 
 User input is a string like `"1.5h"`, `"2d"`, `"1w"`. Parse with `Duration.parse(_:)` — returns `nil` on invalid input. Always display with `duration.displayString`. Store `hoursNormalized` for all timesheet arithmetic.
 
+### Meeting entries
+
+When a meeting `DayEntry` is created, `addMeeting()` automatically creates and links a `Minutes` object. Deleting a meeting entry requires confirmation (alert) because it also deletes the linked `Minutes`. The meeting's one-line summary is stored on `Minutes.summary` and edited inline in the diary row.
+
 ### Shared UI components
 
 - `Chip(label:color:)` — pill label for project/person/tag/duration metadata. Defined in `TaskRowView.swift`.
 - `FlowLayout` — wrapping HStack-like layout. Defined in `MinutesDetailView.swift`.
-- `TaskRowView` — recursive: renders a task and its `children` indented below. Used in DayView, ProjectDetailView, PersonDetailView.
+- `TaskRowView` — recursive: renders a task and its `children` indented below. Used in DayView, ProjectDetailView, PersonDetailView. Supports `inlineEditing: Bool` for diary block mode.
 - `TaskEditorSheet` — full task editing sheet. Accepts `task: Task?` (nil = create new) and `defaultDate: Date`.
+- `EntryRowView` — renders a single diary block (note, task, or meeting). Handles keyboard navigation, indent/outdent, and focus management.
+- `EntryDetailPanel` — animated 280pt right panel showing task notes or meeting minutes content for the selected diary entry.
+- `DayTaskSidebar` — collapsible sidebar listing scheduled/follow-up/backlog/completed tasks for a given day.
+- `MinutesDetailView(minutes:asSheet:)` — detail view for a `Minutes` record; pass `asSheet: true` when presenting as a sheet.
+- `DocumentDetailView(document:asSheet:)` — same pattern for `Document`.
+
+### macOS-specific: DeleteKeyMonitor
+
+`onKeyPress(.delete)` cannot intercept ⌫ inside a `TextField` because `NSTextField.deleteBackward:` fires inside `interpretKeyEvents:` before SwiftUI's handler runs. `DeleteKeyMonitor` uses `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` to intercept at the event level. It is started/stopped in `.onAppear`/`.onDisappear` of `DayPageContent`. The action closure checks whether the focused entry is empty before deleting — use a kind-aware check (`task.summary`, `minutes.summary`, `entry.text`) not a generic `entry.text` check.
+
+### macOS SwiftUI quirk: `.alert()` and layout padding
+
+On macOS, applying `.alert()` in the outer modifier chain of a block view (outside `.background()` / `.clipShape()` but alongside `.padding(.horizontal)`) silently collapses the padding's layout proposal, producing ~0pt margin. **Fix:** apply `.alert()` at the `body` level (or inside the inner content chain, before `.background()`), not after the outer layout padding. This does not affect note or task blocks since they use only `.sheet()` or `.contextMenu()` in the outer chain.
+
+### Drag-to-reorder diary blocks
+
+Each `EntryRowView` in `DayPageContent` is wrapped with `.draggable(entry.id.uuidString)`. Between entries are invisible 8pt `entryDropZone` views that accept `String` drop payloads. `moveEntry(_:toDropIndex:)` renumbers all `sortOrder` values after a drop and infers `indentLevel` from neighbours: if the entry below the drop point is deeper than the entry above, the dropped block adopts the deeper level.
 
 ### Platform guards
 
@@ -167,6 +225,6 @@ Use `#if os(macOS)` for macOS-specific sizing (`.frame(minWidth:minHeight:)` on 
 - **iPhone UI**: Day screen as home with fast capture loop.
 - **Schema migration**: versioned SwiftData migration stages for future model changes.
 - **Note entity**: model exists, no UI yet.
-- **Document creation UI**: `DocumentDetailView` exists but no way to create a `Document` record yet.
 - **`DayRecord` notes editor**: model has `notes` and `focusTags` fields, not exposed in UI.
 - **Timesheet hierarchy validation**: child duration > parent duration warning.
+- **Week view drag-to-reorder**: drag-and-drop works per-day in WeekView but reorder logic is independent per day section.

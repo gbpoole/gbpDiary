@@ -10,6 +10,7 @@ struct EntryRowView: View {
     var onDeleteEmpty: (() -> Void)? = nil
     var onIndent: (() -> Void)? = nil
     var onOutdent: (() -> Void)? = nil
+    var onSelect: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var editingTask: Task?
@@ -29,6 +30,15 @@ struct EntryRowView: View {
             }
         }
         .padding(.leading, CGFloat(entry.indentLevel) * Self.indentStep)
+        .alert("Delete Meeting?", isPresented: $showingDeleteConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                if let m = entry.minutes { modelContext.delete(m) }
+                modelContext.delete(entry)
+            }
+        } message: {
+            Text("This will also delete the associated meeting notes.")
+        }
     }
 
     private func indent() {
@@ -74,42 +84,33 @@ struct EntryRowView: View {
     // MARK: - Note
 
     private var noteRow: some View {
-        HStack(alignment: .top, spacing: 10) {
-            Text("•")
-                .foregroundStyle(.secondary)
-                .frame(width: 22, alignment: .center)
-            TextField("", text: $entry.text, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...8)
-                .focused(focusedEntryId, equals: entry.id)
-                .onKeyPress(.return, phases: .down) { press in
-                    if press.modifiers.contains(.shift) {
-                        entry.text += "\n"
-                        return .handled
-                    }
-                    onAddNoteAfter?()
-                    return .handled
-                }
-                .onKeyPress(.tab, phases: .down) { _ in indent(); return .handled }
-                .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in outdent(); return .handled }
-                .onKeyPress(.upArrow, phases: .down) { _ in
-                    #if os(macOS)
-                    guard cursorIsOnFirstVisualLine else { return .ignored }
-                    #endif
-                    if let move = onMoveToPrevious { move(); return .handled }
-                    return .ignored
-                }
-                .onKeyPress(.downArrow, phases: .down) { _ in
-                    #if os(macOS)
-                    guard cursorIsOnLastVisualLine else { return .ignored }
-                    #endif
-                    if let move = onMoveToNext { move(); return .handled }
-                    return .ignored
-                }
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 4)
-        .contextMenu { deleteButton }
+        TextEditor(text: $entry.text)
+            .font(.body)
+            .focused(focusedEntryId, equals: entry.id)
+            .frame(minHeight: 44)
+            .scrollDisabled(true)
+            .onKeyPress(.tab, phases: .down) { _ in indent(); return .handled }
+            .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in outdent(); return .handled }
+            .onKeyPress(.upArrow, phases: .down) { _ in
+                #if os(macOS)
+                guard cursorIsOnFirstVisualLine else { return .ignored }
+                #endif
+                if let move = onMoveToPrevious { move(); return .handled }
+                return .ignored
+            }
+            .onKeyPress(.downArrow, phases: .down) { _ in
+                #if os(macOS)
+                guard cursorIsOnLastVisualLine else { return .ignored }
+                #endif
+                if let move = onMoveToNext { move(); return .handled }
+                return .ignored
+            }
+            .padding(8)
+            .background(Color.secondary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal)
+            .padding(.vertical, 4)
+            .contextMenu { deleteButton }
     }
 
     // MARK: - Task
@@ -128,6 +129,7 @@ struct EntryRowView: View {
                     onIndent: onIndent,
                     onOutdent: onOutdent
                 )
+                .simultaneousGesture(TapGesture().onEnded { _ in onSelect?() })
             } else {
                 HStack(alignment: .center, spacing: 10) {
                     Image(systemName: "checkmark.circle")
@@ -140,6 +142,10 @@ struct EntryRowView: View {
                 .contextMenu { deleteButton }
             }
         }
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal)
+        .padding(.vertical, 2)
         .sheet(item: $editingTask) { task in
             TaskEditorSheet(task: task, defaultDate: entry.createdAt)
         }
@@ -173,19 +179,15 @@ struct EntryRowView: View {
                 if !isEntryFocused { Spacer(minLength: 0) }
             }
         }
-        .padding(.horizontal)
+        .padding(.horizontal, 8)
         .padding(.vertical, 5)
+        .simultaneousGesture(TapGesture().onEnded { _ in onSelect?() })
         .contextMenu { deleteButton }
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal)
+        .padding(.vertical, 2)
         .sheet(item: $editingMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
-        .alert("Delete Meeting?", isPresented: $showingDeleteConfirm) {
-            Button("Cancel", role: .cancel) {}
-            Button("Delete", role: .destructive) {
-                if let m = entry.minutes { modelContext.delete(m) }
-                modelContext.delete(entry)
-            }
-        } message: {
-            Text("This will also delete the associated meeting notes.")
-        }
     }
 
     // ZStack text element for meeting rows:

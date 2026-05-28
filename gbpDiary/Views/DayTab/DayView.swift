@@ -45,6 +45,9 @@ struct DayPageContent: View {
     @State private var deleteMonitor = DeleteKeyMonitor()
     #endif
 
+    @State private var selectedEntry: DayEntry?
+    @State private var activeDropZone: Int?
+
     @Query(sort: \Minutes.meetingAt, order: .reverse) private var allMinutes: [Minutes]
 
     private var dayStart: Date { Calendar.current.startOfDay(for: date) }
@@ -88,73 +91,24 @@ struct DayPageContent: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Free-form entries (notes, tasks added to day, meetings, timesheet)
-            if !entries.isEmpty {
-                ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
-                    EntryRowView(
-                        entry: entry,
-                        focusedEntryId: $focusedEntryId,
-                        onAddNoteAfter: entry.kind == .note ? { insertNoteAfter(entry) } : nil,
-                        onMoveToPrevious: index > 0 ? { pendingFocusId = entries[index - 1].id } : nil,
-                        onMoveToNext: index < entries.count - 1 ? { pendingFocusId = entries[index + 1].id } : nil,
-                        onDeleteEmpty: {
-                            let prevId = index > 0 ? entries[index - 1].id : nil
-                            deleteEntry(entry, focusingId: prevId)
-                        },
-                        onIndent: { indentEntry(entry) },
-                        onOutdent: { outdentEntry(entry) }
-                    )
+        HStack(alignment: .top, spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    entryRows
+                    addEntryBar
+                    taskSections
+                    emptyState
                 }
             }
 
-            addEntryBar
-
-            if showTaskSections {
-                if !scheduled.isEmpty {
-                    SectionHeader(title: "Scheduled")
-                    ForEach(scheduled) { task in
-                        TaskRowView(task: task, onEdit: { editingTask = task })
-                    }
-                }
-
-                if !followUpsDue.isEmpty {
-                    SectionHeader(title: "Follow-ups Due")
-                    ForEach(followUpsDue) { task in
-                        TaskRowView(task: task, onEdit: { editingTask = task })
-                    }
-                }
-
-                if showBacklog {
-                    SectionHeader(title: "Backlog")
-                    if backlog.isEmpty {
-                        Text("Nothing in the backlog.")
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal)
-                            .padding(.vertical, 6)
-                    } else {
-                        ForEach(backlog) { task in
-                            TaskRowView(task: task, onEdit: { editingTask = task })
-                        }
-                    }
-                }
-
-                if !completedToday.isEmpty {
-                    SectionHeader(title: "Completed Today")
-                    ForEach(completedToday) { task in
-                        TaskRowView(task: task, onEdit: { editingTask = task })
-                    }
-                }
-            }
-
-            if entries.isEmpty && (!showTaskSections || (scheduled.isEmpty && followUpsDue.isEmpty &&
-               (!showBacklog || backlog.isEmpty) && completedToday.isEmpty)) {
-                Text("Nothing here.")
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal)
-                    .padding(.vertical, 6)
+            if let entry = selectedEntry {
+                Divider()
+                EntryDetailPanel(entry: entry, onDismiss: { selectedEntry = nil })
+                    .frame(width: 280)
+                    .transition(.move(edge: .trailing).combined(with: .opacity))
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: selectedEntry?.id)
         .sheet(isPresented: $showingAddTask) {
             TaskEditorSheet(task: nil, defaultDate: date) { newTask in
                 let record = findOrCreateDayRecord()
@@ -180,6 +134,125 @@ struct DayPageContent: View {
             updateDeleteAction(for: newId)
         }
         #endif
+    }
+
+    // MARK: - Entry rows
+
+    @ViewBuilder
+    private var entryRows: some View {
+        if !entries.isEmpty {
+            entryDropZone(at: 0)
+            ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
+                entryRow(entry: entry, index: index)
+                    .draggable(entry.id.uuidString)
+                entryDropZone(at: index + 1)
+            }
+        }
+    }
+
+    private func entryDropZone(at index: Int) -> some View {
+        ZStack {
+            Color.clear.frame(height: 8)
+            if activeDropZone == index {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(height: 2)
+                    .padding(.horizontal, 12)
+            }
+        }
+        .dropDestination(for: String.self) { items, _ in
+            guard let uuidString = items.first,
+                  let id = UUID(uuidString: uuidString),
+                  let dragged = entries.first(where: { $0.id == id })
+            else { return false }
+            moveEntry(dragged, toDropIndex: index)
+            activeDropZone = nil
+            return true
+        } isTargeted: { targeted in
+            activeDropZone = targeted ? index : nil
+        }
+    }
+
+    @ViewBuilder
+    private func entryRow(entry: DayEntry, index: Int) -> some View {
+        let onSelect: (() -> Void)? = (entry.kind == .task || entry.kind == .meeting) ? {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                if selectedEntry?.id == entry.id {
+                    selectedEntry = nil
+                } else {
+                    selectedEntry = entry
+                }
+            }
+        } : nil
+        EntryRowView(
+            entry: entry,
+            focusedEntryId: $focusedEntryId,
+            onAddNoteAfter: entry.kind == .note ? { insertNoteAfter(entry) } : nil,
+            onMoveToPrevious: index > 0 ? { pendingFocusId = entries[index - 1].id } : nil,
+            onMoveToNext: index < entries.count - 1 ? { pendingFocusId = entries[index + 1].id } : nil,
+            onDeleteEmpty: {
+                let prevId = index > 0 ? entries[index - 1].id : nil
+                deleteEntry(entry, focusingId: prevId)
+            },
+            onIndent: { indentEntry(entry) },
+            onOutdent: { outdentEntry(entry) },
+            onSelect: onSelect
+        )
+    }
+
+    // MARK: - Task sections
+
+    @ViewBuilder
+    private var taskSections: some View {
+        if showTaskSections {
+            if !scheduled.isEmpty {
+                SectionHeader(title: "Scheduled")
+                ForEach(scheduled) { task in
+                    TaskRowView(task: task, onEdit: { editingTask = task })
+                }
+            }
+
+            if !followUpsDue.isEmpty {
+                SectionHeader(title: "Follow-ups Due")
+                ForEach(followUpsDue) { task in
+                    TaskRowView(task: task, onEdit: { editingTask = task })
+                }
+            }
+
+            if showBacklog {
+                SectionHeader(title: "Backlog")
+                if backlog.isEmpty {
+                    Text("Nothing in the backlog.")
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal)
+                        .padding(.vertical, 6)
+                } else {
+                    ForEach(backlog) { task in
+                        TaskRowView(task: task, onEdit: { editingTask = task })
+                    }
+                }
+            }
+
+            if !completedToday.isEmpty {
+                SectionHeader(title: "Completed Today")
+                ForEach(completedToday) { task in
+                    TaskRowView(task: task, onEdit: { editingTask = task })
+                }
+            }
+        }
+    }
+
+    // MARK: - Empty state
+
+    @ViewBuilder
+    private var emptyState: some View {
+        if entries.isEmpty && (!showTaskSections || (scheduled.isEmpty && followUpsDue.isEmpty &&
+           (!showBacklog || backlog.isEmpty) && completedToday.isEmpty)) {
+            Text("Nothing here.")
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal)
+                .padding(.vertical, 6)
+        }
     }
 
     // MARK: - Add entry bar
@@ -236,6 +309,7 @@ struct DayPageContent: View {
     }
 
     private func deleteEntry(_ entry: DayEntry, focusingId: UUID?) {
+        if selectedEntry?.id == entry.id { selectedEntry = nil }
         if let id = focusingId { pendingFocusId = id }
         modelContext.delete(entry)
     }
@@ -285,6 +359,18 @@ struct DayPageContent: View {
         }
     }
     #endif
+
+    private func moveEntry(_ dragged: DayEntry, toDropIndex dropIndex: Int) {
+        var sorted = entries
+        guard let fromIndex = sorted.firstIndex(where: { $0.id == dragged.id }) else { return }
+        sorted.remove(at: fromIndex)
+        let target = min(dropIndex > fromIndex ? dropIndex - 1 : dropIndex, sorted.count)
+        let prevLevel = target > 0             ? sorted[target - 1].indentLevel : 0
+        let nextLevel = target < sorted.count  ? sorted[target].indentLevel     : 0
+        dragged.indentLevel = nextLevel > prevLevel ? nextLevel : prevLevel
+        sorted.insert(dragged, at: target)
+        for (i, e) in sorted.enumerated() { e.sortOrder = i }
+    }
 
     private func addMeeting() {
         let record = findOrCreateDayRecord()
