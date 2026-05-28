@@ -139,6 +139,44 @@ struct TimesheetComputationTests {
         #expect(interval.end == now)
     }
 
+    @Test func rangeInterval_pastWeek_crossesYearBoundary() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+
+        let now = calendar.date(from: DateComponents(year: 2026, month: 1, day: 2, hour: 10)) ?? FixedDates.reference
+        let interval = TimesheetComputation.rangeInterval(
+            selectedRange: .pastWeek,
+            customStart: now,
+            customEnd: now,
+            now: now,
+            calendar: calendar
+        )
+
+        let expectedStart = calendar.date(byAdding: .day, value: -7, to: now)
+        #expect(interval.start == expectedStart)
+        #expect(interval.end == now)
+    }
+
+    @Test func rangeInterval_today_usesCalendarAwareDayLengthAcrossDST() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "America/New_York") ?? .current
+
+        let springForwardDay = calendar.date(from: DateComponents(year: 2026, month: 3, day: 8, hour: 12)) ?? FixedDates.reference
+        let interval = TimesheetComputation.rangeInterval(
+            selectedRange: .today,
+            customStart: springForwardDay,
+            customEnd: springForwardDay,
+            now: springForwardDay,
+            calendar: calendar
+        )
+
+        let expectedStart = calendar.startOfDay(for: springForwardDay)
+        let expectedEnd = calendar.date(byAdding: .day, value: 1, to: expectedStart)
+        #expect(interval.start == expectedStart)
+        #expect(interval.end == expectedEnd)
+        #expect(interval.duration == 23 * 60 * 60)
+    }
+
     @Test func tasksInRange_excludesTaskBeforeIntervalStartBoundary() {
         let now = FixedDates.reference
         let interval = DateInterval(start: now.addingTimeInterval(-3600), end: now)
