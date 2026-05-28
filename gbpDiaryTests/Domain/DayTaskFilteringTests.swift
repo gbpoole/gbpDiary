@@ -5,6 +5,26 @@ import Testing
 
 @MainActor
 struct DayTaskFilteringTests {
+    @Test func dayBounds_returnsStartOfDayAndNextDay() {
+        let date = FixedDates.atHour(14)
+        let bounds = DayTaskFiltering.dayBounds(for: date)
+
+        #expect(bounds.dayStart == Calendar.current.startOfDay(for: date))
+        #expect(bounds.dayEnd == Calendar.current.date(byAdding: .day, value: 1, to: bounds.dayStart))
+    }
+
+    @Test func taskEntryIds_collectsOnlyTaskBackedEntries() {
+        let day = DayRecord(date: FixedDates.dayStart())
+        let task = Task(summary: "mapped")
+        let taskEntry = DayEntry(kind: .task, sortOrder: 0)
+        taskEntry.task = task
+        let noteEntry = DayEntry(kind: .note, sortOrder: 1)
+        day.entries = [taskEntry, noteEntry]
+
+        let ids = DayTaskFiltering.taskEntryIds(from: day)
+        #expect(ids == Set([task.persistentModelID]))
+    }
+
     @Test func followUpsDue_includesPendingBeforeDayEnd() {
         let dayStart = FixedDates.dayStart()
         let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
@@ -57,5 +77,26 @@ struct DayTaskFilteringTests {
 
         let result = DayTaskFiltering.backlogTasks(allTasks: [topLevel, scheduledToday, child], dayStart: dayStart)
         #expect(result.map(\.id) == [topLevel.id])
+    }
+
+    @Test func completedToday_includesOnlyWithinDayBounds() {
+        let dayStart = FixedDates.dayStart()
+        let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
+
+        let included = Task(summary: "included", status: .completed)
+        included.completedAt = FixedDates.atHour(16)
+
+        let atEndBoundary = Task(summary: "excluded-end", status: .completed)
+        atEndBoundary.completedAt = dayEnd
+
+        let beforeDay = Task(summary: "excluded-before", status: .completed)
+        beforeDay.completedAt = dayStart.addingTimeInterval(-1)
+
+        let result = DayTaskFiltering.completedTodayTasks(
+            allTasks: [included, atEndBoundary, beforeDay],
+            dayStart: dayStart,
+            dayEnd: dayEnd
+        )
+        #expect(result.map(\.id) == [included.id])
     }
 }

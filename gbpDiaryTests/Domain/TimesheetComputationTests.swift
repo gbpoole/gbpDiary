@@ -55,4 +55,50 @@ struct TimesheetComputationTests {
         #expect(interval.start == Calendar.current.startOfDay(for: now))
         #expect(interval.end > interval.start)
     }
+
+    @Test func rangeInterval_yesterday_coversPreviousDayOnly() {
+        let now = FixedDates.atHour(10)
+        let interval = TimesheetComputation.rangeInterval(
+            selectedRange: .yesterday,
+            customStart: now,
+            customEnd: now,
+            now: now
+        )
+
+        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now) ?? now
+        let expectedStart = Calendar.current.startOfDay(for: yesterday)
+        let expectedEnd = Calendar.current.date(byAdding: .day, value: 1, to: expectedStart) ?? expectedStart
+        #expect(interval.start == expectedStart)
+        #expect(interval.end == expectedEnd)
+    }
+
+    @Test func rangeInterval_custom_usesProvidedBounds() {
+        let start = FixedDates.reference.addingTimeInterval(-7200)
+        let end = FixedDates.reference.addingTimeInterval(1800)
+        let interval = TimesheetComputation.rangeInterval(
+            selectedRange: .custom,
+            customStart: start,
+            customEnd: end,
+            now: FixedDates.reference
+        )
+
+        #expect(interval.start == start)
+        #expect(interval.end == end)
+    }
+
+    @Test func tasksInRange_excludesTaskBeforeIntervalStartBoundary() {
+        let now = FixedDates.reference
+        let interval = DateInterval(start: now.addingTimeInterval(-3600), end: now)
+
+        let beforeStart = Task(summary: "before-start", status: .completed)
+        beforeStart.completedAt = now.addingTimeInterval(-3601)
+        beforeStart.duration = Duration(value: 1, unit: .h)
+
+        let inside = Task(summary: "inside", status: .completed)
+        inside.completedAt = now.addingTimeInterval(-1)
+        inside.duration = Duration(value: 1, unit: .h)
+
+        let result = TimesheetComputation.tasksInRange(allTasks: [beforeStart, inside], interval: interval)
+        #expect(result.map(\.id) == [inside.id])
+    }
 }
