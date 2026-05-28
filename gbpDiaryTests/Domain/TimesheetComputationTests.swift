@@ -86,6 +86,59 @@ struct TimesheetComputationTests {
         #expect(interval.end == end)
     }
 
+    @Test func rangeInterval_pastWeek_spansSevenDaysToNow() {
+        let now = FixedDates.atHour(10)
+        let interval = TimesheetComputation.rangeInterval(
+            selectedRange: .pastWeek,
+            customStart: now,
+            customEnd: now,
+            now: now
+        )
+
+        #expect(interval.end == now)
+        #expect(interval.start == Calendar.current.date(byAdding: .day, value: -7, to: now))
+    }
+
+    @Test func rangeInterval_currentMonth_startsAtMonthBoundary() {
+        var comps = DateComponents()
+        comps.year = 2026
+        comps.month = 3
+        comps.day = 17
+        comps.hour = 10
+        let now = Calendar.current.date(from: comps) ?? FixedDates.reference
+
+        let interval = TimesheetComputation.rangeInterval(
+            selectedRange: .currentMonth,
+            customStart: now,
+            customEnd: now,
+            now: now
+        )
+
+        let expectedStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: now))
+        #expect(interval.start == expectedStart)
+        #expect(interval.end == now)
+    }
+
+    @Test func rangeInterval_currentYear_startsAtYearBoundary() {
+        var comps = DateComponents()
+        comps.year = 2026
+        comps.month = 9
+        comps.day = 4
+        comps.hour = 10
+        let now = Calendar.current.date(from: comps) ?? FixedDates.reference
+
+        let interval = TimesheetComputation.rangeInterval(
+            selectedRange: .currentYear,
+            customStart: now,
+            customEnd: now,
+            now: now
+        )
+
+        let expectedStart = Calendar.current.date(from: Calendar.current.dateComponents([.year], from: now))
+        #expect(interval.start == expectedStart)
+        #expect(interval.end == now)
+    }
+
     @Test func tasksInRange_excludesTaskBeforeIntervalStartBoundary() {
         let now = FixedDates.reference
         let interval = DateInterval(start: now.addingTimeInterval(-3600), end: now)
