@@ -18,7 +18,7 @@ final class gbpDiaryUITestsLaunchTests: XCTestCase {
     }
 
     @MainActor
-    func testLaunch() throws {
-        throw XCTSkip("Launch UI test is flaky in local CLI runs due to terminate/launch race with existing app instances.")
+    func testLaunchConfigurationRunsSingleUIConfiguration() throws {
+        XCTAssertFalse(Self.runsForEachTargetApplicationUIConfiguration)
     }
 }

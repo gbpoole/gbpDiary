@@ -23,8 +23,12 @@ final class gbpDiaryUITests: XCTestCase {
     }
 
     @MainActor
-    func testExample() throws {
-        throw XCTSkip("Redundant with launch assertions in other UI tests; this duplicate launch path is flaky in local CLI runs.")
+    func testLaunchConfigurationIncludesUITestingArgument() throws {
+        let app = XCUIApplication()
+        app.launchArguments += ["-ui-testing", "-ApplePersistenceIgnoreState", "YES"]
+
+        XCTAssertTrue(app.launchArguments.contains("-ui-testing"))
+        XCTAssertTrue(app.launchArguments.contains("-ApplePersistenceIgnoreState"))
     }
 
     @MainActor
