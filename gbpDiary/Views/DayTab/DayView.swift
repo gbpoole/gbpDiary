@@ -72,6 +72,7 @@ struct DayPageContent: View {
 
     @State private var selectedEntry: DayEntry?
     @State private var activeDropZone: Int?
+    @State private var collapsedEntryIds: Set<UUID> = []
 
     @Query(sort: \Minutes.meetingAt, order: .reverse) private var allMinutes: [Minutes]
 
@@ -80,6 +81,35 @@ struct DayPageContent: View {
 
     private var entries: [DayEntry] {
         (dayRecord?.entries ?? []).sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    private var visibleEntries: [DayEntry] {
+        var result: [DayEntry] = []
+        var hidingBelowLevel: Int? = nil
+        for entry in entries {
+            if let level = hidingBelowLevel {
+                if entry.indentLevel <= level { hidingBelowLevel = nil } else { continue }
+            }
+            result.append(entry)
+            if collapsedEntryIds.contains(entry.id) {
+                hidingBelowLevel = entry.indentLevel
+            }
+        }
+        return result
+    }
+
+    private func entryHasChildren(_ entry: DayEntry) -> Bool {
+        guard let idx = entries.firstIndex(where: { $0.id == entry.id }),
+              idx + 1 < entries.count else { return false }
+        return entries[idx + 1].indentLevel > entry.indentLevel
+    }
+
+    private func toggleCollapse(_ entry: DayEntry) {
+        if collapsedEntryIds.contains(entry.id) {
+            collapsedEntryIds.remove(entry.id)
+        } else {
+            collapsedEntryIds.insert(entry.id)
+        }
     }
 
     private var taskEntryIds: Set<PersistentIdentifier> {
@@ -139,6 +169,12 @@ struct DayPageContent: View {
                 pendingFocusId = nil
             }
         }
+        .onChange(of: collapsedEntryIds) { _, _ in
+            if let sel = selectedEntry,
+               !visibleEntries.contains(where: { $0.id == sel.id }) {
+                withAnimation(.easeInOut(duration: 0.2)) { selectedEntry = nil }
+            }
+        }
         #if os(macOS)
         .onAppear {
             deleteMonitor.start()
@@ -160,9 +196,9 @@ struct DayPageContent: View {
     @ViewBuilder
     private var entryRows: some View {
         DayEntryListView(
-            entries: entries,
+            entries: visibleEntries,
             activeDropZone: $activeDropZone,
-            onMoveEntry: moveEntry
+            onMoveEntry: moveEntryFromVisible
         ) { entry, index in
             entryRow(entry: entry, index: index)
         }
@@ -183,15 +219,18 @@ struct DayPageContent: View {
             entry: entry,
             focusedEntryId: $focusedEntryId,
             onAddNoteAfter: entry.kind == .note ? { insertNoteAfter(entry) } : nil,
-            onMoveToPrevious: index > 0 ? { pendingFocusId = entries[index - 1].id } : nil,
-            onMoveToNext: index < entries.count - 1 ? { pendingFocusId = entries[index + 1].id } : nil,
+            onMoveToPrevious: index > 0 ? { pendingFocusId = visibleEntries[index - 1].id } : nil,
+            onMoveToNext: index < visibleEntries.count - 1 ? { pendingFocusId = visibleEntries[index + 1].id } : nil,
             onDeleteEmpty: {
-                let prevId = index > 0 ? entries[index - 1].id : nil
+                let prevId = index > 0 ? visibleEntries[index - 1].id : nil
                 deleteEntry(entry, focusingId: prevId)
             },
             onIndent: { indentEntry(entry) },
             onOutdent: { outdentEntry(entry) },
-            onSelect: onSelect
+            onSelect: onSelect,
+            hasChildren: entryHasChildren(entry),
+            isCollapsed: collapsedEntryIds.contains(entry.id),
+            onToggleCollapse: { toggleCollapse(entry) }
         )
     }
 
@@ -320,12 +359,12 @@ struct DayPageContent: View {
     #if os(macOS)
     private func updateDeleteAction(for focusId: UUID?) {
         guard let focusId,
-              let idx = entries.firstIndex(where: { $0.id == focusId }) else {
+              let idx = visibleEntries.firstIndex(where: { $0.id == focusId }) else {
             deleteMonitor.action = nil
             return
         }
-        let entry = entries[idx]
-        let prevId = idx > 0 ? entries[idx - 1].id : nil
+        let entry = visibleEntries[idx]
+        let prevId = idx > 0 ? visibleEntries[idx - 1].id : nil
         deleteMonitor.action = {
             guard entry.isInlineSummaryEmpty else { return false }
             deleteEntry(entry, focusingId: prevId)
@@ -334,8 +373,15 @@ struct DayPageContent: View {
     }
     #endif
 
-    private func moveEntry(_ dragged: DayEntry, toDropIndex dropIndex: Int) {
-        DayEntryOrdering.moveEntry(dragged, toDropIndex: dropIndex, in: entries)
+    private func moveEntryFromVisible(_ dragged: DayEntry, toVisibleDropIndex dropIndex: Int) {
+        let fullDropIndex: Int
+        if dropIndex == 0 {
+            fullDropIndex = 0
+        } else {
+            let preceding = visibleEntries[dropIndex - 1]
+            fullDropIndex = (entries.firstIndex(where: { $0.id == preceding.id }) ?? 0) + 1
+        }
+        DayEntryOrdering.moveEntry(dragged, toDropIndex: fullDropIndex, in: entries)
     }
 
     private func addMeeting() {

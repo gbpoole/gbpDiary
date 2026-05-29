@@ -12,6 +12,9 @@ struct EntryRowView: View {
     var onIndent: (() -> Void)? = nil
     var onOutdent: (() -> Void)? = nil
     var onSelect: (() -> Void)? = nil
+    var hasChildren: Bool = false
+    var isCollapsed: Bool = false
+    var onToggleCollapse: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var editingTask: Task?
@@ -31,6 +34,19 @@ struct EntryRowView: View {
             }
         }
         .padding(.leading, CGFloat(entry.indentLevel) * Self.indentStep)
+        .overlay(alignment: .leading) {
+            if hasChildren {
+                Button { onToggleCollapse?() } label: {
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .frame(width: 20, height: 28)
+                .contentShape(Rectangle())
+                .padding(.leading, max(0, CGFloat(entry.indentLevel) * Self.indentStep - 14))
+            }
+        }
         .alert("Delete Meeting?", isPresented: $showingDeleteConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
