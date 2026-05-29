@@ -6,6 +6,7 @@ struct WeekView: View {
 
     @Query(sort: \Task.createdAt) private var allTasks: [Task]
     @Query private var allDayRecords: [DayRecord]
+    @State private var meetingNestError = false
 
     private var weekDays: [Date] {
         let cal = Calendar.current
@@ -24,6 +25,29 @@ struct WeekView: View {
             }
             .padding(.bottom, 20)
         }
+        .overlay(alignment: .bottom) {
+            if meetingNestError {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Text("Meetings cannot be nested inside another meeting.")
+                        .font(.callout)
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 10)
+                .background(.background)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .shadow(color: .black.opacity(0.15), radius: 4)
+                .padding(.bottom, 12)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: meetingNestError)
+    }
+
+    private func showMeetingNestError() {
+        meetingNestError = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { meetingNestError = false }
     }
 
     @ViewBuilder
@@ -47,7 +71,8 @@ struct WeekView: View {
             Divider()
                 .padding(.horizontal)
 
-            DayPageContent(date: day, dayRecord: record, allTasks: allTasks, showBacklog: false)
+            DayPageContent(date: day, dayRecord: record, allTasks: allTasks, showBacklog: false,
+                           onMeetingNestError: showMeetingNestError)
                 .padding(.bottom, 8)
         }
         .background(isToday ? Color.accentColor.opacity(0.04) : Color.clear)

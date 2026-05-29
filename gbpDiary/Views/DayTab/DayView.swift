@@ -59,6 +59,7 @@ struct DayPageContent: View {
     let allTasks: [Task]
     var showBacklog: Bool = true
     var showTaskSections: Bool = true
+    var onMeetingNestError: () -> Void = {}
 
     @Environment(\.modelContext) private var modelContext
     @FocusState private var focusedEntryId: UUID?
@@ -349,11 +350,11 @@ struct DayPageContent: View {
     }
 
     private func indentEntry(_ entry: DayEntry) {
-        DayEntryOrdering.indent(entry: entry, in: entries)
+        if !DayEntryOrdering.indent(entry: entry, in: entries) { onMeetingNestError() }
     }
 
     private func outdentEntry(_ entry: DayEntry) {
-        DayEntryOrdering.outdent(entry: entry, in: entries)
+        if !DayEntryOrdering.outdent(entry: entry, in: entries) { onMeetingNestError() }
     }
 
     #if os(macOS)
@@ -381,7 +382,9 @@ struct DayPageContent: View {
             let preceding = visibleEntries[dropIndex - 1]
             fullDropIndex = (entries.firstIndex(where: { $0.id == preceding.id }) ?? 0) + 1
         }
-        DayEntryOrdering.moveEntry(dragged, toDropIndex: fullDropIndex, in: entries)
+        if !DayEntryOrdering.moveEntry(dragged, toDropIndex: fullDropIndex, in: entries) {
+            onMeetingNestError()
+        }
     }
 
     private func addMeeting() {
@@ -402,6 +405,8 @@ struct DayView: View {
     let date: Date
     let dayRecord: DayRecord?
     let allTasks: [Task]
+
+    @State private var meetingNestError = false
 
     private var isToday: Bool { Calendar.current.isDateInToday(date) }
 
@@ -424,10 +429,36 @@ struct DayView: View {
                     .padding(.horizontal)
 
                 DayPageContent(date: date, dayRecord: dayRecord, allTasks: allTasks,
-                               showTaskSections: false)
+                               showTaskSections: false,
+                               onMeetingNestError: {
+                    meetingNestError = true
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { meetingNestError = false }
+                })
                     .padding(.vertical)
             }
         }
+        .overlay(alignment: .bottom) {
+            if meetingNestError {
+                meetingNestErrorBanner
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: meetingNestError)
+    }
+
+    private var meetingNestErrorBanner: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            Text("Meetings cannot be nested inside another meeting.")
+                .font(.callout)
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(.background)
+        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .shadow(color: .black.opacity(0.15), radius: 4)
+        .padding(.bottom, 12)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
     }
 }
 
