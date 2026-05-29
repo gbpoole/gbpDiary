@@ -156,28 +156,16 @@ struct EntryRowView: View {
 
     private var taskRow: some View {
         rowCard(selectable: true, verticalPadding: 2) {
-            if let task = entry.task {
-                TaskRowView(
-                    task: task,
-                    onEdit: { editingTask = task },
-                    inlineEditing: true,
-                    focusBinding: focusedEntryId,
-                    focusId: entry.id,
-                    onMoveToPrevious: onMoveToPrevious,
-                    onMoveToNext: onMoveToNext,
-                    onIndent: onIndent,
-                    onOutdent: onOutdent
-                )
-            } else {
-                HStack(alignment: .center, spacing: 10) {
-                    Image(systemName: "checkmark.circle")
-                        .foregroundStyle(.secondary)
-                        .frame(width: 22, height: 22)
-                    Text("(missing task)").foregroundStyle(.tertiary)
-                }
-                .padding(.horizontal)
-                .padding(.vertical, 5)
-            }
+            TaskEntryContent(
+                task: entry.task,
+                focusedEntryId: focusedEntryId,
+                focusId: entry.id,
+                onEdit: { task in editingTask = task },
+                onMoveToPrevious: onMoveToPrevious,
+                onMoveToNext: onMoveToNext,
+                onIndent: onIndent,
+                onOutdent: onOutdent
+            )
         }
         .contextMenu { deleteButton }
         .sheet(item: $editingTask) { task in
@@ -192,22 +180,15 @@ struct EntryRowView: View {
             get: { entry.inlineSummary },
             set: { entry.inlineSummary = $0 }
         )
-        return HStack(alignment: .center, spacing: 10) {
-            Image(systemName: "calendar")
-                .foregroundStyle(.blue)
-                .font(.system(size: 17))
-                .frame(width: 22, height: 22)
-            HStack(alignment: .center, spacing: 6) {
-                entryTextView(placeholder: "Meeting summary", text: summaryBinding)
-                if let m = entry.minutes {
-                    Chip(label: m.meetingAt.formatted(.dateTime.hour().minute()), color: .blue)
-                    InlineRowEditButton { editingMinutes = m }
-                }
-                if !isEntryFocused { Spacer(minLength: 0) }
+        return MeetingEntryContent(
+            summaryBinding: summaryBinding,
+            minutes: entry.minutes,
+            isEntryFocused: isEntryFocused,
+            onEdit: { minutes in editingMinutes = minutes },
+            inlineText: { binding in
+                entryTextView(placeholder: "Meeting summary", text: binding)
             }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
+        )
         .contextMenu { deleteButton }
         .modifier(RowCardStyling(selectable: true, verticalPadding: 2, onSelect: onSelect))
         .sheet(item: $editingMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
@@ -250,6 +231,69 @@ struct EntryRowView: View {
     ) -> some View {
         content()
             .modifier(RowCardStyling(selectable: selectable, verticalPadding: verticalPadding, onSelect: onSelect))
+    }
+}
+
+private struct TaskEntryContent: View {
+    let task: Task?
+    let focusedEntryId: FocusState<UUID?>.Binding
+    let focusId: UUID
+    let onEdit: (Task) -> Void
+    let onMoveToPrevious: (() -> Void)?
+    let onMoveToNext: (() -> Void)?
+    let onIndent: (() -> Void)?
+    let onOutdent: (() -> Void)?
+
+    var body: some View {
+        if let task {
+            TaskRowView(
+                task: task,
+                onEdit: { onEdit(task) },
+                inlineEditing: true,
+                focusBinding: focusedEntryId,
+                focusId: focusId,
+                onMoveToPrevious: onMoveToPrevious,
+                onMoveToNext: onMoveToNext,
+                onIndent: onIndent,
+                onOutdent: onOutdent
+            )
+        } else {
+            HStack(alignment: .center, spacing: 10) {
+                Image(systemName: "checkmark.circle")
+                    .foregroundStyle(.secondary)
+                    .frame(width: 22, height: 22)
+                Text("(missing task)").foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal)
+            .padding(.vertical, 5)
+        }
+    }
+}
+
+private struct MeetingEntryContent<InlineText: View>: View {
+    let summaryBinding: Binding<String>
+    let minutes: Minutes?
+    let isEntryFocused: Bool
+    let onEdit: (Minutes) -> Void
+    @ViewBuilder var inlineText: (Binding<String>) -> InlineText
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 10) {
+            Image(systemName: "calendar")
+                .foregroundStyle(.blue)
+                .font(.system(size: 17))
+                .frame(width: 22, height: 22)
+            HStack(alignment: .center, spacing: 6) {
+                inlineText(summaryBinding)
+                if let minutes {
+                    Chip(label: minutes.meetingAt.formatted(.dateTime.hour().minute()), color: .blue)
+                    InlineRowEditButton { onEdit(minutes) }
+                }
+                if !isEntryFocused { Spacer(minLength: 0) }
+            }
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 5)
     }
 }
 

@@ -171,7 +171,7 @@ struct DayPageContent: View {
 
     private func entryDropZone(at index: Int) -> some View {
         ZStack {
-            Color.clear.frame(height: 8)
+            Color.clear.frame(height: 4)
             if activeDropZone == index {
                 Rectangle()
                     .fill(Color.accentColor)
