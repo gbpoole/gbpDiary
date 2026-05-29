@@ -194,7 +194,7 @@ struct DayPageContent: View {
 
     @ViewBuilder
     private func entryRow(entry: DayEntry, index: Int) -> some View {
-        let onSelect: (() -> Void)? = (entry.kind == .task || entry.kind == .meeting) ? {
+        let onSelect: (() -> Void)? = entry.detailTarget != nil ? {
             withAnimation(.easeInOut(duration: 0.2)) {
                 if selectedEntry?.id == entry.id {
                     selectedEntry = nil
@@ -351,13 +351,7 @@ struct DayPageContent: View {
         let entry = entries[idx]
         let prevId = idx > 0 ? entries[idx - 1].id : nil
         deleteMonitor.action = {
-            let isEmpty: Bool
-            switch entry.kind {
-            case .task:    isEmpty = entry.task?.summary.isEmpty ?? true
-            case .meeting: isEmpty = entry.minutes?.summary?.isEmpty ?? true
-            case .note:    isEmpty = entry.text.isEmpty
-            }
-            guard isEmpty else { return false }
+            guard entry.isInlineSummaryEmpty else { return false }
             deleteEntry(entry, focusingId: prevId)
             return true
         }

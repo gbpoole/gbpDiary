@@ -8,9 +8,9 @@ struct EntryDetailPanel: View {
 
     var body: some View {
         Group {
-            if entry.kind == .task, let task = entry.task {
+            if case let .task(task) = entry.detailTarget {
                 TaskDetailPanel(task: task, onDismiss: onDismiss)
-            } else if entry.kind == .meeting, let minutes = entry.minutes {
+            } else if case let .meeting(minutes) = entry.detailTarget {
                 MeetingDetailPanel(minutes: minutes, onDismiss: onDismiss)
             } else {
                 EmptyView()

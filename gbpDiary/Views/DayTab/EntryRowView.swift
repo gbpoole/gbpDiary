@@ -194,10 +194,8 @@ struct EntryRowView: View {
 
     private var meetingRow: some View {
         let summaryBinding = Binding<String>(
-            get: { entry.minutes?.summary ?? "" },
-            set: { newValue in
-                if let m = entry.minutes { m.summary = newValue.isEmpty ? nil : newValue }
-            }
+            get: { entry.inlineSummary },
+            set: { entry.inlineSummary = $0 }
         )
         return HStack(alignment: .center, spacing: 10) {
             Image(systemName: "calendar")
@@ -303,4 +301,3 @@ private final class NoteViewModeNSView: NSView {
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool { true }
 }
 #endif
-
