@@ -56,14 +56,12 @@ struct NoteEntryContent: View {
                 }
                 .allowsHitTesting(isFocused)
                 .opacity(isFocused ? 1 : 0)
-
-            #if os(macOS)
-            if !isFocused {
-                NoteViewModeOverlay()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            #endif
         }
+        #if os(macOS)
+        .overlay {
+            if !isFocused { NoteViewModeOverlay() }
+        }
+        #endif
         .contentShape(Rectangle())
         .onTapGesture { focusedEntryId.wrappedValue = focusId }
     }
