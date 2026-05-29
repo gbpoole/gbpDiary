@@ -357,11 +357,30 @@ struct DayView: View {
     let dayRecord: DayRecord?
     let allTasks: [Task]
 
+    private var isToday: Bool { Calendar.current.isDateInToday(date) }
+
     var body: some View {
         ScrollView {
-            DayPageContent(date: date, dayRecord: dayRecord, allTasks: allTasks,
-                           showTaskSections: false)
-                .padding(.vertical)
+            VStack(alignment: .leading, spacing: 0) {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(date, format: .dateTime.weekday(.wide))
+                        .font(.title2.bold())
+                        .foregroundStyle(isToday ? Color.accentColor : .primary)
+                    Text(date, format: .dateTime.day().month(.wide).year())
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.horizontal)
+                .padding(.top, 28)
+                .padding(.bottom, 6)
+
+                Divider()
+                    .padding(.horizontal)
+
+                DayPageContent(date: date, dayRecord: dayRecord, allTasks: allTasks,
+                               showTaskSections: false)
+                    .padding(.vertical)
+            }
         }
     }
 }
