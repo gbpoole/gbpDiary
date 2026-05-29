@@ -125,12 +125,7 @@ struct TaskRowView: View {
                 Chip(label: "↻ \(fu.formatted(.dateTime.day().month()))",
                      color: overdue ? .red : .orange)
             }
-            Button(action: onEdit) {
-                Image(systemName: "pencil")
-                    .foregroundStyle(.tertiary)
-                    .font(.caption)
-            }
-            .buttonStyle(.plain)
+            InlineRowEditButton(action: onEdit)
             if !isFocusedInline {
                 Spacer(minLength: 0)
             }

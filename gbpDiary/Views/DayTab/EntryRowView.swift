@@ -201,12 +201,7 @@ struct EntryRowView: View {
                 entryTextView(placeholder: "Meeting summary", text: summaryBinding)
                 if let m = entry.minutes {
                     Chip(label: m.meetingAt.formatted(.dateTime.hour().minute()), color: .blue)
-                    Button {
-                        editingMinutes = m
-                    } label: {
-                        Image(systemName: "pencil").foregroundStyle(.tertiary).font(.caption)
-                    }
-                    .buttonStyle(.plain)
+                    InlineRowEditButton { editingMinutes = m }
                 }
                 if !isEntryFocused { Spacer(minLength: 0) }
             }
