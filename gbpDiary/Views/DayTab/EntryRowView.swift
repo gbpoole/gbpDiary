@@ -155,7 +155,7 @@ struct EntryRowView: View {
     // MARK: - Task
 
     private var taskRow: some View {
-        Group {
+        rowCard(selectable: true, verticalPadding: 2) {
             if let task = entry.task {
                 TaskRowView(
                     task: task,
@@ -168,7 +168,6 @@ struct EntryRowView: View {
                     onIndent: onIndent,
                     onOutdent: onOutdent
                 )
-                .simultaneousGesture(TapGesture().onEnded { _ in onSelect?() })
             } else {
                 HStack(alignment: .center, spacing: 10) {
                     Image(systemName: "checkmark.circle")
@@ -178,13 +177,9 @@ struct EntryRowView: View {
                 }
                 .padding(.horizontal)
                 .padding(.vertical, 5)
-                .contextMenu { deleteButton }
             }
         }
-        .background(Color.secondary.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .padding(.horizontal)
-        .padding(.vertical, 2)
+        .contextMenu { deleteButton }
         .sheet(item: $editingTask) { task in
             TaskEditorSheet(task: task, defaultDate: entry.createdAt)
         }
@@ -218,12 +213,8 @@ struct EntryRowView: View {
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
-        .simultaneousGesture(TapGesture().onEnded { _ in onSelect?() })
         .contextMenu { deleteButton }
-        .background(Color.secondary.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .padding(.horizontal)
-        .padding(.vertical, 2)
+        .modifier(RowCardStyling(selectable: true, verticalPadding: 2, onSelect: onSelect))
         .sheet(item: $editingMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
     }
 
@@ -266,6 +257,33 @@ struct EntryRowView: View {
                 modelContext.delete(entry)
             }
         }
+    }
+
+    private func rowCard<Content: View>(
+        selectable: Bool,
+        verticalPadding: CGFloat,
+        @ViewBuilder content: () -> Content
+    ) -> some View {
+        content()
+            .modifier(RowCardStyling(selectable: selectable, verticalPadding: verticalPadding, onSelect: onSelect))
+    }
+}
+
+private struct RowCardStyling: ViewModifier {
+    let selectable: Bool
+    let verticalPadding: CGFloat
+    let onSelect: (() -> Void)?
+
+    func body(content: Content) -> some View {
+        content
+            .background(Color.secondary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .padding(.horizontal)
+            .padding(.vertical, verticalPadding)
+            .simultaneousGesture(TapGesture().onEnded { _ in
+                guard selectable else { return }
+                onSelect?()
+            })
     }
 }
 
