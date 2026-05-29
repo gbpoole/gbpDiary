@@ -15,6 +15,7 @@ struct EntryRowView: View {
     var hasChildren: Bool = false
     var isCollapsed: Bool = false
     var onToggleCollapse: (() -> Void)? = nil
+    var onSplitNote: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var editingTask: Task?
@@ -123,14 +124,23 @@ struct EntryRowView: View {
                 #else
                 return true
                 #endif
-            }
+            },
+            onSplit: onSplitNote
         )
         .padding(8)
         .background(Color.secondary.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .padding(.horizontal)
         .padding(.vertical, 4)
-        .contextMenu { deleteButton }
+        .contextMenu {
+            deleteButton
+            #if os(macOS)
+            if isEntryFocused, onSplitNote != nil {
+                Divider()
+                Button("Split Note Here") { onSplitNote?() }
+            }
+            #endif
+        }
     }
 
     // MARK: - Task

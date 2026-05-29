@@ -26,6 +26,27 @@ private final class DeleteKeyMonitor: @unchecked Sendable {
     }
 }
 
+// Intercepts the Escape key to deactivate the currently focused diary entry.
+// Returns the event unconsumed when nothing is focused so sheets and alerts
+// can still dismiss themselves with Escape.
+private final class EscapeKeyMonitor: @unchecked Sendable {
+    private var monitor: Any?
+    var action: (() -> Bool)?
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return event }  // 53 = ⎋
+            let handled = MainActor.assumeIsolated { self?.action?() ?? false }
+            return handled ? nil : event
+        }
+    }
+
+    func stop() {
+        if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
+    }
+}
+
 // Monitors leftMouseDown events and calls action whenever the click lands
 // outside an NSTextView. Used to clear the focused note entry on outside clicks
 // and to defocus before a drag begins, ensuring the drag-blocking overlay
@@ -51,6 +72,14 @@ private final class FocusClearMonitor: @unchecked Sendable {
 }
 #endif
 
+// MARK: - Shared banner message type
+
+struct BannerMessage: Equatable {
+    let text: String
+    let systemImage: String
+    let tint: Color
+}
+
 // MARK: - Shared day content (used by DayView and WeekView)
 
 struct DayPageContent: View {
@@ -59,7 +88,7 @@ struct DayPageContent: View {
     let allTasks: [Task]
     var showBacklog: Bool = true
     var showTaskSections: Bool = true
-    var onMeetingNestError: () -> Void = {}
+    var onShowBanner: (BannerMessage) -> Void = { _ in }
 
     @Environment(\.modelContext) private var modelContext
     @FocusState private var focusedEntryId: UUID?
@@ -69,6 +98,7 @@ struct DayPageContent: View {
     #if os(macOS)
     @State private var deleteMonitor = DeleteKeyMonitor()
     @State private var focusClearMonitor = FocusClearMonitor()
+    @State private var escapeMonitor = EscapeKeyMonitor()
     #endif
 
     @State private var selectedEntry: DayEntry?
@@ -111,6 +141,55 @@ struct DayPageContent: View {
         } else {
             collapsedEntryIds.insert(entry.id)
         }
+    }
+
+    // Scans entries for consecutive .note pairs and merges them.
+    // Returns a map of deleted-entry-id → absorbing entry so callers
+    // can redirect focus if the focused entry was merged away.
+    @discardableResult
+    private func mergeAdjacentNotes() -> [UUID: DayEntry] {
+        var sorted = entries
+        var deletedToAbsorber: [UUID: DayEntry] = [:]
+        var i = 0
+        while i < sorted.count - 1 {
+            let a = sorted[i], b = sorted[i + 1]
+            if a.kind == .note && b.kind == .note && !a.text.isEmpty && !b.text.isEmpty {
+                a.text = a.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    + "\n\n"
+                    + b.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                deletedToAbsorber[b.id] = a
+                sorted.remove(at: i + 1)
+            } else {
+                i += 1
+            }
+        }
+        if !deletedToAbsorber.isEmpty {
+            for entry in entries where deletedToAbsorber[entry.id] != nil { modelContext.delete(entry) }
+            onShowBanner(BannerMessage(text: "Notes merged.", systemImage: "arrow.triangle.merge", tint: .accentColor))
+        }
+        return deletedToAbsorber
+    }
+
+    private func splitNote(_ entry: DayEntry) {
+        #if os(macOS)
+        guard entry.kind == .note,
+              let tv = NSApp.keyWindow?.firstResponder as? NSTextView else { return }
+        let currentText = tv.string
+        let splitPoint = min(tv.selectedRange().location, currentText.utf16.count)
+        let ns = currentText as NSString
+        let before = ns.substring(to: splitPoint).trimmingCharacters(in: .whitespacesAndNewlines)
+        let after  = ns.substring(from: splitPoint).trimmingCharacters(in: .whitespacesAndNewlines)
+        entry.text = before
+        let record = findOrCreateDayRecord()
+        for e in record.entries where e.sortOrder > entry.sortOrder { e.sortOrder += 1 }
+        let newEntry = DayEntry(kind: .note, text: after,
+                                sortOrder: entry.sortOrder + 1,
+                                indentLevel: entry.indentLevel)
+        newEntry.dayRecord = record
+        modelContext.insert(newEntry)
+        pendingFocusId = newEntry.id
+        onShowBanner(BannerMessage(text: "Note split.", systemImage: "scissors", tint: .accentColor))
+        #endif
     }
 
     private var taskEntryIds: Set<PersistentIdentifier> {
@@ -181,10 +260,17 @@ struct DayPageContent: View {
             deleteMonitor.start()
             focusClearMonitor.action = { if focusedEntryId != nil { focusedEntryId = nil } }
             focusClearMonitor.start()
+            escapeMonitor.action = {
+                guard focusedEntryId != nil else { return false }
+                focusedEntryId = nil
+                return true
+            }
+            escapeMonitor.start()
         }
         .onDisappear {
             deleteMonitor.stop()
             focusClearMonitor.stop()
+            escapeMonitor.stop()
         }
         .onChange(of: focusedEntryId) { _, newId in
             updateDeleteAction(for: newId)
@@ -231,7 +317,8 @@ struct DayPageContent: View {
             onSelect: onSelect,
             hasChildren: entryHasChildren(entry),
             isCollapsed: collapsedEntryIds.contains(entry.id),
-            onToggleCollapse: { toggleCollapse(entry) }
+            onToggleCollapse: { toggleCollapse(entry) },
+            onSplitNote: entry.kind == .note ? { splitNote(entry) } : nil
         )
     }
 
@@ -347,14 +434,16 @@ struct DayPageContent: View {
         if selectedEntry?.id == entry.id { selectedEntry = nil }
         if let id = focusingId { pendingFocusId = id }
         modelContext.delete(entry)
+        let merged = mergeAdjacentNotes()
+        if let pid = pendingFocusId, let absorber = merged[pid] { pendingFocusId = absorber.id }
     }
 
     private func indentEntry(_ entry: DayEntry) {
-        if !DayEntryOrdering.indent(entry: entry, in: entries) { onMeetingNestError() }
+        if !DayEntryOrdering.indent(entry: entry, in: entries) { onShowBanner(BannerMessage(text: "Meetings cannot be nested inside another meeting.", systemImage: "exclamationmark.triangle.fill", tint: .orange)) }
     }
 
     private func outdentEntry(_ entry: DayEntry) {
-        if !DayEntryOrdering.outdent(entry: entry, in: entries) { onMeetingNestError() }
+        if !DayEntryOrdering.outdent(entry: entry, in: entries) { onShowBanner(BannerMessage(text: "Meetings cannot be nested inside another meeting.", systemImage: "exclamationmark.triangle.fill", tint: .orange)) }
     }
 
     #if os(macOS)
@@ -383,7 +472,9 @@ struct DayPageContent: View {
             fullDropIndex = (entries.firstIndex(where: { $0.id == preceding.id }) ?? 0) + 1
         }
         if !DayEntryOrdering.moveEntry(dragged, toDropIndex: fullDropIndex, in: entries) {
-            onMeetingNestError()
+            onShowBanner(BannerMessage(text: "Meetings cannot be nested inside another meeting.", systemImage: "exclamationmark.triangle.fill", tint: .orange))
+        } else {
+            mergeAdjacentNotes()
         }
     }
 
@@ -406,7 +497,7 @@ struct DayView: View {
     let dayRecord: DayRecord?
     let allTasks: [Task]
 
-    @State private var meetingNestError = false
+    @State private var banner: BannerMessage? = nil
 
     private var isToday: Bool { Calendar.current.isDateInToday(date) }
 
@@ -430,27 +521,25 @@ struct DayView: View {
 
                 DayPageContent(date: date, dayRecord: dayRecord, allTasks: allTasks,
                                showTaskSections: false,
-                               onMeetingNestError: {
-                    meetingNestError = true
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { meetingNestError = false }
-                })
+                               onShowBanner: showBanner)
                     .padding(.vertical)
             }
         }
         .overlay(alignment: .bottom) {
-            if meetingNestError {
-                meetingNestErrorBanner
-            }
+            if let msg = banner { bannerView(msg) }
         }
-        .animation(.easeInOut(duration: 0.25), value: meetingNestError)
+        .animation(.easeInOut(duration: 0.25), value: banner)
     }
 
-    private var meetingNestErrorBanner: some View {
+    private func showBanner(_ msg: BannerMessage) {
+        banner = msg
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { banner = nil }
+    }
+
+    private func bannerView(_ msg: BannerMessage) -> some View {
         HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.orange)
-            Text("Meetings cannot be nested inside another meeting.")
-                .font(.callout)
+            Image(systemName: msg.systemImage).foregroundStyle(msg.tint)
+            Text(msg.text).font(.callout)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)

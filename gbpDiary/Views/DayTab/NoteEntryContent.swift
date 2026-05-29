@@ -12,6 +12,7 @@ struct NoteEntryContent: View {
     let onMoveToNext: (() -> Void)?
     let allowMoveToPrevious: () -> Bool
     let allowMoveToNext: () -> Bool
+    var onSplit: (() -> Void)? = nil
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -34,7 +35,7 @@ struct NoteEntryContent: View {
                 .font(.body)
                 .scrollContentBackground(.hidden)
                 .focused(focusedEntryId, equals: focusId)
-                .frame(minHeight: 44)
+                .frame(minHeight: isFocused ? 44 : 0, maxHeight: isFocused ? .infinity : 0)
                 .scrollDisabled(true)
                 .onKeyPress(.tab, phases: .down) { _ in onIndent(); return .handled }
                 .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in onOutdent(); return .handled }
@@ -48,6 +49,11 @@ struct NoteEntryContent: View {
                     if let move = onMoveToNext { move(); return .handled }
                     return .ignored
                 }
+                .onKeyPress(.return, phases: .down) { press in
+                    guard press.modifiers.contains(.command), let split = onSplit else { return .ignored }
+                    split()
+                    return .handled
+                }
                 .allowsHitTesting(isFocused)
                 .opacity(isFocused ? 1 : 0)
 
@@ -58,7 +64,6 @@ struct NoteEntryContent: View {
             }
             #endif
         }
-        .frame(minHeight: 44)
         .contentShape(Rectangle())
         .onTapGesture { focusedEntryId.wrappedValue = focusId }
     }
