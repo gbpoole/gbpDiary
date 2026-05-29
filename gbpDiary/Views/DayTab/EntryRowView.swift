@@ -244,16 +244,12 @@ struct EntryRowView: View {
                 .clipped()
                 .opacity(isEntryFocused ? 1 : 0)
                 .allowsHitTesting(isEntryFocused)
-                .onKeyPress(.tab, phases: .down) { _ in indent(); return .handled }
-                .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in outdent(); return .handled }
-                .onKeyPress(.upArrow, phases: .down) { _ in
-                    if let move = onMoveToPrevious { move(); return .handled }
-                    return .ignored
-                }
-                .onKeyPress(.downArrow, phases: .down) { _ in
-                    if let move = onMoveToNext { move(); return .handled }
-                    return .ignored
-                }
+                .entryInlineKeyHandling(
+                    onIndent: indent,
+                    onOutdent: outdent,
+                    onMoveToPrevious: onMoveToPrevious,
+                    onMoveToNext: onMoveToNext
+                )
         }
         .frame(maxWidth: isEntryFocused ? .infinity : nil)
         .contentShape(Rectangle())

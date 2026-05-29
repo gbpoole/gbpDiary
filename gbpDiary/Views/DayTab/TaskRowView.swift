@@ -99,22 +99,12 @@ struct TaskRowView: View {
                     .clipped()
                     .opacity(isFocusedInline ? 1 : 0)
                     .allowsHitTesting(isFocusedInline)
-                    .onKeyPress(.tab, phases: .down) { _ in
-                        if let move = onIndent { move(); return .handled }
-                        return .ignored
-                    }
-                    .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in
-                        if let move = onOutdent { move(); return .handled }
-                        return .ignored
-                    }
-                    .onKeyPress(.upArrow, phases: .down) { _ in
-                        if let move = onMoveToPrevious { move(); return .handled }
-                        return .ignored
-                    }
-                    .onKeyPress(.downArrow, phases: .down) { _ in
-                        if let move = onMoveToNext { move(); return .handled }
-                        return .ignored
-                    }
+                    .entryInlineKeyHandling(
+                        onIndent: onIndent,
+                        onOutdent: onOutdent,
+                        onMoveToPrevious: onMoveToPrevious,
+                        onMoveToNext: onMoveToNext
+                    )
             }
             .frame(maxWidth: isFocusedInline ? .infinity : nil)
             .contentShape(Rectangle())
