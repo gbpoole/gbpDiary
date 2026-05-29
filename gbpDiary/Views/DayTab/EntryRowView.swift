@@ -85,65 +85,30 @@ struct EntryRowView: View {
     // MARK: - Note
 
     private var noteRow: some View {
-        ZStack(alignment: .topLeading) {
-            if !isEntryFocused {
-                if entry.text.isEmpty {
-                    Text("Add a note…")
-                        .foregroundStyle(.tertiary)
-                        .font(.body)
-                        .padding(.top, 9)
-                        .padding(.leading, 5)
-                } else {
-                    // StructuredText renders full Markdown (bullets, headings, code blocks).
-                    // Two trailing spaces before \n produce CommonMark hard line breaks,
-                    // preserving single-newline separation as the user typed it.
-                    StructuredText(markdown: entry.text.replacingOccurrences(of: "\n", with: "  \n"))
-                        .textual.structuredTextStyle(.gitHub)
-                        .font(.body)
-                        .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
+        NoteEntryContent(
+            text: $entry.text,
+            isFocused: isEntryFocused,
+            focusedEntryId: focusedEntryId,
+            focusId: entry.id,
+            onIndent: indent,
+            onOutdent: outdent,
+            onMoveToPrevious: onMoveToPrevious,
+            onMoveToNext: onMoveToNext,
+            allowMoveToPrevious: {
+                #if os(macOS)
+                return cursorIsOnFirstVisualLine
+                #else
+                return true
+                #endif
+            },
+            allowMoveToNext: {
+                #if os(macOS)
+                return cursorIsOnLastVisualLine
+                #else
+                return true
+                #endif
             }
-
-            TextEditor(text: $entry.text)
-                .font(.body)
-                .scrollContentBackground(.hidden)
-                .focused(focusedEntryId, equals: entry.id)
-                .frame(minHeight: 44)
-                .scrollDisabled(true)
-                .onKeyPress(.tab, phases: .down) { _ in indent(); return .handled }
-                .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in outdent(); return .handled }
-                .onKeyPress(.upArrow, phases: .down) { _ in
-                    #if os(macOS)
-                    guard cursorIsOnFirstVisualLine else { return .ignored }
-                    #endif
-                    if let move = onMoveToPrevious { move(); return .handled }
-                    return .ignored
-                }
-                .onKeyPress(.downArrow, phases: .down) { _ in
-                    #if os(macOS)
-                    guard cursorIsOnLastVisualLine else { return .ignored }
-                    #endif
-                    if let move = onMoveToNext { move(); return .handled }
-                    return .ignored
-                }
-                .allowsHitTesting(isEntryFocused)
-                .opacity(isEntryFocused ? 1 : 0)
-
-            // NoteViewModeOverlay sits above the ZStack when unfocused. Its hitTest
-            // returns nil so mouse events fall through to SwiftUI's gesture layer
-            // (enabling .draggable() and .onTapGesture to work normally). It exists
-            // solely to swallow UUID drag-drops that would otherwise land in the
-            // hidden TextEditor (NSDraggingDestination is frame-based, not hit-test-based).
-            #if os(macOS)
-            if !isEntryFocused {
-                NoteViewModeOverlay()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            #endif
-        }
-        .frame(minHeight: 44)
-        .contentShape(Rectangle())
-        .onTapGesture { focusedEntryId.wrappedValue = entry.id }  // handles empty-note tap
+        )
         .padding(8)
         .background(Color.secondary.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 6))
@@ -231,6 +196,69 @@ struct EntryRowView: View {
     ) -> some View {
         content()
             .modifier(RowCardStyling(selectable: selectable, verticalPadding: verticalPadding, onSelect: onSelect))
+    }
+}
+
+private struct NoteEntryContent: View {
+    @Binding var text: String
+    let isFocused: Bool
+    let focusedEntryId: FocusState<UUID?>.Binding
+    let focusId: UUID
+    let onIndent: () -> Void
+    let onOutdent: () -> Void
+    let onMoveToPrevious: (() -> Void)?
+    let onMoveToNext: (() -> Void)?
+    let allowMoveToPrevious: () -> Bool
+    let allowMoveToNext: () -> Bool
+
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            if !isFocused {
+                if text.isEmpty {
+                    Text("Add a note…")
+                        .foregroundStyle(.tertiary)
+                        .font(.body)
+                        .padding(.top, 9)
+                        .padding(.leading, 5)
+                } else {
+                    StructuredText(markdown: text.replacingOccurrences(of: "\n", with: "  \n"))
+                        .textual.structuredTextStyle(.gitHub)
+                        .font(.body)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+
+            TextEditor(text: $text)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .focused(focusedEntryId, equals: focusId)
+                .frame(minHeight: 44)
+                .scrollDisabled(true)
+                .onKeyPress(.tab, phases: .down) { _ in onIndent(); return .handled }
+                .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in onOutdent(); return .handled }
+                .onKeyPress(.upArrow, phases: .down) { _ in
+                    guard allowMoveToPrevious() else { return .ignored }
+                    if let move = onMoveToPrevious { move(); return .handled }
+                    return .ignored
+                }
+                .onKeyPress(.downArrow, phases: .down) { _ in
+                    guard allowMoveToNext() else { return .ignored }
+                    if let move = onMoveToNext { move(); return .handled }
+                    return .ignored
+                }
+                .allowsHitTesting(isFocused)
+                .opacity(isFocused ? 1 : 0)
+
+            #if os(macOS)
+            if !isFocused {
+                NoteViewModeOverlay()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            #endif
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .onTapGesture { focusedEntryId.wrappedValue = focusId }
     }
 }
 
