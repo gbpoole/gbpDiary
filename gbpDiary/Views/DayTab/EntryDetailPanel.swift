@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import Textual
 
 struct EntryDetailPanel: View {
     let entry: DayEntry
@@ -56,20 +57,21 @@ private struct TaskDetailPanel: View {
 
             Divider()
 
-            // Notes editor
-            Text("Notes")
-                .font(.subheadline.bold())
-                .foregroundStyle(.secondary)
+            ScrollView {
+                MarkdownEditorSection(
+                    text: Binding(
+                        get: { task.notes ?? "" },
+                        set: { task.notes = $0.isEmpty ? nil : $0 }
+                    ),
+                    label: "Notes",
+                    placeholder: "No notes.",
+                    minEditorHeight: 80,
+                    startEditing: false
+                )
                 .padding(.horizontal)
                 .padding(.top, 12)
-                .padding(.bottom, 4)
-
-            TextEditor(text: Binding(
-                get: { task.notes ?? "" },
-                set: { task.notes = $0.isEmpty ? nil : $0 }
-            ))
-            .font(.body)
-            .padding(.horizontal, 8)
+                .padding(.bottom, 8)
+            }
             .frame(maxHeight: .infinity)
         }
     }
@@ -141,19 +143,21 @@ private struct MeetingDetailPanel: View {
 
             Divider()
 
-            Text("Minutes")
-                .font(.subheadline.bold())
-                .foregroundStyle(.secondary)
+            ScrollView {
+                MarkdownEditorSection(
+                    text: Binding(
+                        get: { minutes.minutesContent ?? "" },
+                        set: { minutes.minutesContent = $0.isEmpty ? nil : $0 }
+                    ),
+                    label: "Minutes",
+                    placeholder: "No minutes recorded.",
+                    minEditorHeight: 80,
+                    startEditing: false
+                )
                 .padding(.horizontal)
                 .padding(.top, 12)
-                .padding(.bottom, 4)
-
-            TextEditor(text: Binding(
-                get: { minutes.minutesContent ?? "" },
-                set: { minutes.minutesContent = $0.isEmpty ? nil : $0 }
-            ))
-            .font(.body)
-            .padding(.horizontal, 8)
+                .padding(.bottom, 8)
+            }
             .frame(maxHeight: .infinity)
         }
     }

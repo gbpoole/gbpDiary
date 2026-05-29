@@ -25,6 +25,30 @@ private final class DeleteKeyMonitor: @unchecked Sendable {
         if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
     }
 }
+
+// Monitors leftMouseDown events and calls action whenever the click lands
+// outside an NSTextView. Used to clear the focused note entry on outside clicks
+// and to defocus before a drag begins, ensuring the drag-blocking overlay
+// reappears on the previously-focused note before any drag arrives.
+private final class FocusClearMonitor: @unchecked Sendable {
+    private var monitor: Any?
+    var action: (() -> Void)?
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            guard let action = self?.action,
+                  let hit = NSApp.keyWindow?.contentView?.hitTest(event.locationInWindow),
+                  !(hit is NSTextView) else { return event }
+            MainActor.assumeIsolated(action)
+            return event
+        }
+    }
+
+    func stop() {
+        if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
+    }
+}
 #endif
 
 // MARK: - Shared day content (used by DayView and WeekView)
@@ -43,6 +67,7 @@ struct DayPageContent: View {
     @State private var editingTask: Task?
     #if os(macOS)
     @State private var deleteMonitor = DeleteKeyMonitor()
+    @State private var focusClearMonitor = FocusClearMonitor()
     #endif
 
     @State private var selectedEntry: DayEntry?
@@ -115,8 +140,15 @@ struct DayPageContent: View {
             }
         }
         #if os(macOS)
-        .onAppear { deleteMonitor.start() }
-        .onDisappear { deleteMonitor.stop() }
+        .onAppear {
+            deleteMonitor.start()
+            focusClearMonitor.action = { if focusedEntryId != nil { focusedEntryId = nil } }
+            focusClearMonitor.start()
+        }
+        .onDisappear {
+            deleteMonitor.stop()
+            focusClearMonitor.stop()
+        }
         .onChange(of: focusedEntryId) { _, newId in
             updateDeleteAction(for: newId)
         }

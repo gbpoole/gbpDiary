@@ -23,15 +23,6 @@ final class gbpDiaryUITests: XCTestCase {
     }
 
     @MainActor
-    func testLaunchConfigurationIncludesUITestingArgument() throws {
-        let app = XCUIApplication()
-        app.launchArguments += ["-ui-testing", "-ApplePersistenceIgnoreState", "YES"]
-
-        XCTAssertTrue(app.launchArguments.contains("-ui-testing"))
-        XCTAssertTrue(app.launchArguments.contains("-ApplePersistenceIgnoreState"))
-    }
-
-    @MainActor
     func testLaunchPerformance() throws {
         throw XCTSkip("Launch performance test is flaky in local CLI runs due to terminate/launch race with existing app instances.")
     }

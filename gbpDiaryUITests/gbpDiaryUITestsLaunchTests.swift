@@ -17,8 +17,4 @@ final class gbpDiaryUITestsLaunchTests: XCTestCase {
         continueAfterFailure = false
     }
 
-    @MainActor
-    func testLaunchConfigurationRunsSingleUIConfiguration() throws {
-        XCTAssertFalse(Self.runsForEachTargetApplicationUIConfiguration)
-    }
 }

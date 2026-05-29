@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import Textual
 
 struct EntryRowView: View {
     @Bindable var entry: DayEntry
@@ -84,33 +85,71 @@ struct EntryRowView: View {
     // MARK: - Note
 
     private var noteRow: some View {
-        TextEditor(text: $entry.text)
-            .font(.body)
-            .focused(focusedEntryId, equals: entry.id)
-            .frame(minHeight: 44)
-            .scrollDisabled(true)
-            .onKeyPress(.tab, phases: .down) { _ in indent(); return .handled }
-            .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in outdent(); return .handled }
-            .onKeyPress(.upArrow, phases: .down) { _ in
-                #if os(macOS)
-                guard cursorIsOnFirstVisualLine else { return .ignored }
-                #endif
-                if let move = onMoveToPrevious { move(); return .handled }
-                return .ignored
+        ZStack(alignment: .topLeading) {
+            if !isEntryFocused {
+                if entry.text.isEmpty {
+                    Text("Add a note…")
+                        .foregroundStyle(.tertiary)
+                        .font(.body)
+                        .padding(.top, 9)
+                        .padding(.leading, 5)
+                } else {
+                    // StructuredText renders full Markdown (bullets, headings, code blocks).
+                    // Two trailing spaces before \n produce CommonMark hard line breaks,
+                    // preserving single-newline separation as the user typed it.
+                    StructuredText(markdown: entry.text.replacingOccurrences(of: "\n", with: "  \n"))
+                        .textual.structuredTextStyle(.gitHub)
+                        .font(.body)
+                        .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
             }
-            .onKeyPress(.downArrow, phases: .down) { _ in
-                #if os(macOS)
-                guard cursorIsOnLastVisualLine else { return .ignored }
-                #endif
-                if let move = onMoveToNext { move(); return .handled }
-                return .ignored
+
+            TextEditor(text: $entry.text)
+                .font(.body)
+                .scrollContentBackground(.hidden)
+                .focused(focusedEntryId, equals: entry.id)
+                .frame(minHeight: 44)
+                .scrollDisabled(true)
+                .onKeyPress(.tab, phases: .down) { _ in indent(); return .handled }
+                .onKeyPress(KeyEquivalent("\u{19}"), phases: .down) { _ in outdent(); return .handled }
+                .onKeyPress(.upArrow, phases: .down) { _ in
+                    #if os(macOS)
+                    guard cursorIsOnFirstVisualLine else { return .ignored }
+                    #endif
+                    if let move = onMoveToPrevious { move(); return .handled }
+                    return .ignored
+                }
+                .onKeyPress(.downArrow, phases: .down) { _ in
+                    #if os(macOS)
+                    guard cursorIsOnLastVisualLine else { return .ignored }
+                    #endif
+                    if let move = onMoveToNext { move(); return .handled }
+                    return .ignored
+                }
+                .allowsHitTesting(isEntryFocused)
+                .opacity(isEntryFocused ? 1 : 0)
+
+            // NoteViewModeOverlay sits above the ZStack when unfocused. Its hitTest
+            // returns nil so mouse events fall through to SwiftUI's gesture layer
+            // (enabling .draggable() and .onTapGesture to work normally). It exists
+            // solely to swallow UUID drag-drops that would otherwise land in the
+            // hidden TextEditor (NSDraggingDestination is frame-based, not hit-test-based).
+            #if os(macOS)
+            if !isEntryFocused {
+                NoteViewModeOverlay()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .padding(8)
-            .background(Color.secondary.opacity(0.06))
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .padding(.horizontal)
-            .padding(.vertical, 4)
-            .contextMenu { deleteButton }
+            #endif
+        }
+        .frame(minHeight: 44)
+        .contentShape(Rectangle())
+        .onTapGesture { focusedEntryId.wrappedValue = entry.id }  // handles empty-note tap
+        .padding(8)
+        .background(Color.secondary.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal)
+        .padding(.vertical, 4)
+        .contextMenu { deleteButton }
     }
 
     // MARK: - Task
@@ -236,4 +275,32 @@ struct EntryRowView: View {
     }
 }
 
+// MARK: - AppKit view-mode overlay
+
+// Present in the ZStack when the note row is unfocused.
+// hitTest returns nil so AppKit's mouse dispatch skips this view — mouse events
+// fall through to SwiftUI's gesture recognizers, enabling .draggable() and
+// .onTapGesture to work normally from anywhere on the row.
+// NSDraggingDestination is retained because drag delivery is frame-based (not
+// hit-test-based): it swallows UUID string drops, preventing them from landing
+// in the hidden TextEditor below.
+#if os(macOS)
+private struct NoteViewModeOverlay: NSViewRepresentable {
+    func makeNSView(context: Context) -> NoteViewModeNSView { NoteViewModeNSView() }
+    func updateNSView(_ nsView: NoteViewModeNSView, context: Context) {}
+}
+
+private final class NoteViewModeNSView: NSView {
+    init() {
+        super.init(frame: .zero)
+        registerForDraggedTypes([.string])
+    }
+    required init?(coder: NSCoder) { fatalError() }
+    override var isOpaque: Bool { false }
+    override var acceptsFirstResponder: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { .generic }
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool { true }
+}
+#endif
 

@@ -84,12 +84,17 @@ struct MinutesDetailView: View {
     }
 
     private var notesSection: some View {
-        GroupBox("Notes") {
-            TextEditor(text: Binding(
-                get: { minutes.minutesContent ?? "" },
-                set: { minutes.minutesContent = $0.isEmpty ? nil : $0 }
-            ))
-            .frame(minHeight: 120)
+        GroupBox {
+            MarkdownEditorSection(
+                text: Binding(
+                    get: { minutes.minutesContent ?? "" },
+                    set: { minutes.minutesContent = $0.isEmpty ? nil : $0 }
+                ),
+                label: "Notes",
+                placeholder: "No minutes recorded.",
+                minEditorHeight: 120,
+                startEditing: asSheet
+            )
         }
     }
 
