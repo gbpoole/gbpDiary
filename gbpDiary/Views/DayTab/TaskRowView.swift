@@ -84,31 +84,19 @@ struct TaskRowView: View {
     @ViewBuilder
     private var inlineTitleView: some View {
         if inlineEditing, let fb = focusBinding, let fid = focusId {
-            ZStack(alignment: .leading) {
-                Text(task.summary.isEmpty ? " " : task.summary)
-                    .lineLimit(1)
-                    .strikethrough(task.status == .cancelled)
-                    .foregroundStyle(task.status == .cancelled ? Color.secondary : Color.primary)
-                    .opacity(isFocusedInline ? 0 : 1)
-                TextField("", text: $task.summary)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1)
-                    .focused(fb, equals: fid)
-                    .foregroundStyle(task.status == .cancelled ? Color.secondary : Color.primary)
-                    .frame(maxWidth: isFocusedInline ? .infinity : 0)
-                    .clipped()
-                    .opacity(isFocusedInline ? 1 : 0)
-                    .allowsHitTesting(isFocusedInline)
-                    .entryInlineKeyHandling(
-                        onIndent: onIndent,
-                        onOutdent: onOutdent,
-                        onMoveToPrevious: onMoveToPrevious,
-                        onMoveToNext: onMoveToNext
-                    )
-            }
-            .frame(maxWidth: isFocusedInline ? .infinity : nil)
-            .contentShape(Rectangle())
-            .onTapGesture { fb.wrappedValue = fid }
+            InlineEditableSingleLineText(
+                placeholder: "",
+                text: $task.summary,
+                isFocused: isFocusedInline,
+                focusBinding: fb,
+                focusId: fid,
+                struckThrough: task.status == .cancelled,
+                foregroundColor: task.status == .cancelled ? .secondary : .primary,
+                onIndent: onIndent,
+                onOutdent: onOutdent,
+                onMoveToPrevious: onMoveToPrevious,
+                onMoveToNext: onMoveToNext
+            )
         } else {
             Text(task.summary)
                 .lineLimit(1)

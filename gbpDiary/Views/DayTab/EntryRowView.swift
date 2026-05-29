@@ -223,28 +223,17 @@ struct EntryRowView: View {
     // focus machinery and inline editing when focused.
     @ViewBuilder
     private func entryTextView(placeholder: String, text: Binding<String>) -> some View {
-        ZStack(alignment: .leading) {
-            Text(text.wrappedValue.isEmpty ? " " : text.wrappedValue)
-                .lineLimit(1)
-                .opacity(isEntryFocused ? 0 : 1)
-            TextField(placeholder, text: text)
-                .textFieldStyle(.plain)
-                .lineLimit(1)
-                .focused(focusedEntryId, equals: entry.id)
-                .frame(maxWidth: isEntryFocused ? .infinity : 0)
-                .clipped()
-                .opacity(isEntryFocused ? 1 : 0)
-                .allowsHitTesting(isEntryFocused)
-                .entryInlineKeyHandling(
-                    onIndent: indent,
-                    onOutdent: outdent,
-                    onMoveToPrevious: onMoveToPrevious,
-                    onMoveToNext: onMoveToNext
-                )
-        }
-        .frame(maxWidth: isEntryFocused ? .infinity : nil)
-        .contentShape(Rectangle())
-        .onTapGesture { focusedEntryId.wrappedValue = entry.id }
+        InlineEditableSingleLineText(
+            placeholder: placeholder,
+            text: text,
+            isFocused: isEntryFocused,
+            focusBinding: focusedEntryId,
+            focusId: entry.id,
+            onIndent: indent,
+            onOutdent: outdent,
+            onMoveToPrevious: onMoveToPrevious,
+            onMoveToNext: onMoveToNext
+        )
     }
 
     // MARK: - Shared
