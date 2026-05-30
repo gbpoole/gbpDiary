@@ -143,31 +143,14 @@ struct DayPageContent: View {
         }
     }
 
-    // Scans entries for consecutive .note pairs and merges them.
-    // Returns a map of deleted-entry-id → absorbing entry so callers
-    // can redirect focus if the focused entry was merged away.
     @discardableResult
     private func mergeAdjacentNotes() -> [UUID: DayEntry] {
-        var sorted = entries
-        var deletedToAbsorber: [UUID: DayEntry] = [:]
-        var i = 0
-        while i < sorted.count - 1 {
-            let a = sorted[i], b = sorted[i + 1]
-            if a.kind == .note && b.kind == .note && !a.text.isEmpty && !b.text.isEmpty {
-                a.text = a.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                    + "\n\n"
-                    + b.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                deletedToAbsorber[b.id] = a
-                sorted.remove(at: i + 1)
-            } else {
-                i += 1
-            }
-        }
-        if !deletedToAbsorber.isEmpty {
-            for entry in entries where deletedToAbsorber[entry.id] != nil { modelContext.delete(entry) }
+        let (redirectMap, toDelete) = DayEntryOrdering.mergeAdjacentNotes(in: entries)
+        if !toDelete.isEmpty {
+            for entry in toDelete { modelContext.delete(entry) }
             onShowBanner(BannerMessage(text: "Notes merged.", systemImage: "arrow.triangle.merge", tint: .accentColor))
         }
-        return deletedToAbsorber
+        return redirectMap
     }
 
     private func splitNote(_ entry: DayEntry) {

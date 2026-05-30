@@ -70,4 +70,31 @@ enum DayEntryOrdering {
         }
         return true
     }
+
+    // Scans sorted entries for consecutive .note pairs where both are non-empty
+    // and merges each pair: absorbs B into A with a "\n\n" separator, then
+    // continues scanning (chains). Returns a redirect map (deleted id → absorber)
+    // and the list of entries that should be deleted from the model context.
+    // Callers are responsible for the actual deletion and any UI side effects.
+    @discardableResult
+    static func mergeAdjacentNotes(in entries: [DayEntry]) -> (redirectMap: [UUID: DayEntry], toDelete: [DayEntry]) {
+        var sorted = entries.sorted { $0.sortOrder < $1.sortOrder }
+        var redirectMap: [UUID: DayEntry] = [:]
+        var toDelete: [DayEntry] = []
+        var i = 0
+        while i < sorted.count - 1 {
+            let a = sorted[i], b = sorted[i + 1]
+            if a.kind == .note && b.kind == .note && !a.text.isEmpty && !b.text.isEmpty {
+                a.text = a.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                    + "\n\n"
+                    + b.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                redirectMap[b.id] = a
+                toDelete.append(b)
+                sorted.remove(at: i + 1)
+            } else {
+                i += 1
+            }
+        }
+        return (redirectMap, toDelete)
+    }
 }

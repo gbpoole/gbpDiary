@@ -253,6 +253,8 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Duration parsing + normalization (`h/d/w`) | Duration | gbpDiaryTests/Models/DurationTests.swift | `parse_validInputs_normalizesHours`, `parse_invalidInputs_returnsNil` |
 | Drag-to-reorder infers indent from neighbours and renumbers sortOrder | Drag-to-reorder diary blocks | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `moveEntry_reordersAndInfersIndent` |
 | Timesheet includes only completed tasks with duration in selected interval | Timesheet | gbpDiaryTests/Domain/TimesheetComputationTests.swift | `tasksInRange_requiresCompletedAtAndDuration` |
+| Meetings cannot be nested inside other meetings (indent/outdent/move all blocked) | Meeting entries | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `indent_meetingUnderMeeting_returnsFalseAndLeavesLevel`, `outdent_meetingStillUnderMeeting_returnsFalseAndLeavesLevel`, `moveEntry_meetingDroppedUnderMeeting_returnsFalseAndKeepsOrder` |
+| Adjacent non-empty notes are merged on drag; chained; separated by task/meeting are not | Drag-to-reorder diary blocks | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `mergeAdjacentNotes_twoAdjacentNotes_mergesText`, `mergeAdjacentNotes_notesSeparatedByTask_notMerged`, `mergeAdjacentNotes_emptyNote_notMerged`, `mergeAdjacentNotes_threeAdjacentNotes_chainsAll` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 
