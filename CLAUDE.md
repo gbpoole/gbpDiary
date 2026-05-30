@@ -207,6 +207,10 @@ When a meeting `DayEntry` is created, `addMeeting()` automatically creates and l
 
 On macOS, applying `.alert()` in the outer modifier chain of a block view (outside `.background()` / `.clipShape()` but alongside `.padding(.horizontal)`) silently collapses the padding's layout proposal, producing ~0pt margin. **Fix:** apply `.alert()` at the `body` level (or inside the inner content chain, before `.background()`), not after the outer layout padding. This does not affect note or task blocks since they use only `.sheet()` or `.contextMenu()` in the outer chain.
 
+### SwiftUI quirk: `LazyVStack` + nested `ScrollView` → infinite layout loop
+
+Do **not** place a view that contains a `ScrollView` inside a `LazyVStack`. `LazyVStack`'s lazy measurement algorithm re-proposes heights as cells scroll into view; if the nested `ScrollView` (or any `NSViewRepresentable` inside it, such as `StructuredText` or `TextEditor`) reports a slightly different size between passes, SwiftUI enters an infinite measure → invalidate → re-measure cycle. Each pass allocates new view descriptors, producing unbounded memory growth and 100 % CPU. **Fix:** use a plain `VStack` instead. For sections bounded in number (e.g., 7 days in `WeekView`) the performance difference is negligible. `DayPageContent` contains a nested `ScrollView`, so any container that holds multiple `DayPageContent` instances must use `VStack`, not `LazyVStack`.
+
 ### Drag-to-reorder diary blocks
 
 Each `EntryRowView` in `DayPageContent` is wrapped with `.draggable(entry.id.uuidString)`. Between entries are invisible 8pt `entryDropZone` views that accept `String` drop payloads. `moveEntry(_:toDropIndex:)` renumbers all `sortOrder` values after a drop and infers `indentLevel` from neighbours: if the entry below the drop point is deeper than the entry above, the dropped block adopts the deeper level.

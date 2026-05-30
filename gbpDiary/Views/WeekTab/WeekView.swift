@@ -18,7 +18,10 @@ struct WeekView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0, pinnedViews: .sectionHeaders) {
+            // VStack not LazyVStack: each day section contains DayPageContent which has a nested
+            // ScrollView. LazyVStack's lazy measurement oscillates with nested ScrollViews,
+            // causing an infinite layout loop (ever-growing memory, high CPU on scroll).
+            VStack(alignment: .leading, spacing: 0) {
                 ForEach(weekDays, id: \.self) { day in
                     weekDaySection(for: day)
                 }
