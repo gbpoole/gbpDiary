@@ -98,6 +98,40 @@ enum DayEntryOrdering {
         return (redirectMap, toDelete)
     }
 
+    // Scans sorted entries for consecutive .task DayEntries at indentLevel == meeting.indentLevel + 1
+    // immediately following a .meeting entry. Each qualifying task is linked to minutes.newTasks
+    // (via task.originMinutes) and its DayEntry is marked for deletion. Sort order within the
+    // meeting's task list starts after the current maximum and increments per absorbed task.
+    // Orphaned meeting entries (minutes == nil) and orphaned task entries (task == nil) are skipped.
+    // Must run AFTER absorbAdjacentNotes so note DayEntries at meeting+1 are consumed first,
+    // leaving tasks cleanly adjacent to the meeting.
+    @discardableResult
+    static func absorbMeetingTasks(in entries: [DayEntry]) -> [DayEntry] {
+        let sorted = entries.sorted { $0.sortOrder < $1.sortOrder }
+        var toDelete: [DayEntry] = []
+        var i = 0
+        while i < sorted.count {
+            let parent = sorted[i]
+            guard parent.kind == .meeting, let minutes = parent.minutes else { i += 1; continue }
+            var j = i + 1
+            var nextSortOrder = (minutes.newTasks.map(\.meetingTaskSortOrder).max() ?? -1) + 1
+            while j < sorted.count {
+                let candidate = sorted[j]
+                guard candidate.kind == .task,
+                      candidate.indentLevel == parent.indentLevel + 1,
+                      let task = candidate.task
+                else { break }
+                task.originMinutes = minutes
+                task.meetingTaskSortOrder = nextSortOrder
+                nextSortOrder += 1
+                toDelete.append(candidate)
+                j += 1
+            }
+            i = j
+        }
+        return toDelete
+    }
+
     // Scans sorted entries for a .note at indentLevel == parent.indentLevel + 1 immediately
     // following a .task or .meeting entry. When found, appends the note's text into
     // task.notes / minutes.minutesContent (separator "\n\n" when existing content is non-empty)

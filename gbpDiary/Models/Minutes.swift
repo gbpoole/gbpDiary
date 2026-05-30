@@ -15,11 +15,15 @@ import SwiftData
     @Relationship(inverse: \Person.minutesAttended)
     var attendees: [Person]
 
+    @Relationship(deleteRule: .nullify, inverse: \Task.originMinutes)
+    var newTasks: [Task]
+
     init(meetingAt: Date, id: UUID = UUID()) {
         self.id = id
         self.meetingAt = meetingAt
         self.projects = []
         self.attendees = []
+        self.newTasks = []
         let now = Date()
         self.createdAt = now
         self.updatedAt = now

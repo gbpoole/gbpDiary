@@ -134,9 +134,14 @@ struct DayPageContent: View {
            idx + 1 < entries.count,
            entries[idx + 1].indentLevel > entry.indentLevel { return true }
         switch entry.kind {
-        case .task:    return !(entry.task?.notes ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .meeting: return !(entry.minutes?.minutesContent ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        case .note:    return false
+        case .task:
+            return !(entry.task?.notes ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .meeting:
+            let hasMinutes = !(entry.minutes?.minutesContent ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            let hasNewTasks = !(entry.minutes?.newTasks ?? []).isEmpty
+            return hasMinutes || hasNewTasks
+        case .note:
+            return false
         }
     }
 
@@ -160,6 +165,9 @@ struct DayPageContent: View {
         if !mergeDelete.isEmpty {
             onShowBanner(BannerMessage(text: "Notes merged.", systemImage: "arrow.triangle.merge", tint: .accentColor))
         }
+        // Run after notes absorption so note DayEntries at meeting+1 are consumed first.
+        let taskDelete = DayEntryOrdering.absorbMeetingTasks(in: entries)
+        for entry in taskDelete { modelContext.delete(entry) }
         return mergeMap.merging(absorbMap) { _, new in new }
     }
 

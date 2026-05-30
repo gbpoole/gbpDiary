@@ -96,6 +96,8 @@ Task
   assignee → Person?
   project  → Project?
   originDay→ DayRecord?      (where captured; not the day-view link)
+  originMinutes → Minutes?   (set when absorbed into a meeting's New Tasks list)
+  meetingTaskSortOrder: Int  (ordering within minutes.newTasks; default 0)
   parent   → Task?
   children → [Task]          cascade delete
   NOTE: Task no longer has a `minutes` relationship.
@@ -134,6 +136,7 @@ Institution
 
 Minutes
   summary   : String?        (one-line summary; editable inline in diary)
+  newTasks  → [Task]     ↔ Task.originMinutes  (nullify on delete)
   projects  → [Project]  ↔ Project.meetings
   attendees → [Person]   ↔ Person.minutesAttended
 
@@ -262,6 +265,7 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Non-empty note DayEntry at indentLevel == parent+1 after a task/meeting is absorbed into task.notes / minutes.minutesContent; orphaned entries and empty notes are skipped | Inline task notes / meeting minutes | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `absorb_noteAtIndentPlusOneAfterTask_absorbsIntoNotes`, `absorb_noteAtIndentPlusOneAfterMeeting_absorbsIntoMinutes`, `absorb_appendsToExistingNotes`, `absorb_emptyNote_skipped`, `absorb_orphanedTaskEntry_noteNotDeleted` |
 | notesId derives a stable focus ID by bit-complementing all 16 UUID bytes; result is its own inverse and never collides with organic UUIDs | Inline task notes / meeting minutes | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `notesId_isNotEqualToSourceId`, `notesId_isDeterministic`, `notesId_isOwnInverse`, `notesId_noCollisionBetweenTwoDifferentEntries` |
 | Absorption must run before merge: mergeAdjacentNotes has no indent-level guard and would pull a plain sibling note into task.notes if run first | Inline task notes / meeting minutes | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `absorbBeforeMerge_plainSiblingNoteNotPulledIntoTaskNotes` |
+| Task DayEntries at meeting.indentLevel+1 directly after a meeting are absorbed into minutes.newTasks; note DayEntries (→ minutesContent) must be absorbed first so tasks are cleanly adjacent | Meeting New Tasks | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `absorbMeetingTasks_singleTaskAtIndentPlusOne_linksToNewTasks`, `absorbMeetingTasks_consecutiveTasks_allAbsorbedInOrder`, `absorbMeetingTasks_noteBlocksTask_taskNotAbsorbed`, `absorbMeetingTasks_appendsAfterExistingTasks` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 

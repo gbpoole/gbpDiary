@@ -241,6 +241,12 @@ struct EntryRowView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 4)
             }
+            if !isCollapsed, let minutes = entry.minutes, !minutes.newTasks.isEmpty {
+                MeetingTaskListView(minutes: minutes)
+                    .padding(.leading, Self.indentStep)
+                    .padding(.horizontal)
+                    .padding(.bottom, 4)
+            }
         }
     }
 

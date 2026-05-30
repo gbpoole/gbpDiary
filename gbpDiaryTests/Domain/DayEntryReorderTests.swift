@@ -360,3 +360,125 @@ struct DayEntryAbsorptionTests {
         #expect(absorbDelete.first?.id == indented.id)
     }
 }
+
+// MARK: - Meeting task absorption tests
+
+@MainActor
+struct MeetingTaskAbsorptionTests {
+    private func meetingEntry(sortOrder: Int, indentLevel: Int = 0,
+                              context: ModelContext) -> (DayEntry, Minutes) {
+        let minutes = Minutes(meetingAt: .now)
+        context.insert(minutes)
+        let entry = DayEntry(kind: .meeting, sortOrder: sortOrder, indentLevel: indentLevel)
+        entry.minutes = minutes
+        context.insert(entry)
+        return (entry, minutes)
+    }
+
+    private func taskEntry(summary: String = "T", sortOrder: Int, indentLevel: Int,
+                           context: ModelContext) -> (DayEntry, Task) {
+        let task = Task(summary: summary)
+        context.insert(task)
+        let entry = DayEntry(kind: .task, sortOrder: sortOrder, indentLevel: indentLevel)
+        entry.task = task
+        context.insert(entry)
+        return (entry, task)
+    }
+
+    @Test func absorbMeetingTasks_singleTaskAtIndentPlusOne_linksToNewTasks() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let (mtgEntry, minutes) = meetingEntry(sortOrder: 0, context: context)
+        let (taskEntry, task) = taskEntry(summary: "action", sortOrder: 1, indentLevel: 1, context: context)
+
+        let toDelete = DayEntryOrdering.absorbMeetingTasks(in: [mtgEntry, taskEntry])
+
+        #expect(task.originMinutes?.id == minutes.id)
+        #expect(task.meetingTaskSortOrder == 0)
+        #expect(toDelete.count == 1)
+        #expect(toDelete.first?.id == taskEntry.id)
+    }
+
+    @Test func absorbMeetingTasks_consecutiveTasks_allAbsorbedInOrder() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let (mtgEntry, minutes) = meetingEntry(sortOrder: 0, context: context)
+        let (te1, t1) = taskEntry(summary: "first",  sortOrder: 1, indentLevel: 1, context: context)
+        let (te2, t2) = taskEntry(summary: "second", sortOrder: 2, indentLevel: 1, context: context)
+
+        let toDelete = DayEntryOrdering.absorbMeetingTasks(in: [mtgEntry, te1, te2])
+
+        #expect(t1.originMinutes?.id == minutes.id)
+        #expect(t2.originMinutes?.id == minutes.id)
+        #expect(t1.meetingTaskSortOrder == 0)
+        #expect(t2.meetingTaskSortOrder == 1)
+        #expect(toDelete.count == 2)
+    }
+
+    @Test func absorbMeetingTasks_taskAtSameLevel_notAbsorbed() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let (mtgEntry, _) = meetingEntry(sortOrder: 0, context: context)
+        let (taskEntry, task) = taskEntry(summary: "sibling", sortOrder: 1, indentLevel: 0, context: context)
+
+        let toDelete = DayEntryOrdering.absorbMeetingTasks(in: [mtgEntry, taskEntry])
+
+        #expect(task.originMinutes == nil)
+        #expect(toDelete.isEmpty)
+    }
+
+    @Test func absorbMeetingTasks_noteBlocksTask_taskNotAbsorbed() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let (mtgEntry, _) = meetingEntry(sortOrder: 0, context: context)
+        let note = DayEntry(kind: .note, text: "minutes", sortOrder: 1, indentLevel: 1)
+        let (taskEntry, task) = taskEntry(summary: "action", sortOrder: 2, indentLevel: 1, context: context)
+        context.insert(note)
+
+        let toDelete = DayEntryOrdering.absorbMeetingTasks(in: [mtgEntry, note, taskEntry])
+
+        #expect(task.originMinutes == nil)
+        #expect(toDelete.isEmpty)
+    }
+
+    @Test func absorbMeetingTasks_orphanedMeetingEntry_taskNotAbsorbed() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let orphan = DayEntry(kind: .meeting, sortOrder: 0, indentLevel: 0)
+        context.insert(orphan)
+        let (taskEntry, task) = taskEntry(summary: "action", sortOrder: 1, indentLevel: 1, context: context)
+
+        let toDelete = DayEntryOrdering.absorbMeetingTasks(in: [orphan, taskEntry])
+
+        #expect(task.originMinutes == nil)
+        #expect(toDelete.isEmpty)
+    }
+
+    @Test func absorbMeetingTasks_orphanedTaskEntry_notAbsorbed() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let (mtgEntry, _) = meetingEntry(sortOrder: 0, context: context)
+        let orphan = DayEntry(kind: .task, sortOrder: 1, indentLevel: 1)
+        context.insert(orphan)
+
+        let toDelete = DayEntryOrdering.absorbMeetingTasks(in: [mtgEntry, orphan])
+
+        #expect(toDelete.isEmpty)
+    }
+
+    @Test func absorbMeetingTasks_appendsAfterExistingTasks() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let (mtgEntry, minutes) = meetingEntry(sortOrder: 0, context: context)
+        // Seed an existing task in the meeting's newTasks list
+        let existing = Task(summary: "existing")
+        existing.originMinutes = minutes
+        existing.meetingTaskSortOrder = 5
+        context.insert(existing)
+        let (taskEntry, newTask) = taskEntry(summary: "new", sortOrder: 1, indentLevel: 1, context: context)
+
+        DayEntryOrdering.absorbMeetingTasks(in: [mtgEntry, taskEntry])
+
+        #expect(newTask.meetingTaskSortOrder == 6)
+    }
+}

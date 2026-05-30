@@ -34,6 +34,8 @@ import SwiftData
     var assignee: Person?
     var project: Project?
     var originDay: DayRecord?
+    var originMinutes: Minutes?
+    var meetingTaskSortOrder: Int = 0
     var parent: Task?
     @Relationship(deleteRule: .cascade)
     var children: [Task]
