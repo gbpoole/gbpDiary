@@ -37,7 +37,7 @@ struct EntryRowView: View {
             }
         }
         .padding(.leading, CGFloat(entry.indentLevel) * Self.indentStep)
-        .overlay(alignment: .leading) {
+        .overlay(alignment: .topLeading) {
             if hasChildren {
                 Button { onToggleCollapse?() } label: {
                     Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
@@ -149,7 +149,7 @@ struct EntryRowView: View {
 
     private var taskRow: some View {
         let notesText = entry.task?.notes ?? ""
-        let showNotes = !notesText.isEmpty || isEntryFocused || isNotesFocused
+        let showNotes = (!notesText.isEmpty || isEntryFocused || isNotesFocused) && !isCollapsed
         return VStack(alignment: .leading, spacing: 0) {
             rowCard(selectable: true, verticalPadding: 2) {
                 TaskEntryContent(
@@ -193,7 +193,7 @@ struct EntryRowView: View {
 
     private var meetingRow: some View {
         let notesText = entry.minutes?.minutesContent ?? ""
-        let showNotes = !notesText.isEmpty || isEntryFocused || isNotesFocused
+        let showNotes = (!notesText.isEmpty || isEntryFocused || isNotesFocused) && !isCollapsed
         let nextForSummary: (() -> Void)? = showNotes
             ? { focusedEntryId.wrappedValue = entry.notesAreaFocusId }
             : onMoveToNext

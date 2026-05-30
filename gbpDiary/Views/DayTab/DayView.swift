@@ -130,9 +130,14 @@ struct DayPageContent: View {
     }
 
     private func entryHasChildren(_ entry: DayEntry) -> Bool {
-        guard let idx = entries.firstIndex(where: { $0.id == entry.id }),
-              idx + 1 < entries.count else { return false }
-        return entries[idx + 1].indentLevel > entry.indentLevel
+        if let idx = entries.firstIndex(where: { $0.id == entry.id }),
+           idx + 1 < entries.count,
+           entries[idx + 1].indentLevel > entry.indentLevel { return true }
+        switch entry.kind {
+        case .task:    return !(entry.task?.notes ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .meeting: return !(entry.minutes?.minutesContent ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .note:    return false
+        }
     }
 
     private func toggleCollapse(_ entry: DayEntry) {
