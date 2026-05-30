@@ -144,13 +144,18 @@ struct DayPageContent: View {
     }
 
     @discardableResult
-    private func mergeAdjacentNotes() -> [UUID: DayEntry] {
-        let (redirectMap, toDelete) = DayEntryOrdering.mergeAdjacentNotes(in: entries)
-        if !toDelete.isEmpty {
-            for entry in toDelete { modelContext.delete(entry) }
+    private func absorbAndMergeNotes() -> [UUID: DayEntry] {
+        let (absorbMap, absorbDelete) = DayEntryOrdering.absorbAdjacentNotes(in: entries)
+        for entry in absorbDelete { modelContext.delete(entry) }
+        if !absorbDelete.isEmpty {
+            onShowBanner(BannerMessage(text: "Note absorbed into entry.", systemImage: "arrow.down.to.line", tint: .accentColor))
+        }
+        let (mergeMap, mergeDelete) = DayEntryOrdering.mergeAdjacentNotes(in: entries)
+        for entry in mergeDelete { modelContext.delete(entry) }
+        if !mergeDelete.isEmpty {
             onShowBanner(BannerMessage(text: "Notes merged.", systemImage: "arrow.triangle.merge", tint: .accentColor))
         }
-        return redirectMap
+        return mergeMap.merging(absorbMap) { _, new in new }
     }
 
     private func splitNote(_ entry: DayEntry) {
@@ -257,6 +262,7 @@ struct DayPageContent: View {
         }
         .onChange(of: focusedEntryId) { _, newId in
             updateDeleteAction(for: newId)
+            absorbAndMergeNotes()
         }
         #endif
     }
@@ -285,6 +291,7 @@ struct DayPageContent: View {
                 }
             }
         } : nil
+        let isNotesFocused = focusedEntryId == entry.notesAreaFocusId
         EntryRowView(
             entry: entry,
             focusedEntryId: $focusedEntryId,
@@ -301,7 +308,11 @@ struct DayPageContent: View {
             hasChildren: entryHasChildren(entry),
             isCollapsed: collapsedEntryIds.contains(entry.id),
             onToggleCollapse: { toggleCollapse(entry) },
-            onSplitNote: entry.kind == .note ? { splitNote(entry) } : nil
+            onSplitNote: entry.kind == .note ? { splitNote(entry) } : nil,
+            isNotesFocused: isNotesFocused,
+            onMoveToNextFromNotes: index < visibleEntries.count - 1
+                ? { pendingFocusId = visibleEntries[index + 1].id }
+                : nil
         )
     }
 
@@ -417,16 +428,24 @@ struct DayPageContent: View {
         if selectedEntry?.id == entry.id { selectedEntry = nil }
         if let id = focusingId { pendingFocusId = id }
         modelContext.delete(entry)
-        let merged = mergeAdjacentNotes()
+        let merged = absorbAndMergeNotes()
         if let pid = pendingFocusId, let absorber = merged[pid] { pendingFocusId = absorber.id }
     }
 
     private func indentEntry(_ entry: DayEntry) {
-        if !DayEntryOrdering.indent(entry: entry, in: entries) { onShowBanner(BannerMessage(text: "Meetings cannot be nested inside another meeting.", systemImage: "exclamationmark.triangle.fill", tint: .orange)) }
+        if !DayEntryOrdering.indent(entry: entry, in: entries) {
+            onShowBanner(BannerMessage(text: "Meetings cannot be nested inside another meeting.", systemImage: "exclamationmark.triangle.fill", tint: .orange))
+        } else {
+            absorbAndMergeNotes()
+        }
     }
 
     private func outdentEntry(_ entry: DayEntry) {
-        if !DayEntryOrdering.outdent(entry: entry, in: entries) { onShowBanner(BannerMessage(text: "Meetings cannot be nested inside another meeting.", systemImage: "exclamationmark.triangle.fill", tint: .orange)) }
+        if !DayEntryOrdering.outdent(entry: entry, in: entries) {
+            onShowBanner(BannerMessage(text: "Meetings cannot be nested inside another meeting.", systemImage: "exclamationmark.triangle.fill", tint: .orange))
+        } else {
+            absorbAndMergeNotes()
+        }
     }
 
     #if os(macOS)
@@ -457,7 +476,7 @@ struct DayPageContent: View {
         if !DayEntryOrdering.moveEntry(dragged, toDropIndex: fullDropIndex, in: entries) {
             onShowBanner(BannerMessage(text: "Meetings cannot be nested inside another meeting.", systemImage: "exclamationmark.triangle.fill", tint: .orange))
         } else {
-            mergeAdjacentNotes()
+            absorbAndMergeNotes()
         }
     }
 

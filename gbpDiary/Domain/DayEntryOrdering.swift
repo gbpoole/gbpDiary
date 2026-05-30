@@ -97,4 +97,48 @@ enum DayEntryOrdering {
         }
         return (redirectMap, toDelete)
     }
+
+    // Scans sorted entries for a .note at indentLevel == parent.indentLevel + 1 immediately
+    // following a .task or .meeting entry. When found, appends the note's text into
+    // task.notes / minutes.minutesContent (separator "\n\n" when existing content is non-empty)
+    // and marks the DayEntry for deletion. The note is only deleted if it was actually
+    // absorbed (guards against orphaned task/meeting entries whose relationships are nil).
+    // Callers are responsible for deletion and UI side effects.
+    // Must run BEFORE mergeAdjacentNotes so absorbed notes are not mistakenly merged first.
+    @discardableResult
+    static func absorbAdjacentNotes(in entries: [DayEntry])
+        -> (redirectMap: [UUID: DayEntry], toDelete: [DayEntry])
+    {
+        var sorted = entries.sorted { $0.sortOrder < $1.sortOrder }
+        var redirectMap: [UUID: DayEntry] = [:]
+        var toDelete: [DayEntry] = []
+        var i = 0
+        while i < sorted.count - 1 {
+            let parent = sorted[i], candidate = sorted[i + 1]
+            guard (parent.kind == .task || parent.kind == .meeting),
+                  candidate.kind == .note,
+                  candidate.indentLevel == parent.indentLevel + 1
+            else { i += 1; continue }
+            let text = candidate.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { i += 1; continue }
+            var absorbed = false
+            if parent.kind == .task, let task = parent.task {
+                let existing = (task.notes ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                task.notes = existing.isEmpty ? text : existing + "\n\n" + text
+                absorbed = true
+            } else if parent.kind == .meeting, let minutes = parent.minutes {
+                let existing = (minutes.minutesContent ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                minutes.minutesContent = existing.isEmpty ? text : existing + "\n\n" + text
+                absorbed = true
+            }
+            if absorbed {
+                redirectMap[candidate.id] = parent
+                toDelete.append(candidate)
+                sorted.remove(at: i + 1)
+            } else {
+                i += 1
+            }
+        }
+        return (redirectMap, toDelete)
+    }
 }

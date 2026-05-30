@@ -16,6 +16,8 @@ struct EntryRowView: View {
     var isCollapsed: Bool = false
     var onToggleCollapse: (() -> Void)? = nil
     var onSplitNote: (() -> Void)? = nil
+    var isNotesFocused: Bool = false
+    var onMoveToNextFromNotes: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var editingTask: Task?
@@ -146,61 +148,100 @@ struct EntryRowView: View {
     // MARK: - Task
 
     private var taskRow: some View {
-        rowCard(selectable: true, verticalPadding: 2) {
-            TaskEntryContent(
-                task: entry.task,
-                focusedEntryId: focusedEntryId,
-                focusId: entry.id,
-                onEdit: { task in editingTask = task },
-                onMoveToPrevious: onMoveToPrevious,
-                onMoveToNext: onMoveToNext,
-                onIndent: onIndent,
-                onOutdent: onOutdent
-            )
-        }
-        .contextMenu { deleteButton }
-        .sheet(item: $editingTask) { task in
-            TaskEditorSheet(task: task, defaultDate: entry.createdAt)
+        let notesText = entry.task?.notes ?? ""
+        let showNotes = !notesText.isEmpty || isEntryFocused || isNotesFocused
+        return VStack(alignment: .leading, spacing: 0) {
+            rowCard(selectable: true, verticalPadding: 2) {
+                TaskEntryContent(
+                    task: entry.task,
+                    focusedEntryId: focusedEntryId,
+                    focusId: entry.id,
+                    onEdit: { task in editingTask = task },
+                    onMoveToPrevious: onMoveToPrevious,
+                    onMoveToNext: showNotes
+                        ? { focusedEntryId.wrappedValue = entry.notesAreaFocusId }
+                        : onMoveToNext,
+                    onIndent: onIndent,
+                    onOutdent: onOutdent
+                )
+            }
+            .contextMenu { deleteButton }
+            .sheet(item: $editingTask) { task in
+                TaskEditorSheet(task: task, defaultDate: entry.createdAt)
+            }
+            if showNotes, let task = entry.task {
+                EntryNotesSubArea(
+                    text: Binding(
+                        get: { task.notes ?? "" },
+                        set: { task.notes = $0.isEmpty ? nil : $0 }
+                    ),
+                    isFocused: isNotesFocused,
+                    focusedEntryId: focusedEntryId,
+                    focusId: entry.notesAreaFocusId,
+                    placeholder: "Add task notes…",
+                    onMoveToPrevious: { focusedEntryId.wrappedValue = entry.id },
+                    onMoveToNext: onMoveToNextFromNotes
+                )
+                .padding(.leading, Self.indentStep)
+                .padding(.horizontal)
+                .padding(.bottom, 4)
+            }
         }
     }
 
     // MARK: - Meeting
 
     private var meetingRow: some View {
+        let notesText = entry.minutes?.minutesContent ?? ""
+        let showNotes = !notesText.isEmpty || isEntryFocused || isNotesFocused
+        let nextForSummary: (() -> Void)? = showNotes
+            ? { focusedEntryId.wrappedValue = entry.notesAreaFocusId }
+            : onMoveToNext
         let summaryBinding = Binding<String>(
             get: { entry.inlineSummary },
             set: { entry.inlineSummary = $0 }
         )
-        return MeetingEntryContent(
-            summaryBinding: summaryBinding,
-            minutes: entry.minutes,
-            isEntryFocused: isEntryFocused,
-            onEdit: { minutes in editingMinutes = minutes },
-            inlineText: { binding in
-                entryTextView(placeholder: "Meeting summary", text: binding)
+        return VStack(alignment: .leading, spacing: 0) {
+            MeetingEntryContent(
+                summaryBinding: summaryBinding,
+                minutes: entry.minutes,
+                isEntryFocused: isEntryFocused,
+                onEdit: { minutes in editingMinutes = minutes },
+                inlineText: { binding in
+                    InlineEditableSingleLineText(
+                        placeholder: "Meeting summary",
+                        text: binding,
+                        isFocused: isEntryFocused,
+                        focusBinding: focusedEntryId,
+                        focusId: entry.id,
+                        onIndent: indent,
+                        onOutdent: outdent,
+                        onMoveToPrevious: onMoveToPrevious,
+                        onMoveToNext: nextForSummary
+                    )
+                }
+            )
+            .contextMenu { deleteButton }
+            .modifier(RowCardStyling(selectable: true, verticalPadding: 2, onSelect: onSelect))
+            .sheet(item: $editingMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
+            if showNotes, let minutes = entry.minutes {
+                EntryNotesSubArea(
+                    text: Binding(
+                        get: { minutes.minutesContent ?? "" },
+                        set: { minutes.minutesContent = $0.isEmpty ? nil : $0 }
+                    ),
+                    isFocused: isNotesFocused,
+                    focusedEntryId: focusedEntryId,
+                    focusId: entry.notesAreaFocusId,
+                    placeholder: "Add meeting minutes…",
+                    onMoveToPrevious: { focusedEntryId.wrappedValue = entry.id },
+                    onMoveToNext: onMoveToNextFromNotes
+                )
+                .padding(.leading, Self.indentStep)
+                .padding(.horizontal)
+                .padding(.bottom, 4)
             }
-        )
-        .contextMenu { deleteButton }
-        .modifier(RowCardStyling(selectable: true, verticalPadding: 2, onSelect: onSelect))
-        .sheet(item: $editingMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
-    }
-
-    // ZStack text element for meeting rows:
-    // Text controls layout width when unfocused; TextField (always present) handles
-    // focus machinery and inline editing when focused.
-    @ViewBuilder
-    private func entryTextView(placeholder: String, text: Binding<String>) -> some View {
-        InlineEditableSingleLineText(
-            placeholder: placeholder,
-            text: text,
-            isFocused: isEntryFocused,
-            focusBinding: focusedEntryId,
-            focusId: entry.id,
-            onIndent: indent,
-            onOutdent: outdent,
-            onMoveToPrevious: onMoveToPrevious,
-            onMoveToNext: onMoveToNext
-        )
+        }
     }
 
     // MARK: - Shared

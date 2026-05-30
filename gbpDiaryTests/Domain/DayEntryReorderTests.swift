@@ -1,4 +1,6 @@
+import Foundation
 import Testing
+import SwiftData
 @testable import gbpDiary
 
 @MainActor
@@ -178,5 +180,183 @@ struct DayEntryMergeTests {
         #expect(toDelete.count == 2)
         #expect(redirectMap[b.id]?.id == a.id)
         #expect(redirectMap[c.id]?.id == a.id)
+    }
+}
+
+// MARK: - notesId tests
+
+@MainActor
+struct NotesIdTests {
+    @Test func notesId_isNotEqualToSourceId() {
+        let id = UUID()
+        #expect(notesId(for: id) != id)
+    }
+
+    @Test func notesId_isDeterministic() {
+        let id = UUID()
+        #expect(notesId(for: id) == notesId(for: id))
+    }
+
+    @Test func notesId_isOwnInverse() {
+        let id = UUID()
+        #expect(notesId(for: notesId(for: id)) == id)
+    }
+
+    @Test func notesId_noCollisionBetweenTwoDifferentEntries() {
+        let a = UUID(), b = UUID()
+        #expect(notesId(for: a) != notesId(for: b))
+        #expect(notesId(for: a) != b)
+        #expect(notesId(for: b) != a)
+    }
+}
+
+// MARK: - Absorption tests
+
+@MainActor
+struct DayEntryAbsorptionTests {
+    // Helper: create a task-backed DayEntry with a linked Task inserted into context.
+    private func taskEntry(notes: String? = nil, sortOrder: Int, indentLevel: Int = 0,
+                           context: ModelContext) -> (DayEntry, Task) {
+        let task = Task(summary: "T")
+        task.notes = notes
+        context.insert(task)
+        let entry = DayEntry(kind: .task, sortOrder: sortOrder, indentLevel: indentLevel)
+        entry.task = task
+        context.insert(entry)
+        return (entry, task)
+    }
+
+    // Helper: create a meeting-backed DayEntry with a linked Minutes inserted into context.
+    private func meetingEntry(content: String? = nil, sortOrder: Int, indentLevel: Int = 0,
+                              context: ModelContext) -> (DayEntry, Minutes) {
+        let minutes = Minutes(meetingAt: .now)
+        minutes.minutesContent = content
+        context.insert(minutes)
+        let entry = DayEntry(kind: .meeting, sortOrder: sortOrder, indentLevel: indentLevel)
+        entry.minutes = minutes
+        context.insert(entry)
+        return (entry, minutes)
+    }
+
+    @Test func absorb_noteAtIndentPlusOneAfterTask_absorbsIntoNotes() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let (taskEntry, task) = taskEntry(sortOrder: 0, context: context)
+        let note = DayEntry(kind: .note, text: "hello", sortOrder: 1, indentLevel: 1)
+        context.insert(note)
+        let (_, toDelete) = DayEntryOrdering.absorbAdjacentNotes(in: [taskEntry, note])
+        #expect(task.notes == "hello")
+        #expect(toDelete.count == 1)
+        #expect(toDelete.first?.id == note.id)
+    }
+
+    @Test func absorb_noteAtIndentPlusOneAfterMeeting_absorbsIntoMinutes() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let (mtgEntry, minutes) = meetingEntry(sortOrder: 0, context: context)
+        let note = DayEntry(kind: .note, text: "agenda item", sortOrder: 1, indentLevel: 1)
+        context.insert(note)
+        let (_, toDelete) = DayEntryOrdering.absorbAdjacentNotes(in: [mtgEntry, note])
+        #expect(minutes.minutesContent == "agenda item")
+        #expect(toDelete.count == 1)
+    }
+
+    @Test func absorb_appendsToExistingNotes() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let (taskEntry, task) = taskEntry(notes: "existing", sortOrder: 0, context: context)
+        let note = DayEntry(kind: .note, text: "new", sortOrder: 1, indentLevel: 1)
+        context.insert(note)
+        DayEntryOrdering.absorbAdjacentNotes(in: [taskEntry, note])
+        #expect(task.notes == "existing\n\nnew")
+    }
+
+    @Test func absorb_emptyNote_skipped() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let (taskEntry, task) = taskEntry(sortOrder: 0, context: context)
+        let note = DayEntry(kind: .note, text: "", sortOrder: 1, indentLevel: 1)
+        context.insert(note)
+        let (_, toDelete) = DayEntryOrdering.absorbAdjacentNotes(in: [taskEntry, note])
+        #expect(task.notes == nil)
+        #expect(toDelete.isEmpty)
+    }
+
+    @Test func absorb_noteAtSameLevelAsTask_notAbsorbed() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let (taskEntry, task) = taskEntry(sortOrder: 0, indentLevel: 0, context: context)
+        let note = DayEntry(kind: .note, text: "sibling", sortOrder: 1, indentLevel: 0)
+        context.insert(note)
+        let (_, toDelete) = DayEntryOrdering.absorbAdjacentNotes(in: [taskEntry, note])
+        #expect(task.notes == nil)
+        #expect(toDelete.isEmpty)
+    }
+
+    @Test func absorb_noteAtLevelPlusTwoAfterTask_notAbsorbed() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let (taskEntry, task) = taskEntry(sortOrder: 0, indentLevel: 0, context: context)
+        let note = DayEntry(kind: .note, text: "deep", sortOrder: 1, indentLevel: 2)
+        context.insert(note)
+        let (_, toDelete) = DayEntryOrdering.absorbAdjacentNotes(in: [taskEntry, note])
+        #expect(task.notes == nil)
+        #expect(toDelete.isEmpty)
+    }
+
+    @Test func absorb_consecutiveNotesAtIndentPlusOne_bothAbsorbed() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let (taskEntry, task) = taskEntry(sortOrder: 0, context: context)
+        let n1 = DayEntry(kind: .note, text: "first", sortOrder: 1, indentLevel: 1)
+        let n2 = DayEntry(kind: .note, text: "second", sortOrder: 2, indentLevel: 1)
+        context.insert(n1); context.insert(n2)
+        let (_, toDelete) = DayEntryOrdering.absorbAdjacentNotes(in: [taskEntry, n1, n2])
+        #expect(task.notes == "first\n\nsecond")
+        #expect(toDelete.count == 2)
+    }
+
+    @Test func absorb_noteAfterNote_notAbsorbed() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let a = DayEntry(kind: .note, text: "A", sortOrder: 0, indentLevel: 0)
+        let b = DayEntry(kind: .note, text: "B", sortOrder: 1, indentLevel: 0)
+        context.insert(a); context.insert(b)
+        let (_, toDelete) = DayEntryOrdering.absorbAdjacentNotes(in: [a, b])
+        #expect(toDelete.isEmpty)
+    }
+
+    @Test func absorb_orphanedTaskEntry_noteNotDeleted() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        // task entry with no linked Task (orphaned)
+        let orphan = DayEntry(kind: .task, sortOrder: 0, indentLevel: 0)
+        context.insert(orphan)
+        let note = DayEntry(kind: .note, text: "stranded", sortOrder: 1, indentLevel: 1)
+        context.insert(note)
+        let (_, toDelete) = DayEntryOrdering.absorbAdjacentNotes(in: [orphan, note])
+        #expect(toDelete.isEmpty)
+    }
+
+    // mergeAdjacentNotes has no indent-level guard — it would merge note@1 with note@0 if run
+    // first, pulling unrelated plain-note text into task.notes. Absorption must run first so the
+    // indented note is consumed before merge can join it to its sibling.
+    @Test func absorbBeforeMerge_plainSiblingNoteNotPulledIntoTaskNotes() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let (taskEntry, task) = taskEntry(sortOrder: 0, context: context)
+        let indented = DayEntry(kind: .note, text: "task-note", sortOrder: 1, indentLevel: 1)
+        let sibling  = DayEntry(kind: .note, text: "plain-note", sortOrder: 2, indentLevel: 0)
+        context.insert(indented); context.insert(sibling)
+        let entries = [taskEntry, indented, sibling]
+
+        let (_, absorbDelete) = DayEntryOrdering.absorbAdjacentNotes(in: entries)
+        let remaining = entries.filter { e in !absorbDelete.contains(where: { $0.id == e.id }) }
+        DayEntryOrdering.mergeAdjacentNotes(in: remaining)
+
+        #expect(task.notes == "task-note")
+        #expect(sibling.text == "plain-note")
+        #expect(absorbDelete.count == 1)
+        #expect(absorbDelete.first?.id == indented.id)
     }
 }

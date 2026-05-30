@@ -49,7 +49,7 @@ All persistence is SwiftData. Models live in `gbpDiary/Models/`. The `ModelConta
 
 ### Day view architecture
 
-The Day tab renders a `DayPageContent` view. The diary area is a vertical stack of `DayEntry` blocks, each rendered by `EntryRowView`. Clicking a task or meeting block opens `EntryDetailPanel` — a 280pt animated panel on the right showing the task's notes or the meeting's minutes content.
+The Day tab renders a `DayPageContent` view. The diary area is a vertical stack of `DayEntry` blocks, each rendered by `EntryRowView`. Task and meeting blocks show their notes/minutes as an indented `EntryNotesSubArea` sub-row inline. Clicking a task or meeting block opens `EntryDetailPanel` — a 280pt animated panel on the right showing metadata (status, project, attendees, etc.).
 
 ```
 DayPageContent
@@ -194,7 +194,7 @@ When a meeting `DayEntry` is created, `addMeeting()` automatically creates and l
 - `TaskRowView` — recursive: renders a task and its `children` indented below. Used in DayView, ProjectDetailView, PersonDetailView. Supports `inlineEditing: Bool` for diary block mode.
 - `TaskEditorSheet` — full task editing sheet. Accepts `task: Task?` (nil = create new) and `defaultDate: Date`.
 - `EntryRowView` — renders a single diary block (note, task, or meeting). Handles keyboard navigation, indent/outdent, and focus management.
-- `EntryDetailPanel` — animated 280pt right panel showing task notes or meeting minutes content for the selected diary entry.
+- `EntryDetailPanel` — animated 280pt right panel showing task/meeting metadata (status, project, assignee, duration, attendees) for the selected diary entry. Notes and minutes are now shown inline below the entry row via `EntryNotesSubArea`.
 - `DayTaskSidebar` — collapsible sidebar listing scheduled/follow-up/backlog/completed tasks for a given day.
 - `MinutesDetailView(minutes:asSheet:)` — detail view for a `Minutes` record; pass `asSheet: true` when presenting as a sheet.
 - `DocumentDetailView(document:asSheet:)` — same pattern for `Document`.
@@ -259,6 +259,9 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Timesheet includes only completed tasks with duration in selected interval | Timesheet | gbpDiaryTests/Domain/TimesheetComputationTests.swift | `tasksInRange_requiresCompletedAtAndDuration` |
 | Meetings cannot be nested inside other meetings (indent/outdent/move all blocked) | Meeting entries | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `indent_meetingUnderMeeting_returnsFalseAndLeavesLevel`, `outdent_meetingStillUnderMeeting_returnsFalseAndLeavesLevel`, `moveEntry_meetingDroppedUnderMeeting_returnsFalseAndKeepsOrder` |
 | Adjacent non-empty notes are merged on drag; chained; separated by task/meeting are not | Drag-to-reorder diary blocks | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `mergeAdjacentNotes_twoAdjacentNotes_mergesText`, `mergeAdjacentNotes_notesSeparatedByTask_notMerged`, `mergeAdjacentNotes_emptyNote_notMerged`, `mergeAdjacentNotes_threeAdjacentNotes_chainsAll` |
+| Non-empty note DayEntry at indentLevel == parent+1 after a task/meeting is absorbed into task.notes / minutes.minutesContent; orphaned entries and empty notes are skipped | Inline task notes / meeting minutes | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `absorb_noteAtIndentPlusOneAfterTask_absorbsIntoNotes`, `absorb_noteAtIndentPlusOneAfterMeeting_absorbsIntoMinutes`, `absorb_appendsToExistingNotes`, `absorb_emptyNote_skipped`, `absorb_orphanedTaskEntry_noteNotDeleted` |
+| notesId derives a stable focus ID by bit-complementing all 16 UUID bytes; result is its own inverse and never collides with organic UUIDs | Inline task notes / meeting minutes | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `notesId_isNotEqualToSourceId`, `notesId_isDeterministic`, `notesId_isOwnInverse`, `notesId_noCollisionBetweenTwoDifferentEntries` |
+| Absorption must run before merge: mergeAdjacentNotes has no indent-level guard and would pull a plain sibling note into task.notes if run first | Inline task notes / meeting minutes | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `absorbBeforeMerge_plainSiblingNoteNotPulledIntoTaskNotes` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 
