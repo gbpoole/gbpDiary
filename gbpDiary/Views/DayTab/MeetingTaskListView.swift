@@ -3,6 +3,7 @@ import SwiftData
 
 struct MeetingTaskListView: View {
     @Bindable var minutes: Minutes
+    var onDropDiaryEntry: ((String) -> Bool)? = nil
     @Environment(\.modelContext) private var modelContext
     @State private var activeDropZone: Int?
     @State private var editingTask: Task?
@@ -78,12 +79,16 @@ struct MeetingTaskListView: View {
         }
         .dropDestination(for: String.self) { items, _ in
             guard let uuidString = items.first,
-                  let id = UUID(uuidString: uuidString),
-                  let dragged = sortedTasks.first(where: { $0.id == id })
+                  let id = UUID(uuidString: uuidString)
             else { return false }
-            moveTask(dragged, toDropIndex: index)
-            activeDropZone = nil
-            return true
+            if let dragged = sortedTasks.first(where: { $0.id == id }) {
+                moveTask(dragged, toDropIndex: index)
+                activeDropZone = nil
+                return true
+            }
+            // Diary entry (DayEntry UUID) dropped over the meeting task area — hand off to parent.
+            if let handler = onDropDiaryEntry { return handler(uuidString) }
+            return false
         } isTargeted: { targeted in
             activeDropZone = targeted ? index : nil
         }

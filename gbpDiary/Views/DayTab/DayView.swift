@@ -325,7 +325,14 @@ struct DayPageContent: View {
             isNotesFocused: isNotesFocused,
             onMoveToNextFromNotes: index < visibleEntries.count - 1
                 ? { pendingFocusId = visibleEntries[index + 1].id }
-                : nil
+                : nil,
+            onDropDiaryEntry: entry.kind == .meeting ? { uuidString in
+                guard let id = UUID(uuidString: uuidString),
+                      let dragged = visibleEntries.first(where: { $0.id == id })
+                else { return false }
+                moveEntryFromVisible(dragged, toVisibleDropIndex: index + 1)
+                return true
+            } : nil
         )
     }
 

@@ -18,6 +18,7 @@ struct EntryRowView: View {
     var onSplitNote: (() -> Void)? = nil
     var isNotesFocused: Bool = false
     var onMoveToNextFromNotes: (() -> Void)? = nil
+    var onDropDiaryEntry: ((String) -> Bool)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var editingTask: Task?
@@ -242,7 +243,7 @@ struct EntryRowView: View {
                 .padding(.bottom, 4)
             }
             if !isCollapsed, let minutes = entry.minutes, !minutes.newTasks.isEmpty {
-                MeetingTaskListView(minutes: minutes)
+                MeetingTaskListView(minutes: minutes, onDropDiaryEntry: onDropDiaryEntry)
                     .padding(.leading, Self.indentStep)
                     .padding(.horizontal)
                     .padding(.bottom, 4)

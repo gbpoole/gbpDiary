@@ -42,6 +42,51 @@ struct DayEntryReorderTests {
         #expect(sibling.indentLevel == 1)
     }
 
+    @Test func moveEntry_dropAfterMeeting_infersChildLevel() {
+        let meeting = DayEntry(kind: .meeting, sortOrder: 0, indentLevel: 0)
+        let note    = DayEntry(kind: .note,    sortOrder: 1, indentLevel: 0)
+        let task    = DayEntry(kind: .task,    sortOrder: 2, indentLevel: 0)
+
+        // Drop task at index 1 — right after the meeting, before note.
+        DayEntryOrdering.moveEntry(task, toDropIndex: 1, in: [meeting, note, task])
+
+        #expect(task.indentLevel == 1)  // bumped to meeting+1, not 0
+        #expect(task.sortOrder == 1)
+        #expect(meeting.sortOrder == 0)
+        #expect(note.sortOrder == 2)
+    }
+
+    @Test func moveEntry_dropAfterMeetingWithDeeperFollower_usesNaturalInference() {
+        // When the next entry is already deeper than the meeting, natural inference
+        // already produces the right level; the meeting bump should not double-apply.
+        let meeting = DayEntry(kind: .meeting, sortOrder: 0, indentLevel: 0)
+        let child   = DayEntry(kind: .note,    sortOrder: 1, indentLevel: 1)
+        let task    = DayEntry(kind: .task,    sortOrder: 2, indentLevel: 0)
+
+        DayEntryOrdering.moveEntry(task, toDropIndex: 1, in: [meeting, child, task])
+
+        #expect(task.indentLevel == 1)  // natural inference: max(0,1)=1, bump condition false
+    }
+
+    @Test func moveEntry_dropMeetingAfterMeeting_keepsSiblingLevel() {
+        // Dragging a meeting to sit right after another meeting must NOT trigger the
+        // indent bump — both meetings should stay at the same level so they can be
+        // reordered as siblings. The nesting guard would block a bumped meeting anyway,
+        // but the bump itself is the part that must be absent.
+        let meeting1 = DayEntry(kind: .meeting, sortOrder: 0, indentLevel: 0)
+        let note     = DayEntry(kind: .note,    sortOrder: 1, indentLevel: 0)
+        let meeting2 = DayEntry(kind: .meeting, sortOrder: 2, indentLevel: 0)
+
+        // Drop meeting2 at index 1 — right after meeting1.
+        let result = DayEntryOrdering.moveEntry(meeting2, toDropIndex: 1, in: [meeting1, note, meeting2])
+
+        #expect(result == true)              // not blocked by nesting guard
+        #expect(meeting2.indentLevel == 0)  // stays sibling, not bumped to 1
+        #expect(meeting2.sortOrder == 1)
+        #expect(meeting1.sortOrder == 0)
+        #expect(note.sortOrder == 2)
+    }
+
     @Test func moveEntry_movingDownAdjustsTargetIndexAndSortOrder() {
         let a = DayEntry(kind: .note, sortOrder: 0, indentLevel: 0)
         let b = DayEntry(kind: .note, sortOrder: 1, indentLevel: 1)

@@ -54,7 +54,14 @@ enum DayEntryOrdering {
         let target = min(dropIndex > fromIndex ? dropIndex - 1 : dropIndex, sorted.count)
         let prevLevel = target > 0 ? sorted[target - 1].indentLevel : 0
         let nextLevel = target < sorted.count ? sorted[target].indentLevel : 0
-        let inferredLevel = nextLevel > prevLevel ? nextLevel : prevLevel
+        var inferredLevel = nextLevel > prevLevel ? nextLevel : prevLevel
+        // Dropping a non-meeting immediately after a meeting with no deeper entry → land inside it.
+        // Not applied for meeting drags so that adjacent meetings can still be reordered as siblings.
+        if target > 0, sorted[target - 1].kind == .meeting,
+           dragged.kind != .meeting,
+           inferredLevel == sorted[target - 1].indentLevel {
+            inferredLevel = sorted[target - 1].indentLevel + 1
+        }
         if dragged.kind == .meeting && inferredLevel > 0 {
             for i in (0..<target).reversed() {
                 if sorted[i].indentLevel < inferredLevel {
