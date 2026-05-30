@@ -19,11 +19,13 @@ struct EntryRowView: View {
     var isNotesFocused: Bool = false
     var onMoveToNextFromNotes: (() -> Void)? = nil
     var onDropDiaryEntry: ((String) -> Bool)? = nil
+    var onDropOntoEntry: ((String) -> Bool)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var editingTask: Task?
     @State private var editingMinutes: Minutes?
     @State private var showingDeleteConfirm = false
+    @State private var isDropTargeted = false
 
     private var isEntryFocused: Bool { focusedEntryId.wrappedValue == entry.id }
 
@@ -170,6 +172,19 @@ struct EntryRowView: View {
             .sheet(item: $editingTask) { task in
                 TaskEditorSheet(task: task, defaultDate: entry.createdAt)
             }
+            .dropDestination(for: String.self) { items, _ in
+                guard let str = items.first else { return false }
+                return onDropOntoEntry?(str) ?? false
+            } isTargeted: { isDropTargeted = $0 }
+            .overlay {
+                if isDropTargeted {
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.accentColor, lineWidth: 2)
+                        .padding(.horizontal)
+                        .padding(.vertical, 2)
+                        .allowsHitTesting(false)
+                }
+            }
             if showNotes, let task = entry.task {
                 EntryNotesSubArea(
                     text: Binding(
@@ -225,6 +240,19 @@ struct EntryRowView: View {
             .contextMenu { deleteButton }
             .modifier(RowCardStyling(selectable: true, verticalPadding: 2, onSelect: onSelect))
             .sheet(item: $editingMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
+            .dropDestination(for: String.self) { items, _ in
+                guard let str = items.first else { return false }
+                return onDropOntoEntry?(str) ?? false
+            } isTargeted: { isDropTargeted = $0 }
+            .overlay {
+                if isDropTargeted {
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.accentColor, lineWidth: 2)
+                        .padding(.horizontal)
+                        .padding(.vertical, 2)
+                        .allowsHitTesting(false)
+                }
+            }
             if showNotes, let minutes = entry.minutes {
                 EntryNotesSubArea(
                     text: Binding(

@@ -28,6 +28,7 @@ struct NoteEntryContent: View {
                         .textual.structuredTextStyle(.gitHub)
                         .font(.body)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
+                        .allowsHitTesting(false)
                 }
             }
 

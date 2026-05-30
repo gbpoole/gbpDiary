@@ -30,8 +30,18 @@ struct TaskEditorSheet: View {
             Form {
                 Section("Task") {
                     TextField("Summary", text: $summary)
-                    TextField("Notes (optional)", text: $notes, axis: .vertical)
-                        .lineLimit(3...6)
+                    ZStack(alignment: .topLeading) {
+                        if notes.isEmpty {
+                            Text("Notes (optional)")
+                                .foregroundStyle(.tertiary)
+                                .allowsHitTesting(false)
+                                .padding(.top, 8)
+                                .padding(.leading, 4)
+                        }
+                        TextEditor(text: $notes)
+                            .scrollContentBackground(.hidden)
+                            .frame(minHeight: 72)
+                    }
                 }
 
                 Section("Status") {

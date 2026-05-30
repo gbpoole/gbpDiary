@@ -4,6 +4,7 @@ struct DayEntryListView<RowContent: View>: View {
     let entries: [DayEntry]
     @Binding var activeDropZone: Int?
     let onMoveEntry: (DayEntry, Int) -> Void
+    var onDropForeignUUID: ((String, Int) -> Bool)? = nil
     @ViewBuilder var rowContent: (DayEntry, Int) -> RowContent
 
     var body: some View {
@@ -29,12 +30,17 @@ struct DayEntryListView<RowContent: View>: View {
         }
         .dropDestination(for: String.self) { items, _ in
             guard let uuidString = items.first,
-                  let id = UUID(uuidString: uuidString),
-                  let dragged = entries.first(where: { $0.id == id })
+                  let id = UUID(uuidString: uuidString)
             else { return false }
-            onMoveEntry(dragged, index)
-            activeDropZone = nil
-            return true
+            if let dragged = entries.first(where: { $0.id == id }) {
+                onMoveEntry(dragged, index)
+                activeDropZone = nil
+                return true
+            }
+            guard let handler = onDropForeignUUID else { return false }
+            let handled = handler(uuidString, index)
+            if handled { activeDropZone = nil }
+            return handled
         } isTargeted: { targeted in
             activeDropZone = targeted ? index : nil
         }

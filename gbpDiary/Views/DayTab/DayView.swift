@@ -282,12 +282,63 @@ struct DayPageContent: View {
 
     // MARK: - Entry rows
 
+    // Returns a Task that lives inside a meeting's newTasks list, looked up by Task UUID.
+    // Returns nil for DayEntry UUIDs or any UUID not found in meeting task lists.
+    private func findMeetingTask(id: UUID) -> Task? {
+        for entry in entries where entry.kind == .meeting {
+            if let task = entry.minutes?.newTasks.first(where: { $0.id == id }) { return task }
+        }
+        return nil
+    }
+
+    // Creates a new task DayEntry at the given full-sorted-list drop index.
+    // Clears originMinutes on the Task and shifts existing sort orders to make room.
+    private func placeNewTaskEntry(_ task: Task, atFullDropIndex fullDropIndex: Int, indentLevel: Int) {
+        task.originMinutes = nil
+        let record = findOrCreateDayRecord()
+        for e in record.entries where e.sortOrder >= fullDropIndex {
+            e.sortOrder += 1
+        }
+        let newEntry = DayEntry(kind: .task, sortOrder: fullDropIndex, indentLevel: indentLevel)
+        newEntry.task = task
+        newEntry.dayRecord = record
+        modelContext.insert(newEntry)
+    }
+
+    // Converts a visible-list drop index to a full-list drop index and infers
+    // indent level from neighbours, then delegates to placeNewTaskEntry(atFullDropIndex:).
+    private func placeNewTaskEntry(_ task: Task, toVisibleDropIndex dropIndex: Int) {
+        let fullDropIndex: Int
+        if dropIndex == 0 {
+            fullDropIndex = 0
+        } else {
+            let preceding = visibleEntries[dropIndex - 1]
+            fullDropIndex = (entries.firstIndex(where: { $0.id == preceding.id }) ?? 0) + 1
+        }
+        let prevLevel = fullDropIndex > 0 ? entries[fullDropIndex - 1].indentLevel : 0
+        let nextLevel = fullDropIndex < entries.count ? entries[fullDropIndex].indentLevel : 0
+        var indentLevel = nextLevel > prevLevel ? nextLevel : prevLevel
+        if fullDropIndex > 0, entries[fullDropIndex - 1].kind == .meeting,
+           indentLevel == entries[fullDropIndex - 1].indentLevel {
+            indentLevel = entries[fullDropIndex - 1].indentLevel + 1
+        }
+        placeNewTaskEntry(task, atFullDropIndex: fullDropIndex, indentLevel: indentLevel)
+    }
+
     @ViewBuilder
     private var entryRows: some View {
         DayEntryListView(
             entries: visibleEntries,
             activeDropZone: $activeDropZone,
-            onMoveEntry: moveEntryFromVisible
+            onMoveEntry: moveEntryFromVisible,
+            onDropForeignUUID: { uuidString, dropIndex in
+                guard let id = UUID(uuidString: uuidString),
+                      let task = findMeetingTask(id: id)
+                else { return false }
+                placeNewTaskEntry(task, toVisibleDropIndex: dropIndex)
+                onShowBanner(BannerMessage(text: "Task removed from meeting.", systemImage: "arrow.turn.up.left", tint: .accentColor))
+                return true
+            }
         ) { entry, index in
             entryRow(entry: entry, index: index)
         }
@@ -305,6 +356,85 @@ struct DayPageContent: View {
             }
         } : nil
         let isNotesFocused = focusedEntryId == entry.notesAreaFocusId
+        let onDropOntoEntry: ((String) -> Bool)? = (entry.kind == .task || entry.kind == .meeting) ? { uuidString in
+            guard let id = UUID(uuidString: uuidString) else { return false }
+
+            // DayEntry UUID drop
+            if let dragged = entries.first(where: { $0.id == id }), dragged.id != entry.id {
+                switch entry.kind {
+                case .task:
+                    if dragged.kind == .note, let task = entry.task {
+                        let text = dragged.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !text.isEmpty else { return false }
+                        let existing = (task.notes ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        task.notes = existing.isEmpty ? text : existing + "\n\n" + text
+                        modelContext.delete(dragged)
+                        onShowBanner(BannerMessage(text: "Note added to task.", systemImage: "arrow.down.to.line", tint: .accentColor))
+                        return true
+                    }
+                    if dragged.kind == .task {
+                        let targetIdx = entries.firstIndex(where: { $0.id == entry.id }) ?? 0
+                        var insertAfterIdx = targetIdx
+                        for i in (targetIdx + 1)..<entries.count {
+                            guard entries[i].indentLevel > entry.indentLevel else { break }
+                            insertAfterIdx = i
+                        }
+                        DayEntryOrdering.moveEntry(dragged, toDropIndex: insertAfterIdx + 1, in: entries)
+                        dragged.indentLevel = entry.indentLevel + 1
+                        onShowBanner(BannerMessage(text: "Task added as subtask.", systemImage: "arrow.turn.down.right", tint: .accentColor))
+                        return true
+                    }
+                    return false
+                case .meeting:
+                    if dragged.kind == .note, let minutes = entry.minutes {
+                        let text = dragged.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        guard !text.isEmpty else { return false }
+                        let existing = (minutes.minutesContent ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                        minutes.minutesContent = existing.isEmpty ? text : existing + "\n\n" + text
+                        modelContext.delete(dragged)
+                        onShowBanner(BannerMessage(text: "Note added to meeting.", systemImage: "arrow.down.to.line", tint: .accentColor))
+                        return true
+                    }
+                    if dragged.kind == .task, let minutes = entry.minutes, let task = dragged.task {
+                        let nextOrder = (minutes.newTasks.map(\.meetingTaskSortOrder).max() ?? -1) + 1
+                        task.originMinutes = minutes
+                        task.meetingTaskSortOrder = nextOrder
+                        modelContext.delete(dragged)
+                        onShowBanner(BannerMessage(text: "Task added to meeting.", systemImage: "arrow.down.to.line", tint: .accentColor))
+                        return true
+                    }
+                    return false
+                case .note:
+                    return false
+                }
+            }
+
+            // Meeting task (Task model UUID) drop
+            if let task = findMeetingTask(id: id) {
+                switch entry.kind {
+                case .task:
+                    let targetIdx = entries.firstIndex(where: { $0.id == entry.id }) ?? 0
+                    var insertAfterIdx = targetIdx
+                    for i in (targetIdx + 1)..<entries.count {
+                        guard entries[i].indentLevel > entry.indentLevel else { break }
+                        insertAfterIdx = i
+                    }
+                    placeNewTaskEntry(task, atFullDropIndex: insertAfterIdx + 1, indentLevel: entry.indentLevel + 1)
+                    onShowBanner(BannerMessage(text: "Task added as subtask.", systemImage: "arrow.turn.down.right", tint: .accentColor))
+                    return true
+                case .meeting:
+                    guard let minutes = entry.minutes else { return false }
+                    task.originMinutes = minutes
+                    task.meetingTaskSortOrder = (minutes.newTasks.map(\.meetingTaskSortOrder).max() ?? -1) + 1
+                    onShowBanner(BannerMessage(text: "Task moved to meeting.", systemImage: "arrow.down.to.line", tint: .accentColor))
+                    return true
+                case .note:
+                    return false
+                }
+            }
+
+            return false
+        } : nil
         EntryRowView(
             entry: entry,
             focusedEntryId: $focusedEntryId,
@@ -332,7 +462,8 @@ struct DayPageContent: View {
                 else { return false }
                 moveEntryFromVisible(dragged, toVisibleDropIndex: index + 1)
                 return true
-            } : nil
+            } : nil,
+            onDropOntoEntry: onDropOntoEntry
         )
     }
 

@@ -32,6 +32,7 @@ struct EntryNotesSubArea: View {
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                             .padding(.leading, 6)
                             .padding(.vertical, 6)
+                            .allowsHitTesting(false)
                     }
                 }
 
