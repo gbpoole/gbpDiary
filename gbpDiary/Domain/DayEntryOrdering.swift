@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 
 enum DayEntryOrdering {
     @discardableResult
@@ -105,13 +106,15 @@ enum DayEntryOrdering {
         return (redirectMap, toDelete)
     }
 
-    // Scans sorted entries for consecutive .task DayEntries at indentLevel == meeting.indentLevel + 1
-    // immediately following a .meeting entry. Each qualifying task is linked to minutes.newTasks
-    // (via task.originMinutes) and its DayEntry is marked for deletion. Sort order within the
-    // meeting's task list starts after the current maximum and increments per absorbed task.
-    // Orphaned meeting entries (minutes == nil) and orphaned task entries (task == nil) are skipped.
-    // Must run AFTER absorbAdjacentNotes so note DayEntries at meeting+1 are consumed first,
-    // leaving tasks cleanly adjacent to the meeting.
+    // Scans sorted entries for task DayEntries following a .meeting entry within
+    // the meeting's visual block (indentLevel > meeting.indentLevel). Direct children
+    // (at meeting.indentLevel + 1) are given meetingTaskSortOrder and absorbed into
+    // minutes.newTasks. Deeper descendants also have originMinutes set so they are
+    // reachable via minutes.newTasks for membership checks. All task DayEntries in
+    // the block are marked for deletion (they render via MeetingTaskListView instead).
+    // Non-task DayEntries (notes already absorbed by prior pass) are skipped but do
+    // not stop the scan.
+    // Must run AFTER reconcileTaskParents so task.parent links are current before deletion.
     @discardableResult
     static func absorbMeetingTasks(in entries: [DayEntry]) -> [DayEntry] {
         let sorted = entries.sorted { $0.sortOrder < $1.sortOrder }
@@ -124,14 +127,15 @@ enum DayEntryOrdering {
             var nextSortOrder = (minutes.newTasks.map(\.meetingTaskSortOrder).max() ?? -1) + 1
             while j < sorted.count {
                 let candidate = sorted[j]
-                guard candidate.kind == .task,
-                      candidate.indentLevel == parent.indentLevel + 1,
-                      let task = candidate.task
-                else { break }
-                task.originMinutes = minutes
-                task.meetingTaskSortOrder = nextSortOrder
-                nextSortOrder += 1
-                toDelete.append(candidate)
+                guard candidate.indentLevel > parent.indentLevel else { break }
+                if candidate.kind == .task, let task = candidate.task {
+                    task.originMinutes = minutes
+                    if candidate.indentLevel == parent.indentLevel + 1 {
+                        task.meetingTaskSortOrder = nextSortOrder
+                        nextSortOrder += 1
+                    }
+                    toDelete.append(candidate)
+                }
                 j += 1
             }
             i = j
@@ -181,5 +185,55 @@ enum DayEntryOrdering {
             }
         }
         return (redirectMap, toDelete)
+    }
+
+    // Sets task.parent for every task DayEntry by reading the visual indentation hierarchy.
+    // For each task at indentLevel L > 0, scans backward to find the first entry at
+    // indentLevel < L. If that entry is a task, it becomes the parent; otherwise parent = nil.
+    // Tasks at indentLevel 0 always have parent = nil.
+    // Must run BEFORE absorbMeetingTasks so child task.parent links are set before their
+    // DayEntries are deleted.
+    static func reconcileTaskParents(in entries: [DayEntry]) {
+        let sorted = entries.sorted { $0.sortOrder < $1.sortOrder }
+        for (idx, entry) in sorted.enumerated() {
+            guard entry.kind == .task, let task = entry.task else { continue }
+            let level = entry.indentLevel
+            guard level > 0 else { task.parent = nil; continue }
+            var newParent: Task? = nil
+            for i in stride(from: idx - 1, through: 0, by: -1) {
+                if sorted[i].indentLevel < level {
+                    if sorted[i].kind == .task { newParent = sorted[i].task }
+                    break
+                }
+            }
+            task.parent = newParent
+        }
+    }
+
+    // Recursively inserts DayEntries for all descendants of `task` into `record`,
+    // starting at `sortOrder`, using depth-first order. Returns the next available
+    // sortOrder after all inserted entries. Children are sorted by createdAt.
+    // Callers should call absorbAndMergeNotes after this to reconcile parent links.
+    @discardableResult
+    static func materializeChildDayEntries(
+        of task: Task,
+        atLevel level: Int,
+        insertingAt sortOrder: Int,
+        in record: DayRecord,
+        context: ModelContext
+    ) -> Int {
+        let children = task.children.sorted { $0.createdAt < $1.createdAt }
+        var next = sortOrder
+        for child in children {
+            for e in record.entries where e.sortOrder >= next { e.sortOrder += 1 }
+            let entry = DayEntry(kind: .task, sortOrder: next, indentLevel: level)
+            entry.task = child
+            entry.dayRecord = record
+            context.insert(entry)
+            next += 1
+            next = materializeChildDayEntries(of: child, atLevel: level + 1,
+                                              insertingAt: next, in: record, context: context)
+        }
+        return next
     }
 }

@@ -165,7 +165,9 @@ struct DayPageContent: View {
         if !mergeDelete.isEmpty {
             onShowBanner(BannerMessage(text: "Notes merged.", systemImage: "arrow.triangle.merge", tint: .accentColor))
         }
-        // Run after notes absorption so note DayEntries at meeting+1 are consumed first.
+        // Reconcile task.parent from visual indentation before absorbing meeting tasks,
+        // so child parent links are set before their DayEntries are deleted.
+        DayEntryOrdering.reconcileTaskParents(in: entries)
         let taskDelete = DayEntryOrdering.absorbMeetingTasks(in: entries)
         for entry in taskDelete { modelContext.delete(entry) }
         return mergeMap.merging(absorbMap) { _, new in new }
@@ -283,18 +285,50 @@ struct DayPageContent: View {
     // MARK: - Entry rows
 
     // Returns a Task that lives inside a meeting's newTasks list, looked up by Task UUID.
+    // Searches all descendants, not just top-level tasks.
     // Returns nil for DayEntry UUIDs or any UUID not found in meeting task lists.
     private func findMeetingTask(id: UUID) -> Task? {
+        func search(_ tasks: [Task]) -> Task? {
+            for task in tasks {
+                if task.id == id { return task }
+                if let found = search(task.children) { return found }
+            }
+            return nil
+        }
         for entry in entries where entry.kind == .meeting {
-            if let task = entry.minutes?.newTasks.first(where: { $0.id == id }) { return task }
+            if let found = search(entry.minutes?.newTasks ?? []) { return found }
         }
         return nil
     }
 
-    // Creates a new task DayEntry at the given full-sorted-list drop index.
-    // Clears originMinutes on the Task and shifts existing sort orders to make room.
-    private func placeNewTaskEntry(_ task: Task, atFullDropIndex fullDropIndex: Int, indentLevel: Int) {
+    // Recursively clears originMinutes for a task and all its descendants.
+    private func clearOriginMinutes(_ task: Task) {
         task.originMinutes = nil
+        for child in task.children { clearOriginMinutes(child) }
+    }
+
+    // Moves a task DayEntry and all its visual children to a meeting.
+    // reconcileTaskParents must have run first (via absorbAndMergeNotes) so task.parent is current.
+    private func moveTaskToMeeting(taskEntry: DayEntry, minutes: Minutes) {
+        guard let task = taskEntry.task else { return }
+        guard let idx = entries.firstIndex(where: { $0.id == taskEntry.id }) else { return }
+        let parentLevel = taskEntry.indentLevel
+        var childEntries: [DayEntry] = []
+        for i in (idx + 1)..<entries.count {
+            guard entries[i].indentLevel > parentLevel else { break }
+            childEntries.append(entries[i])
+        }
+        let nextOrder = (minutes.newTasks.map(\.meetingTaskSortOrder).max() ?? -1) + 1
+        task.originMinutes = minutes
+        task.meetingTaskSortOrder = nextOrder
+        for child in childEntries where child.kind == .task { modelContext.delete(child) }
+        modelContext.delete(taskEntry)
+    }
+
+    // Creates a new task DayEntry at the given full-sorted-list drop index,
+    // then materialises all descendants as indented DayEntries below it.
+    private func placeNewTaskEntry(_ task: Task, atFullDropIndex fullDropIndex: Int, indentLevel: Int) {
+        clearOriginMinutes(task)
         let record = findOrCreateDayRecord()
         for e in record.entries where e.sortOrder >= fullDropIndex {
             e.sortOrder += 1
@@ -303,6 +337,10 @@ struct DayPageContent: View {
         newEntry.task = task
         newEntry.dayRecord = record
         modelContext.insert(newEntry)
+        DayEntryOrdering.materializeChildDayEntries(
+            of: task, atLevel: indentLevel + 1,
+            insertingAt: fullDropIndex + 1, in: record, context: modelContext)
+        absorbAndMergeNotes()
     }
 
     // Converts a visible-list drop index to a full-list drop index and infers
@@ -395,11 +433,8 @@ struct DayPageContent: View {
                         onShowBanner(BannerMessage(text: "Note added to meeting.", systemImage: "arrow.down.to.line", tint: .accentColor))
                         return true
                     }
-                    if dragged.kind == .task, let minutes = entry.minutes, let task = dragged.task {
-                        let nextOrder = (minutes.newTasks.map(\.meetingTaskSortOrder).max() ?? -1) + 1
-                        task.originMinutes = minutes
-                        task.meetingTaskSortOrder = nextOrder
-                        modelContext.delete(dragged)
+                    if dragged.kind == .task, let minutes = entry.minutes {
+                        moveTaskToMeeting(taskEntry: dragged, minutes: minutes)
                         onShowBanner(BannerMessage(text: "Task added to meeting.", systemImage: "arrow.down.to.line", tint: .accentColor))
                         return true
                     }
@@ -463,7 +498,20 @@ struct DayPageContent: View {
                 moveEntryFromVisible(dragged, toVisibleDropIndex: index + 1)
                 return true
             } : nil,
-            onDropOntoEntry: onDropOntoEntry
+            onDropOntoEntry: onDropOntoEntry,
+            onRemoveFromMeeting: entry.kind == .meeting ? { [self] task in
+                let record = findOrCreateDayRecord()
+                let insertAt = nextSortOrder(record)
+                clearOriginMinutes(task)
+                let headEntry = DayEntry(kind: .task, sortOrder: insertAt, indentLevel: 0)
+                headEntry.task = task
+                headEntry.dayRecord = record
+                modelContext.insert(headEntry)
+                DayEntryOrdering.materializeChildDayEntries(
+                    of: task, atLevel: 1, insertingAt: insertAt + 1, in: record, context: modelContext)
+                absorbAndMergeNotes()
+                onShowBanner(BannerMessage(text: "Task removed from meeting.", systemImage: "arrow.turn.up.left", tint: .accentColor))
+            } : nil
         )
     }
 
