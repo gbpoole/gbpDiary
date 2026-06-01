@@ -10,6 +10,29 @@ struct EntryNotesSubArea: View {
     var onMoveToPrevious: (() -> Void)? = nil
     var onMoveToNext: (() -> Void)? = nil
 
+#if os(macOS)
+    private var cursorIsOnFirstVisualLine: Bool {
+        guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
+              let lm = tv.layoutManager, lm.numberOfGlyphs > 0 else { return true }
+        let pos = min(tv.selectedRange().location, tv.string.utf16.count)
+        let glyph = min(lm.glyphIndexForCharacter(at: pos), lm.numberOfGlyphs - 1)
+        let curY = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
+        let topY = lm.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil).minY
+        return curY <= topY + 1
+    }
+
+    private var cursorIsOnLastVisualLine: Bool {
+        guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
+              let lm = tv.layoutManager, lm.numberOfGlyphs > 0 else { return true }
+        let sel = tv.selectedRange()
+        let pos = min(sel.location + sel.length, tv.string.utf16.count)
+        let glyph = min(lm.glyphIndexForCharacter(at: pos), lm.numberOfGlyphs - 1)
+        let curY = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
+        let botY = lm.lineFragmentRect(forGlyphAt: lm.numberOfGlyphs - 1, effectiveRange: nil).minY
+        return curY >= botY - 1
+    }
+#endif
+
     var body: some View {
         HStack(spacing: 0) {
             RoundedRectangle(cornerRadius: 2)
@@ -44,12 +67,18 @@ struct EntryNotesSubArea: View {
                     .scrollDisabled(true)
                     .padding(.leading, 4)
                     .onKeyPress(.upArrow, phases: .down) { _ in
-                        if let move = onMoveToPrevious { move(); return .handled }
-                        return .ignored
+                        guard let move = onMoveToPrevious else { return .ignored }
+                        #if os(macOS)
+                        guard cursorIsOnFirstVisualLine else { return .ignored }
+                        #endif
+                        move(); return .handled
                     }
                     .onKeyPress(.downArrow, phases: .down) { _ in
-                        if let move = onMoveToNext { move(); return .handled }
-                        return .ignored
+                        guard let move = onMoveToNext else { return .ignored }
+                        #if os(macOS)
+                        guard cursorIsOnLastVisualLine else { return .ignored }
+                        #endif
+                        move(); return .handled
                     }
                     .allowsHitTesting(isFocused)
                     .opacity(isFocused ? 1 : 0)

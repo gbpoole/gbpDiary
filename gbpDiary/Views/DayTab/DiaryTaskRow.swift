@@ -73,7 +73,11 @@ struct DiaryTaskRow: View {
             onMoveToPrevious: onMoveToPrevious,
             onMoveToNext: showNotes
                 ? { focusedEntryId.wrappedValue = task.notesAreaFocusId }
-                : onMoveToNext,
+                : showChildren
+                    ? { if let first = task.children.sorted(by: { $0.sortOrder < $1.sortOrder }).first {
+                            focusedEntryId.wrappedValue = first.id
+                        } else { onMoveToNext?() } }
+                    : onMoveToNext,
             onIndent: onIndent,
             onOutdent: onOutdent
         )
@@ -108,7 +112,11 @@ struct DiaryTaskRow: View {
             focusId: task.notesAreaFocusId,
             placeholder: "Add task notes…",
             onMoveToPrevious: { focusedEntryId.wrappedValue = task.id },
-            onMoveToNext: onMoveToNextFromNotes
+            onMoveToNext: showChildren
+                ? { if let first = task.children.sorted(by: { $0.sortOrder < $1.sortOrder }).first {
+                        focusedEntryId.wrappedValue = first.id
+                    } else { onMoveToNextFromNotes?() } }
+                : onMoveToNextFromNotes
         )
         .padding(.leading, Self.indentStep)
         .padding(.horizontal)
@@ -127,6 +135,7 @@ struct DiaryTaskRow: View {
             TaskSubtreeView(
                 tasks: task.children,
                 collapsedIds: $subtreeCollapsedIds,
+                focusedId: focusedEntryId,
                 defaultDate: task.dayRecord?.date ?? Date(),
                 onEdit: { editingTask = $0 },
                 onMakeSubtask: { dragged, target in
@@ -141,7 +150,16 @@ struct DiaryTaskRow: View {
                 },
                 onDelete: { modelContext.delete($0) },
                 onDropExternal: onExternalDropIntoSubtree,
-                onDropExternalOntoTask: onExternalDropOntoSubtask
+                onDropExternalOntoTask: onExternalDropOntoSubtask,
+                onNavigatePrev: {
+                    let hasNotes = !(task.notes ?? "").isEmpty
+                    if hasNotes {
+                        focusedEntryId.wrappedValue = task.notesAreaFocusId
+                    } else {
+                        focusedEntryId.wrappedValue = task.id
+                    }
+                },
+                onNavigateNext: onMoveToNextFromNotes
             )
             .padding(.bottom, 4)
         }

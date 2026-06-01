@@ -213,9 +213,15 @@ struct EntryRowView: View {
     private var meetingRow: some View {
         let notesText = entry.minutes?.minutesContent ?? ""
         let showNotes = (!notesText.isEmpty || isEntryFocused || isNotesFocused) && !isCollapsed
+        let rootTasks = !isCollapsed
+            ? (entry.minutes?.newTasks ?? []).filter { $0.parent == nil }.sorted { $0.sortOrder < $1.sortOrder }
+            : []
+        let hasTasks = !rootTasks.isEmpty
         let nextForSummary: (() -> Void)? = showNotes
             ? { focusedEntryId.wrappedValue = entry.notesAreaFocusId }
-            : onMoveToNext
+            : hasTasks
+                ? { if let first = rootTasks.first { focusedEntryId.wrappedValue = first.id } else { onMoveToNext?() } }
+                : onMoveToNext
         let summaryBinding = Binding<String>(
             get: { entry.inlineSummary },
             set: { entry.inlineSummary = $0 }
@@ -268,7 +274,9 @@ struct EntryRowView: View {
                     focusId: entry.notesAreaFocusId,
                     placeholder: "Add meeting minutes…",
                     onMoveToPrevious: { focusedEntryId.wrappedValue = entry.id },
-                    onMoveToNext: onMoveToNextFromNotes
+                    onMoveToNext: hasTasks
+                        ? { if let first = rootTasks.first { focusedEntryId.wrappedValue = first.id } else { onMoveToNextFromNotes?() } }
+                        : onMoveToNextFromNotes
                 )
                 .padding(.leading, Self.indentStep)
                 .padding(.horizontal)
@@ -286,6 +294,7 @@ struct EntryRowView: View {
                     TaskSubtreeView(
                         tasks: minutes.newTasks.filter { $0.parent == nil },
                         collapsedIds: $meetingTaskCollapsedIds,
+                        focusedId: focusedEntryId,
                         defaultDate: minutes.meetingAt,
                         onEdit: { _ in },
                         onReorder: { task, i in task.sortOrder = i },
@@ -298,7 +307,15 @@ struct EntryRowView: View {
                             modelContext.delete(task)
                         },
                         onDropExternal: onDropDiaryEntry,
-                        onDropExternalOntoTask: onDropExternalOntoMeetingTask
+                        onDropExternalOntoTask: onDropExternalOntoMeetingTask,
+                        onNavigatePrev: {
+                            if showNotes {
+                                focusedEntryId.wrappedValue = entry.notesAreaFocusId
+                            } else {
+                                focusedEntryId.wrappedValue = entry.id
+                            }
+                        },
+                        onNavigateNext: onMoveToNextFromNotes
                     )
                     .padding(.bottom, 4)
                 }

@@ -9,6 +9,9 @@ import SwiftData
 struct TaskSubtreeView: View {
     var tasks: [Task]
     var collapsedIds: Binding<Set<UUID>>
+    // Shared focus binding from the parent diary view — allows navigation to cross
+    // the subtree boundary into surrounding diary content.
+    var focusedId: FocusState<UUID?>.Binding
     var defaultDate: Date = Date()
     var onEdit: (Task) -> Void
     // Reorder root tasks within this container. Receives updated sortOrder values.
@@ -25,9 +28,12 @@ struct TaskSubtreeView: View {
     var onDropExternal: ((String) -> Bool)?
     // Handle a drop of an external UUID onto a specific task label (make it a subtask).
     var onDropExternalOntoTask: ((String, Task) -> Bool)? = nil
+    // Called when ↑ is pressed on the first task (navigate to parent context above).
+    var onNavigatePrev: (() -> Void)? = nil
+    // Called when ↓ is pressed on the last task (navigate to parent context below).
+    var onNavigateNext: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
-    @FocusState private var focusedTaskId: UUID?
     @State private var activeDropZone: Int?
     @State private var dropTargetId: UUID?
     @State private var editingTask: Task?
@@ -42,6 +48,61 @@ struct TaskSubtreeView: View {
         return tasks
             .filter { t in t.parent == nil || !ids.contains(t.parent!.id) }
             .sorted { $0.sortOrder < $1.sortOrder }
+    }
+
+    // Depth-first list of all tasks currently visible (respects collapse at every level).
+    private var flatVisibleTasks: [Task] {
+        var result: [Task] = []
+        func collect(_ list: [Task]) {
+            for t in list.sorted(by: { $0.sortOrder < $1.sortOrder }) {
+                result.append(t)
+                if !collapsedIds.wrappedValue.contains(t.id) {
+                    collect(t.children)
+                }
+            }
+        }
+        collect(sortedRoots)
+        return result
+    }
+
+    // ↑ from `task`: land on the previous task's notes (if visible) or its row, or escape prev.
+    private func prevMove(for task: Task) -> (() -> Void)? {
+        let flat = flatVisibleTasks
+        guard let idx = flat.firstIndex(where: { $0.id == task.id }) else { return onNavigatePrev }
+        guard idx > 0 else { return onNavigatePrev }
+        let prev = flat[idx - 1]
+        return {
+            let prevHasNotes = !(prev.notes ?? "").isEmpty
+            let prevCollapsed = collapsedIds.wrappedValue.contains(prev.id)
+            if prevHasNotes && !prevCollapsed {
+                focusedId.wrappedValue = prev.notesAreaFocusId
+            } else {
+                focusedId.wrappedValue = prev.id
+            }
+        }
+    }
+
+    // ↓ from `task` row: land on its notes (if visible) or next task's row, or escape next.
+    private func nextMove(for task: Task) -> (() -> Void)? {
+        let flat = flatVisibleTasks
+        guard let idx = flat.firstIndex(where: { $0.id == task.id }) else { return onNavigateNext }
+        let hasNotes = !(task.notes ?? "").isEmpty
+        let isCollapsed = collapsedIds.wrappedValue.contains(task.id)
+        if hasNotes && !isCollapsed {
+            return { focusedId.wrappedValue = task.notesAreaFocusId }
+        }
+        guard idx < flat.count - 1 else { return onNavigateNext }
+        let next = flat[idx + 1]
+        return { focusedId.wrappedValue = next.id }
+    }
+
+    // ↓ from `task` notes: land on next task's row, or escape next.
+    private func notesNextMove(for task: Task) -> (() -> Void)? {
+        let flat = flatVisibleTasks
+        guard let idx = flat.firstIndex(where: { $0.id == task.id }) else { return onNavigateNext }
+        guard idx < flat.count - 1 else { return onNavigateNext }
+        let next = flat[idx + 1]
+        return { focusedId.wrappedValue = next.id }
     }
 
     // Find any task in the subtree (including children and deeper descendants).
@@ -81,7 +142,7 @@ struct TaskSubtreeView: View {
     @ViewBuilder
     private func taskNotesArea(for task: Task) -> some View {
         let hasNotes = !(task.notes ?? "").isEmpty
-        let isNotesFocused = focusedTaskId == task.notesAreaFocusId
+        let isNotesFocused = focusedId.wrappedValue == task.notesAreaFocusId
         if (hasNotes || isNotesFocused) && !collapsedIds.wrappedValue.contains(task.id) {
             EntryNotesSubArea(
                 text: Binding(
@@ -89,11 +150,11 @@ struct TaskSubtreeView: View {
                     set: { task.notes = $0.isEmpty ? nil : $0 }
                 ),
                 isFocused: isNotesFocused,
-                focusedEntryId: $focusedTaskId,
+                focusedEntryId: focusedId,
                 focusId: task.notesAreaFocusId,
                 placeholder: "Add notes…",
-                onMoveToPrevious: nil,
-                onMoveToNext: nil
+                onMoveToPrevious: { focusedId.wrappedValue = task.id },
+                onMoveToNext: notesNextMove(for: task)
             )
             .padding(.leading, 8)
             .padding(.trailing, 8)
@@ -170,11 +231,13 @@ struct TaskSubtreeView: View {
             InlineEditableSingleLineText(
                 placeholder: "",
                 text: Binding(get: { task.summary }, set: { task.summary = $0 }),
-                isFocused: focusedTaskId == task.id,
-                focusBinding: $focusedTaskId,
+                isFocused: focusedId.wrappedValue == task.id,
+                focusBinding: focusedId,
                 focusId: task.id,
                 struckThrough: task.status == .completed || task.status == .cancelled,
-                foregroundColor: task.status == .cancelled ? .secondary : .primary
+                foregroundColor: task.status == .cancelled ? .secondary : .primary,
+                onMoveToPrevious: prevMove(for: task),
+                onMoveToNext: nextMove(for: task)
             )
             .dropDestination(for: String.self) { items, _ in
                 guard let uuidString = items.first,
@@ -198,7 +261,7 @@ struct TaskSubtreeView: View {
             }
 
             InlineRowEditButton(action: { editingTask = task })
-            if focusedTaskId != task.id {
+            if focusedId.wrappedValue != task.id {
                 Spacer(minLength: 0)
             }
         }
