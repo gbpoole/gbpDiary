@@ -20,7 +20,7 @@ struct TaskRowView: View {
     @State private var followUpPickerDate = Date()
 
     var body: some View {
-        HStack(alignment: .top, spacing: 10) {
+        HStack(alignment: .center, spacing: 10) {
             statusButton
             contentRow
         }

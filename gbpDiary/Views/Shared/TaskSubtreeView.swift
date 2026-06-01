@@ -167,33 +167,40 @@ struct TaskSubtreeView: View {
             }
             .buttonStyle(.plain)
 
-            Text(task.summary.isEmpty ? "(untitled)" : task.summary)
-                .lineLimit(1)
-                .strikethrough(task.status == .completed || task.status == .cancelled)
-                .foregroundStyle(task.status == .cancelled ? Color.secondary : Color.primary)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .contentShape(Rectangle())
-                .onTapGesture { editingTask = task }
-                .dropDestination(for: String.self) { items, _ in
-                    guard let uuidString = items.first,
-                          let id = UUID(uuidString: uuidString),
-                          id != task.id
-                    else { return false }
-                    if let onMakeSubtask,
-                       let dragged = findDescendant(id: id) ?? sortedRoots.first(where: { $0.id == id }),
-                       !isDescendant(task, of: dragged) {
-                        onMakeSubtask(dragged, task)
-                        return true
-                    }
-                    return onDropExternalOntoTask?(uuidString, task) ?? false
-                } isTargeted: { dropTargetId = $0 ? task.id : nil }
-                .overlay {
-                    if dropTargetId == task.id {
-                        RoundedRectangle(cornerRadius: 3)
-                            .stroke(Color.accentColor, lineWidth: 1.5)
-                            .allowsHitTesting(false)
-                    }
+            InlineEditableSingleLineText(
+                placeholder: "",
+                text: Binding(get: { task.summary }, set: { task.summary = $0 }),
+                isFocused: focusedTaskId == task.id,
+                focusBinding: $focusedTaskId,
+                focusId: task.id,
+                struckThrough: task.status == .completed || task.status == .cancelled,
+                foregroundColor: task.status == .cancelled ? .secondary : .primary
+            )
+            .dropDestination(for: String.self) { items, _ in
+                guard let uuidString = items.first,
+                      let id = UUID(uuidString: uuidString),
+                      id != task.id
+                else { return false }
+                if let onMakeSubtask,
+                   let dragged = findDescendant(id: id) ?? sortedRoots.first(where: { $0.id == id }),
+                   !isDescendant(task, of: dragged) {
+                    onMakeSubtask(dragged, task)
+                    return true
                 }
+                return onDropExternalOntoTask?(uuidString, task) ?? false
+            } isTargeted: { dropTargetId = $0 ? task.id : nil }
+            .overlay {
+                if dropTargetId == task.id {
+                    RoundedRectangle(cornerRadius: 3)
+                        .stroke(Color.accentColor, lineWidth: 1.5)
+                        .allowsHitTesting(false)
+                }
+            }
+
+            InlineRowEditButton(action: { editingTask = task })
+            if focusedTaskId != task.id {
+                Spacer(minLength: 0)
+            }
         }
         .contentShape(Rectangle())
         .padding(.horizontal, 8)
