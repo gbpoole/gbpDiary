@@ -13,7 +13,6 @@ struct DiaryTaskRow: View {
     var onMoveToNextFromNotes: (() -> Void)? = nil
     var onIndent: (() -> Void)? = nil
     var onOutdent: (() -> Void)? = nil
-    var onSelect: (() -> Void)? = nil
     var onDropOntoTask: ((String) -> Bool)? = nil
     var onExternalDropOntoSubtask: ((String, Task) -> Bool)? = nil
     var onExternalDropIntoSubtree: ((String) -> Bool)? = nil
@@ -81,7 +80,7 @@ struct DiaryTaskRow: View {
             onIndent: onIndent,
             onOutdent: onOutdent
         )
-        .modifier(RowCardStyling(selectable: true, verticalPadding: 2, onSelect: onSelect))
+        .modifier(RowCardStyling(verticalPadding: 2))
         .draggable(task.id.uuidString)
         .contextMenu {
             Button("Delete", role: .destructive) { modelContext.delete(task) }

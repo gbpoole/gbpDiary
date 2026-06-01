@@ -24,8 +24,11 @@ struct NoteEntryContent: View {
                         .padding(.top, 9)
                         .padding(.leading, 5)
                 } else {
-                    StructuredText(markdown: text.replacingOccurrences(of: "\n", with: "  \n"))
-                        .textual.structuredTextStyle(.gitHub)
+                    StructuredText(
+                        markdown: text.replacingOccurrences(of: "\n", with: "  \n"),
+                        syntaxExtensions: [.math]
+                    )
+                    .textual.structuredTextStyle(.gitHub)
                         .font(.body)
                         .frame(maxWidth: .infinity, alignment: .topLeading)
                         .allowsHitTesting(false)

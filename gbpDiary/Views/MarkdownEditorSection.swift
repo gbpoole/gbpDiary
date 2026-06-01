@@ -49,9 +49,12 @@ struct MarkdownEditorSection: View {
                     .foregroundStyle(.tertiary)
                     .font(.body)
             } else {
-                StructuredText(markdown: text.replacingOccurrences(of: "\n", with: "  \n"))
-                    .textual.textSelection(.enabled)
-                    .textual.structuredTextStyle(.gitHub)
+                StructuredText(
+                    markdown: text.replacingOccurrences(of: "\n", with: "  \n"),
+                    syntaxExtensions: [.math]
+                )
+                .textual.textSelection(.enabled)
+                .textual.structuredTextStyle(.gitHub)
                     .font(.body)
             }
         }

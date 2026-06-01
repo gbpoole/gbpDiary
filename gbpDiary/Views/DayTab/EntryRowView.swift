@@ -11,7 +11,6 @@ struct EntryRowView: View {
     var onDeleteEmpty: (() -> Void)? = nil
     var onIndent: (() -> Void)? = nil
     var onOutdent: (() -> Void)? = nil
-    var onSelect: (() -> Void)? = nil
     var hasChildren: Bool = false
     var isCollapsed: Bool = false
     var onToggleCollapse: (() -> Void)? = nil
@@ -157,7 +156,7 @@ struct EntryRowView: View {
         let notesText = entry.task?.notes ?? ""
         let showNotes = (!notesText.isEmpty || isEntryFocused || isNotesFocused) && !isCollapsed
         return VStack(alignment: .leading, spacing: 0) {
-            rowCard(selectable: true, verticalPadding: 2) {
+            rowCard(verticalPadding: 2) {
                 TaskEntryContent(
                     task: entry.task,
                     focusedEntryId: focusedEntryId,
@@ -247,7 +246,7 @@ struct EntryRowView: View {
                 }
             )
             .contextMenu { deleteButton }
-            .modifier(RowCardStyling(selectable: true, verticalPadding: 2, onSelect: onSelect))
+            .modifier(RowCardStyling(verticalPadding: 2))
             .draggable(entry.id.uuidString)
             .sheet(item: $editingMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
             .dropDestination(for: String.self) { items, _ in
@@ -340,11 +339,10 @@ struct EntryRowView: View {
     }
 
     private func rowCard<Content: View>(
-        selectable: Bool,
         verticalPadding: CGFloat,
         @ViewBuilder content: () -> Content
     ) -> some View {
         content()
-            .modifier(RowCardStyling(selectable: selectable, verticalPadding: verticalPadding, onSelect: onSelect))
+            .modifier(RowCardStyling(verticalPadding: verticalPadding))
     }
 }

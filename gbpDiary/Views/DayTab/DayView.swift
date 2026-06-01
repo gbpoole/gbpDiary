@@ -101,7 +101,6 @@ struct DayPageContent: View {
     @State private var escapeMonitor = EscapeKeyMonitor()
     #endif
 
-    @State private var selectedItem: DiaryItem?
     @State private var activeDropZone: Int?
     @State private var collapsedEntryIds: Set<UUID> = []
 
@@ -234,24 +233,14 @@ struct DayPageContent: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    entryRows
-                    addEntryBar
-                    taskSections
-                    emptyState
-                }
-            }
-
-            if let item = selectedItem {
-                Divider()
-                EntryDetailPanel(item: item, onDismiss: { selectedItem = nil })
-                    .frame(width: 280)
-                    .transition(.move(edge: .trailing).combined(with: .opacity))
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                entryRows
+                addEntryBar
+                taskSections
+                emptyState
             }
         }
-        .animation(.easeInOut(duration: 0.2), value: selectedItem?.id)
         .sheet(isPresented: $showingAddTask) {
             TaskEditorSheet(task: nil, defaultDate: date) { newTask in
                 let record = findOrCreateDayRecord()
@@ -266,12 +255,6 @@ struct DayPageContent: View {
             if let id = newId {
                 focusedEntryId = id
                 pendingFocusId = nil
-            }
-        }
-        .onChange(of: collapsedEntryIds) { _, _ in
-            if let sel = selectedItem,
-               !visibleDiaryItems.contains(where: { $0.id == sel.id }) {
-                withAnimation(.easeInOut(duration: 0.2)) { selectedItem = nil }
             }
         }
         #if os(macOS)
@@ -457,15 +440,6 @@ struct DayPageContent: View {
             onMoveToNext: nextId.map { id in { pendingFocusId = id } },
             onMoveToNextFromNotes: nextId.map { id in { pendingFocusId = id } },
             onIndent: { indentDiaryTask(task) },
-            onSelect: {
-                withAnimation(.easeInOut(duration: 0.2)) {
-                    if case .task(let sel) = selectedItem, sel.id == task.id {
-                        selectedItem = nil
-                    } else {
-                        selectedItem = .task(task)
-                    }
-                }
-            },
             onDropOntoTask: { uuidString in
                 guard let id = UUID(uuidString: uuidString), id != task.id else { return false }
                 // Note entry → absorb into task notes
@@ -536,15 +510,6 @@ struct DayPageContent: View {
 
     @ViewBuilder
     private func entryRow(entry: DayEntry, index: Int) -> some View {
-        let onSelect: (() -> Void)? = entry.detailTarget != nil ? {
-            withAnimation(.easeInOut(duration: 0.2)) {
-                if case .entry(let sel) = selectedItem, sel.id == entry.id {
-                    selectedItem = nil
-                } else {
-                    selectedItem = .entry(entry)
-                }
-            }
-        } : nil
         let isNotesFocused = focusedEntryId == entry.notesAreaFocusId
         let onDropOntoEntry: ((String) -> Bool)? = entry.kind == .meeting ? { uuidString in
             guard let id = UUID(uuidString: uuidString),
@@ -597,7 +562,6 @@ struct DayPageContent: View {
             },
             onIndent: { indentEntry(entry) },
             onOutdent: { outdentEntry(entry) },
-            onSelect: onSelect,
             hasChildren: diaryItemNeedsChevron(.entry(entry)),
             isCollapsed: collapsedEntryIds.contains(entry.id),
             onToggleCollapse: { toggleCollapse(entry) },
@@ -777,7 +741,6 @@ struct DayPageContent: View {
     }
 
     private func deleteEntry(_ entry: DayEntry, focusingId: UUID?) {
-        if case .entry(let sel) = selectedItem, sel.id == entry.id { selectedItem = nil }
         if let id = focusingId { pendingFocusId = id }
         modelContext.delete(entry)
         let merged = absorbAndMergeNotes()
@@ -810,7 +773,6 @@ struct DayPageContent: View {
                 switch item {
                 case .task(let task):
                     guard task.isInlineSummaryEmpty else { return false }
-                    selectedItem = nil
                     if let prevId { pendingFocusId = prevId }
                     modelContext.delete(task)
                     renormalizeSortOrders()

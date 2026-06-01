@@ -49,8 +49,11 @@ struct EntryNotesSubArea: View {
                             .padding(.top, 9)
                             .padding(.leading, 9)
                     } else {
-                        StructuredText(markdown: text.replacingOccurrences(of: "\n", with: "  \n"))
-                            .textual.structuredTextStyle(.gitHub)
+                        StructuredText(
+                            markdown: text.replacingOccurrences(of: "\n", with: "  \n"),
+                            syntaxExtensions: [.math]
+                        )
+                        .textual.structuredTextStyle(.gitHub)
                             .font(.body)
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                             .padding(.leading, 6)
