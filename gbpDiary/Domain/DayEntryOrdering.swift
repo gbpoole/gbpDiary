@@ -108,12 +108,12 @@ enum DayEntryOrdering {
 
     // Scans sorted entries for task DayEntries following a .meeting entry within
     // the meeting's visual block (indentLevel > meeting.indentLevel). Direct children
-    // (at meeting.indentLevel + 1) are given meetingTaskSortOrder and absorbed into
+    // (at meeting.indentLevel + 1) are given sortOrder and absorbed into
     // minutes.newTasks. Deeper descendants also have originMinutes set so they are
     // reachable via minutes.newTasks for membership checks. All task DayEntries in
-    // the block are marked for deletion (they render via MeetingTaskListView instead).
-    // Non-task DayEntries (notes already absorbed by prior pass) are skipped but do
-    // not stop the scan.
+    // the block are marked for deletion (they render via TaskSubtreeView instead).
+    // A non-task entry within the block stops the scan — notes must be absorbed by
+    // absorbAdjacentNotes first so only task entries remain in the block.
     // Must run AFTER reconcileTaskParents so task.parent links are current before deletion.
     @discardableResult
     static func absorbMeetingTasks(in entries: [DayEntry]) -> [DayEntry] {
@@ -124,18 +124,17 @@ enum DayEntryOrdering {
             let parent = sorted[i]
             guard parent.kind == .meeting, let minutes = parent.minutes else { i += 1; continue }
             var j = i + 1
-            var nextSortOrder = (minutes.newTasks.map(\.meetingTaskSortOrder).max() ?? -1) + 1
+            var nextOrder = (minutes.newTasks.map(\.sortOrder).max() ?? -1) + 1
             while j < sorted.count {
                 let candidate = sorted[j]
                 guard candidate.indentLevel > parent.indentLevel else { break }
-                if candidate.kind == .task, let task = candidate.task {
-                    task.originMinutes = minutes
-                    if candidate.indentLevel == parent.indentLevel + 1 {
-                        task.meetingTaskSortOrder = nextSortOrder
-                        nextSortOrder += 1
-                    }
-                    toDelete.append(candidate)
+                guard candidate.kind == .task, let task = candidate.task else { break }
+                task.originMinutes = minutes
+                if candidate.indentLevel == parent.indentLevel + 1 {
+                    task.sortOrder = nextOrder
+                    nextOrder += 1
                 }
+                toDelete.append(candidate)
                 j += 1
             }
             i = j
@@ -227,9 +226,9 @@ enum DayEntryOrdering {
         for child in children {
             for e in record.entries where e.sortOrder >= next { e.sortOrder += 1 }
             let entry = DayEntry(kind: .task, sortOrder: next, indentLevel: level)
+            context.insert(entry)
             entry.task = child
             entry.dayRecord = record
-            context.insert(entry)
             next += 1
             next = materializeChildDayEntries(of: child, atLevel: level + 1,
                                               insertingAt: next, in: record, context: context)

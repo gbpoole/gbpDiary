@@ -37,8 +37,16 @@ import SwiftData
     var originMinutes: Minutes?
     var meetingTaskSortOrder: Int = 0
     var parent: Task?
-    @Relationship(deleteRule: .cascade)
+    @Relationship(deleteRule: .cascade, inverse: \Task.parent)
     var children: [Task]
+
+    // Explicit container ownership — set on root tasks (parent == nil).
+    // Exactly one of these is non-nil for a root task; all nil = backlog.
+    var dayRecord: DayRecord?
+    var institution: Institution?
+
+    // Ordering within the diary (root tasks) or among siblings within a parent.
+    var sortOrder: Int = 0
 
     init(
         summary: String,
@@ -58,6 +66,10 @@ import SwiftData
 }
 
 extension Task {
+    var needsChevron: Bool {
+        !children.isEmpty || (notes.map { !$0.isEmpty } ?? false)
+    }
+
     func markCompleted() {
         let now = Date()
         status = .completed

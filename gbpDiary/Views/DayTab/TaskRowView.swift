@@ -20,14 +20,9 @@ struct TaskRowView: View {
     @State private var followUpPickerDate = Date()
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .top, spacing: 10) {
             statusButton
-            VStack(alignment: .leading, spacing: 0) {
-                contentRow
-                if !task.children.isEmpty {
-                    childrenList
-                }
-            }
+            contentRow
         }
         .padding(.horizontal)
         .padding(.vertical, 5)
@@ -128,15 +123,6 @@ struct TaskRowView: View {
             InlineRowEditButton(action: onEdit)
             if !isFocusedInline {
                 Spacer(minLength: 0)
-            }
-        }
-    }
-
-    private var childrenList: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ForEach(task.children.sorted(by: { $0.createdAt < $1.createdAt })) { child in
-                TaskRowView(task: child, onEdit: onEdit)
-                    .padding(.leading, 20)
             }
         }
     }

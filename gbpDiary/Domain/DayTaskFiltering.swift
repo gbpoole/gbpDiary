@@ -8,8 +8,11 @@ enum DayTaskFiltering {
         return (dayStart, dayEnd)
     }
 
+    // IDs of tasks that already appear in today's diary (via dayRecord ownership or legacy DayEntry).
     static func taskEntryIds(from dayRecord: DayRecord?) -> Set<PersistentIdentifier> {
-        Set((dayRecord?.entries ?? []).compactMap { $0.task?.persistentModelID })
+        let fromTasks = Set((dayRecord?.tasks ?? []).map(\.persistentModelID))
+        let fromEntries = Set((dayRecord?.entries ?? []).compactMap { $0.task?.persistentModelID })
+        return fromTasks.union(fromEntries)
     }
 
     static func scheduledTasks(
@@ -37,6 +40,8 @@ enum DayTaskFiltering {
         allTasks.filter {
             ($0.status == .todo || $0.status == .started)
                 && $0.parent == nil
+                && $0.dayRecord == nil     // not already in a diary
+                && $0.originMinutes == nil // not in a meeting
                 && ($0.scheduledAt == nil || $0.scheduledAt! < dayStart)
         }
     }

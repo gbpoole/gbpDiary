@@ -21,12 +21,14 @@ struct EntryRowView: View {
     var onDropDiaryEntry: ((String) -> Bool)? = nil
     var onDropOntoEntry: ((String) -> Bool)? = nil
     var onRemoveFromMeeting: ((Task) -> Void)? = nil
+    var onDropExternalOntoMeetingTask: ((String, Task) -> Bool)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var editingTask: Task?
     @State private var editingMinutes: Minutes?
     @State private var showingDeleteConfirm = false
     @State private var isDropTargeted = false
+    @State private var meetingTaskCollapsedIds: Set<UUID> = []
 
     private var isEntryFocused: Bool { focusedEntryId.wrappedValue == entry.id }
 
@@ -240,6 +242,7 @@ struct EntryRowView: View {
             )
             .contextMenu { deleteButton }
             .modifier(RowCardStyling(selectable: true, verticalPadding: 2, onSelect: onSelect))
+            .draggable(entry.id.uuidString)
             .sheet(item: $editingMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
             .dropDestination(for: String.self) { items, _ in
                 guard let str = items.first else { return false }
@@ -271,13 +274,38 @@ struct EntryRowView: View {
                 .padding(.horizontal)
                 .padding(.bottom, 4)
             }
-            if !isCollapsed, let minutes = entry.minutes, !minutes.newTasks.isEmpty {
-                MeetingTaskListView(minutes: minutes,
-                                    onDropDiaryEntry: onDropDiaryEntry,
-                                    onRemoveFromMeeting: onRemoveFromMeeting)
-                    .padding(.leading, Self.indentStep)
-                    .padding(.horizontal)
+            if !isCollapsed, let minutes = entry.minutes,
+               !minutes.newTasks.filter({ $0.parent == nil }).isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    Text("New Tasks")
+                        .font(.caption.bold())
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.top, 6)
+                        .padding(.bottom, 2)
+                    TaskSubtreeView(
+                        tasks: minutes.newTasks.filter { $0.parent == nil },
+                        collapsedIds: $meetingTaskCollapsedIds,
+                        defaultDate: minutes.meetingAt,
+                        onEdit: { _ in },
+                        onReorder: { task, i in task.sortOrder = i },
+                        onMakeSubtask: { dragged, target in dragged.parent = target },
+                        onPromote: { task in task.parent = nil },
+                        onRemove: onRemoveFromMeeting,
+                        onDelete: { task in
+                            task.originMinutes = nil
+                            task.parent = nil
+                            modelContext.delete(task)
+                        },
+                        onDropExternal: onDropDiaryEntry,
+                        onDropExternalOntoTask: onDropExternalOntoMeetingTask
+                    )
                     .padding(.bottom, 4)
+                }
+                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                .padding(.leading, Self.indentStep)
+                .padding(.horizontal)
+                .padding(.bottom, 4)
             }
         }
     }

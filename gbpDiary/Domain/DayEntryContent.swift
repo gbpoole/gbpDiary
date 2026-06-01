@@ -22,22 +22,16 @@ extension DayEntry {
     var inlineSummary: String {
         get {
             switch kind {
-            case .note:
-                return text
-            case .task:
-                return task?.summary ?? ""
-            case .meeting:
-                return minutes?.summary ?? ""
+            case .note: return text
+            case .task: return task?.summary ?? ""
+            case .meeting: return minutes?.summary ?? ""
             }
         }
         set {
             switch kind {
-            case .note:
-                text = newValue
-            case .task:
-                task?.summary = newValue
-            case .meeting:
-                minutes?.summary = newValue.isEmpty ? nil : newValue
+            case .note: text = newValue
+            case .task: task?.summary = newValue
+            case .meeting: minutes?.summary = newValue.isEmpty ? nil : newValue
             }
         }
     }
@@ -49,6 +43,15 @@ extension DayEntry {
     // Stable focus ID for this entry's inline notes/minutes sub-area.
     // Derived by bit-complementing entry.id — guaranteed distinct from any v4 UUID.
     var notesAreaFocusId: UUID { notesId(for: id) }
+}
+
+extension Task {
+    // Stable focus ID for this task's inline notes sub-area in the diary.
+    var notesAreaFocusId: UUID { notesId(for: id) }
+
+    var isInlineSummaryEmpty: Bool {
+        summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 // Derives a "notes area" focus ID by bit-complementing every byte of the source UUID.

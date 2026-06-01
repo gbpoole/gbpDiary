@@ -2,17 +2,20 @@ import SwiftUI
 import SwiftData
 
 struct EntryDetailPanel: View {
-    let entry: DayEntry
+    let item: DiaryItem
     let onDismiss: () -> Void
 
     var body: some View {
         Group {
-            if case let .task(task) = entry.detailTarget {
+            switch item {
+            case .task(let task):
                 TaskDetailPanel(task: task, onDismiss: onDismiss)
-            } else if case let .meeting(minutes) = entry.detailTarget {
-                MeetingDetailPanel(minutes: minutes, onDismiss: onDismiss)
-            } else {
-                EmptyView()
+            case .entry(let entry):
+                if case let .meeting(minutes) = entry.detailTarget {
+                    MeetingDetailPanel(minutes: minutes, onDismiss: onDismiss)
+                } else {
+                    EmptyView()
+                }
             }
         }
     }

@@ -439,7 +439,7 @@ struct MeetingTaskAbsorptionTests {
         let toDelete = DayEntryOrdering.absorbMeetingTasks(in: [mtgEntry, taskEntry])
 
         #expect(task.originMinutes?.id == minutes.id)
-        #expect(task.meetingTaskSortOrder == 0)
+        #expect(task.sortOrder == 0)
         #expect(toDelete.count == 1)
         #expect(toDelete.first?.id == taskEntry.id)
     }
@@ -455,8 +455,8 @@ struct MeetingTaskAbsorptionTests {
 
         #expect(t1.originMinutes?.id == minutes.id)
         #expect(t2.originMinutes?.id == minutes.id)
-        #expect(t1.meetingTaskSortOrder == 0)
-        #expect(t2.meetingTaskSortOrder == 1)
+        #expect(t1.sortOrder == 0)
+        #expect(t2.sortOrder == 1)
         #expect(toDelete.count == 2)
     }
 
@@ -518,13 +518,13 @@ struct MeetingTaskAbsorptionTests {
         // Seed an existing task in the meeting's newTasks list
         let existing = Task(summary: "existing")
         existing.originMinutes = minutes
-        existing.meetingTaskSortOrder = 5
+        existing.sortOrder = 5
         context.insert(existing)
         let (taskEntry, newTask) = taskEntry(summary: "new", sortOrder: 1, indentLevel: 1, context: context)
 
         DayEntryOrdering.absorbMeetingTasks(in: [mtgEntry, taskEntry])
 
-        #expect(newTask.meetingTaskSortOrder == 6)
+        #expect(newTask.sortOrder == 6)
     }
 
     @Test func absorbMeetingTasks_sweepsChildTaskDayEntries_andSetsOriginMinutes() throws {
@@ -538,7 +538,7 @@ struct MeetingTaskAbsorptionTests {
         let toDelete = DayEntryOrdering.absorbMeetingTasks(in: [mtgEntry, parentEntry, childEntry])
 
         #expect(parentTask.originMinutes?.id == minutes.id)
-        #expect(parentTask.meetingTaskSortOrder == 0)
+        #expect(parentTask.sortOrder == 0)
         #expect(childTask.originMinutes?.id == minutes.id)
         #expect(toDelete.count == 2)
         #expect(toDelete.contains(where: { $0.id == parentEntry.id }))
@@ -560,7 +560,7 @@ struct MeetingTaskAbsorptionTests {
         #expect(t1.originMinutes?.id == minutes.id)
         #expect(t2.originMinutes?.id == minutes.id)
         #expect(t3.originMinutes?.id == minutes.id)
-        #expect(t1.meetingTaskSortOrder == 0)
+        #expect(t1.sortOrder == 0)
         #expect(toDelete.count == 3)
     }
 }
@@ -716,8 +716,8 @@ struct MaterializeChildDayEntriesTests {
         context.insert(record)
         // Pre-existing entry at sortOrder 0
         let existing = DayEntry(kind: .note, sortOrder: 0, indentLevel: 0)
-        existing.dayRecord = record
         context.insert(existing)
+        existing.dayRecord = record
         let parent = Task(summary: "P"); context.insert(parent)
         let child = Task(summary: "C"); context.insert(child); child.parent = parent
 
