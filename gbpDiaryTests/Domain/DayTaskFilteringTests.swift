@@ -25,23 +25,6 @@ struct DayTaskFilteringTests {
         #expect(ids == Set([task.persistentModelID]))
     }
 
-    @Test func followUpsDue_includesPendingBeforeDayEnd() {
-        let dayStart = FixedDates.dayStart()
-        let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
-
-        let dueTask = Task(summary: "due", status: .followUpPending)
-        dueTask.followUpAt = Calendar.current.date(byAdding: .hour, value: -1, to: dayEnd)
-
-        let wrongStatus = Task(summary: "wrong", status: .todo)
-        wrongStatus.followUpAt = Calendar.current.date(byAdding: .hour, value: -1, to: dayEnd)
-
-        let afterBoundary = Task(summary: "late", status: .followUpPending)
-        afterBoundary.followUpAt = dayEnd
-
-        let result = DayTaskFiltering.followUpsDueTasks(allTasks: [dueTask, wrongStatus, afterBoundary], dayEnd: dayEnd)
-        #expect(result.map(\.id) == [dueTask.id])
-    }
-
     @Test func scheduled_excludesTasksAlreadyInEntries() {
         let dayStart = FixedDates.dayStart()
         let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
@@ -85,41 +68,34 @@ struct DayTaskFilteringTests {
         #expect(result.map(\.id) == [todoWithin.id])
     }
 
-    @Test func backlog_requiresTopLevelTodoOrStartedBeforeDayStart() {
-        let dayStart = FixedDates.dayStart()
+    @Test func inbox_includesUnassignedTopLevelActiveTasks() {
+        let unassigned = Task(summary: "inbox", status: .todo)
 
-        let topLevel = Task(summary: "ok", status: .todo)
-        topLevel.scheduledAt = nil
+        let withProject = Task(summary: "has-project", status: .todo)
+        withProject.project = Project(name: "P")
 
-        let scheduledToday = Task(summary: "today", status: .todo)
-        scheduledToday.scheduledAt = dayStart
+        let withAssignee = Task(summary: "has-assignee", status: .todo)
+        withAssignee.assignee = Person(name: "Alice")
 
-        let parent = Task(summary: "parent")
         let child = Task(summary: "child", status: .todo)
+        let parent = Task(summary: "parent")
         child.parent = parent
 
-        let result = DayTaskFiltering.backlogTasks(allTasks: [topLevel, scheduledToday, child], dayStart: dayStart)
-        #expect(result.map(\.id) == [topLevel.id])
+        let completed = Task(summary: "completed", status: .completed)
+
+        let result = DayTaskFiltering.inboxTasks(
+            allTasks: [unassigned, withProject, withAssignee, child, completed]
+        )
+        #expect(result.map(\.id) == [unassigned.id])
     }
 
-    @Test func completedToday_includesOnlyWithinDayBounds() {
-        let dayStart = FixedDates.dayStart()
-        let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart
+    @Test func inbox_includesStartedButExcludesOtherStatuses() {
+        let todo = Task(summary: "todo", status: .todo)
+        let started = Task(summary: "started", status: .started)
+        let cancelled = Task(summary: "cancelled", status: .cancelled)
+        let followUp = Task(summary: "followup", status: .followUpPending)
 
-        let included = Task(summary: "included", status: .completed)
-        included.completedAt = FixedDates.atHour(16)
-
-        let atEndBoundary = Task(summary: "excluded-end", status: .completed)
-        atEndBoundary.completedAt = dayEnd
-
-        let beforeDay = Task(summary: "excluded-before", status: .completed)
-        beforeDay.completedAt = dayStart.addingTimeInterval(-1)
-
-        let result = DayTaskFiltering.completedTodayTasks(
-            allTasks: [included, atEndBoundary, beforeDay],
-            dayStart: dayStart,
-            dayEnd: dayEnd
-        )
-        #expect(result.map(\.id) == [included.id])
+        let result = DayTaskFiltering.inboxTasks(allTasks: [todo, started, cancelled, followUp])
+        #expect(Set(result.map(\.id)) == Set([todo.id, started.id]))
     }
 }

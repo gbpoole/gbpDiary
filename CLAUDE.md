@@ -33,6 +33,7 @@ Targets: macOS 15.7 · iOS 26 · Swift 6 (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainA
 ```
 ContentView
   ├── Day tab       → DayView(date:)
+  ├── Tasks tab     → TasksView()         [filterable global task table]
   ├── Week tab      → WeekView(weekOf:)
   ├── Timesheet     → TimesheetView()
   ├── Projects      → ProjectsView()      [NavigationSplitView internally]
@@ -49,32 +50,34 @@ All persistence is SwiftData. Models live in `gbpDiary/Models/`. The `ModelConta
 
 ### Day view architecture
 
-The Day tab renders a `DayPageContent` view. The diary area is a vertical stack of `DayEntry` blocks, each rendered by `EntryRowView`. Task and meeting blocks show their notes/minutes as an indented `EntryNotesSubArea` sub-row inline. Clicking a task or meeting block opens `EntryDetailPanel` — a 280pt animated panel on the right showing metadata (status, project, attendees, etc.).
+The Day tab renders a `DayPageContent` view with four typed sections. Meetings are the only diary `DayEntry` blocks still used; tasks are anchored directly to a `DayRecord` via `Task.dayRecord`.
 
 ```
 DayPageContent
-  ├── ScrollView
-  │     └── VStack
-  │           ├── drop zone (drag-to-reorder)
-  │           ├── EntryRowView [note | task | meeting]  .draggable(uuid)
-  │           ├── drop zone
-  │           ├── EntryRowView ...
-  │           └── ...
-  └── EntryDetailPanel (280pt, conditional on selectedEntry)
+  └── ScrollView
+        └── VStack
+              ├── dayNoteSection      MarkdownEditorSection bound to DayRecord.notes
+              ├── meetingsSection     EntryRowView (kind == .meeting) per DayEntry
+              ├── newTasksSection     DiaryTaskRow per Task with dayRecord == thisRecord
+              ├── completedTasksSection  CompletedTaskRow for tasks completedAt in day
+              ├── documentsSection    DayDocumentRow per Document.dayRecord == thisRecord
+              └── sidebarSections     (Scheduled + Inbox; hidden when showTaskSections == false)
 ```
 
-Blocks are draggable (`.draggable()` / `.dropDestination(for: String.self)`). Drop zones between entries show a 2pt accent-colour line when targeted. On drop, `moveEntry(_:toDropIndex:)` renumbers all `sortOrder` values and infers the dropped block's `indentLevel` from its new neighbours (deeper next-entry → adopt deeper level).
+Old `DayEntry(kind:.note)` entries are auto-migrated into `DayRecord.notes` the first time each day is opened (`migrateOldNotes()` called on `.onAppear`).
 
-### Day view sections (sidebar / task sections)
+### Day view sections (inline and sidebar)
 
-| Section | Filter |
-|---------|--------|
-| Scheduled | `scheduledAt` in `[dayStart, dayEnd)` AND `status == .todo` or `.started` |
-| Follow-ups Due | `followUpAt < dayEnd` AND `status == .followUpPending` |
-| Backlog | `status == .todo` or `.started` AND `parent == nil` AND (`scheduledAt == nil` OR `scheduledAt < dayStart`) |
-| Completed Today | `completedAt` in `[dayStart, dayEnd)` |
+| Section | Location | Filter |
+|---------|----------|--------|
+| New Tasks | Inline | `task.dayRecord == thisRecord`, status != completed/cancelled, parent == nil |
+| Completed | Inline | `completedAt` in `[dayStart, dayEnd)` across all tasks |
+| Meetings | Inline | `DayEntry.kind == .meeting` in this DayRecord |
+| Documents | Inline | `Document.dayRecord == thisRecord` |
+| Scheduled | Sidebar | `scheduledAt` in `[dayStart, dayEnd)` AND status todo/started |
+| Inbox | Sidebar | status todo/started AND parent == nil AND project == nil AND assignee == nil |
 
-All four use `@Query(sort: \Task.createdAt) var allTasks` filtered in-memory.
+All use `@Query(sort: \Task.createdAt) var allTasks` filtered in-memory.
 
 ---
 
@@ -112,8 +115,9 @@ DayEntry                     (a single diary block for one day)
   dayRecord→ DayRecord?
 
 DayRecord                    (date, notes?, focusTags[])
-  entries  → [DayEntry]      (cascade delete)
-                             No stored Task list — queried by date
+  entries  → [DayEntry]      (cascade delete; only meeting kind used now)
+  tasks    → [Task]          (nullify on delete; "new tasks" for this day)
+  documents→ [Document]      (nullify on delete)
 
 Project
   parent       → Project?
@@ -144,6 +148,7 @@ Document
   summary     : String?
   attachments → [Attachment]  cascade delete ↔ Attachment.document
   projects    → [Project]     ↔ Project.documents
+  dayRecord  → DayRecord?     (set when captured from a day's Documents section)
 
 Attachment     (fileURL + bookmarkData for sandbox persistence)
   document → Document?
@@ -194,11 +199,15 @@ When a meeting `DayEntry` is created, `addMeeting()` automatically creates and l
 
 - `Chip(label:color:)` — pill label for project/person/tag/duration metadata. Defined in `TaskRowView.swift`.
 - `FlowLayout` — wrapping HStack-like layout. Defined in `MinutesDetailView.swift`.
-- `TaskRowView` — recursive: renders a task and its `children` indented below. Used in DayView, ProjectDetailView, PersonDetailView. Supports `inlineEditing: Bool` for diary block mode.
+- `TaskRowView` — renders a task row. Used in DayView sidebar, TasksView, ProjectDetailView, PersonDetailView. Supports `inlineEditing: Bool`.
+- `DiaryTaskRow` — renders a root day-task (Task with dayRecord set) with inline editing, notes sub-area, collapse/expand, and subtask tree.
 - `TaskEditorSheet` — full task editing sheet. Accepts `task: Task?` (nil = create new) and `defaultDate: Date`.
-- `EntryRowView` — renders a single diary block (note, task, or meeting). Handles keyboard navigation, indent/outdent, and focus management.
-- `EntryDetailPanel` — animated 280pt right panel showing task/meeting metadata (status, project, assignee, duration, attendees) for the selected diary entry. Notes and minutes are now shown inline below the entry row via `EntryNotesSubArea`.
-- `DayTaskSidebar` — collapsible sidebar listing scheduled/follow-up/backlog/completed tasks for a given day.
+- `EntryRowView` — renders a meeting `DayEntry` with inline summary, minutes notes sub-area, and embedded New Tasks subtree. (Note/task DayEntry kinds are no longer rendered.)
+- `DayTaskSidebar` — collapsible sidebar with Scheduled and Inbox sections for a given day.
+- `DaySectionHeader` — reusable section header with title and optional "+" button.
+- `CompletedTaskRow` — read-only struck-through task row with completion time; tap opens `TaskEditorSheet`.
+- `DayDocumentRow` — one-line document row (icon + summary) in the day's Documents section.
+- `TasksView` — filterable macOS Table (or List on iOS) of all tasks. Filter controls in `TasksFilterBar`.
 - `MinutesDetailView(minutes:asSheet:)` — detail view for a `Minutes` record; pass `asSheet: true` when presenting as a sheet.
 - `DocumentDetailView(document:asSheet:)` — same pattern for `Document`.
 
@@ -214,10 +223,6 @@ On macOS, applying `.alert()` in the outer modifier chain of a block view (outsi
 
 Do **not** place a view that contains a `ScrollView` inside a `LazyVStack`. `LazyVStack`'s lazy measurement algorithm re-proposes heights as cells scroll into view; if the nested `ScrollView` (or any `NSViewRepresentable` inside it, such as `StructuredText` or `TextEditor`) reports a slightly different size between passes, SwiftUI enters an infinite measure → invalidate → re-measure cycle. Each pass allocates new view descriptors, producing unbounded memory growth and 100 % CPU. **Fix:** use a plain `VStack` instead. For sections bounded in number (e.g., 7 days in `WeekView`) the performance difference is negligible. `DayPageContent` contains a nested `ScrollView`, so any container that holds multiple `DayPageContent` instances must use `VStack`, not `LazyVStack`.
 
-### Drag-to-reorder diary blocks
-
-Each `EntryRowView` in `DayPageContent` is wrapped with `.draggable(entry.id.uuidString)`. Between entries are invisible 8pt `entryDropZone` views that accept `String` drop payloads. `moveEntry(_:toDropIndex:)` renumbers all `sortOrder` values after a drop and infers `indentLevel` from neighbours: if the entry below the drop point is deeper than the entry above, the dropped block adopts the deeper level.
-
 ### Platform guards
 
 Use `#if os(macOS)` for macOS-specific sizing (`.frame(minWidth:minHeight:)` on sheets) and for toolbar item placements. The iOS tab bar and edit button are not yet wired — leave `#if os(iOS)` blocks as stubs.
@@ -232,7 +237,7 @@ Use `#if os(macOS)` for macOS-specific sizing (`.frame(minWidth:minHeight:)` on 
 - **iPhone UI**: Day screen as home with fast capture loop.
 - **Schema migration**: versioned SwiftData migration stages for future model changes.
 - **Note entity**: model exists, no UI yet.
-- **`DayRecord` notes editor**: model has `notes` and `focusTags` fields, not exposed in UI.
+- **`DayRecord` focusTags**: model has `focusTags` field, not exposed in UI.
 - **Timesheet hierarchy validation**: child duration > parent duration warning.
 - **Week view drag-to-reorder**: drag-and-drop works per-day in WeekView but reorder logic is independent per day section.
 
@@ -256,18 +261,11 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Rule / Requirement | Source Section | Test File | Test Name(s) |
 |---|---|---|---|
 | Task markCompleted sets status/completedAt and clears cancelledAt | Task state transitions | gbpDiaryTests/Models/TaskStateTransitionTests.swift | `markCompleted_setsExpectedFields` |
-| Follow-ups Due filter uses `followUpAt < dayEnd` and `.followUpPending` | Day view sections | gbpDiaryTests/Domain/DayTaskFilteringTests.swift | `followUpsDue_includesPendingBeforeDayEnd` |
 | Duration parsing + normalization (`h/d/w`) | Duration | gbpDiaryTests/Models/DurationTests.swift | `parse_validInputs_normalizesHours`, `parse_invalidInputs_returnsNil` |
-| Drag-to-reorder infers indent from neighbours and renumbers sortOrder | Drag-to-reorder diary blocks | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `moveEntry_reordersAndInfersIndent` |
 | Timesheet includes only completed tasks with duration in selected interval | Timesheet | gbpDiaryTests/Domain/TimesheetComputationTests.swift | `tasksInRange_requiresCompletedAtAndDuration` |
-| Meetings cannot be nested inside other meetings (indent/outdent/move all blocked) | Meeting entries | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `indent_meetingUnderMeeting_returnsFalseAndLeavesLevel`, `outdent_meetingStillUnderMeeting_returnsFalseAndLeavesLevel`, `moveEntry_meetingDroppedUnderMeeting_returnsFalseAndKeepsOrder` |
-| Adjacent non-empty notes are merged on drag; chained; separated by task/meeting are not | Drag-to-reorder diary blocks | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `mergeAdjacentNotes_twoAdjacentNotes_mergesText`, `mergeAdjacentNotes_notesSeparatedByTask_notMerged`, `mergeAdjacentNotes_emptyNote_notMerged`, `mergeAdjacentNotes_threeAdjacentNotes_chainsAll` |
-| Non-empty note DayEntry at indentLevel == parent+1 after a task/meeting is absorbed into task.notes / minutes.minutesContent; orphaned entries and empty notes are skipped | Inline task notes / meeting minutes | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `absorb_noteAtIndentPlusOneAfterTask_absorbsIntoNotes`, `absorb_noteAtIndentPlusOneAfterMeeting_absorbsIntoMinutes`, `absorb_appendsToExistingNotes`, `absorb_emptyNote_skipped`, `absorb_orphanedTaskEntry_noteNotDeleted` |
-| notesId derives a stable focus ID by bit-complementing all 16 UUID bytes; result is its own inverse and never collides with organic UUIDs | Inline task notes / meeting minutes | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `notesId_isNotEqualToSourceId`, `notesId_isDeterministic`, `notesId_isOwnInverse`, `notesId_noCollisionBetweenTwoDifferentEntries` |
-| Absorption must run before merge: mergeAdjacentNotes has no indent-level guard and would pull a plain sibling note into task.notes if run first | Inline task notes / meeting minutes | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `absorbBeforeMerge_plainSiblingNoteNotPulledIntoTaskNotes` |
-| Task DayEntries at meeting.indentLevel+1 directly after a meeting are absorbed into minutes.newTasks; task DayEntries at deeper levels also have originMinutes set and their DayEntries deleted; note DayEntries (→ minutesContent) must be absorbed first | Meeting New Tasks | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `absorbMeetingTasks_singleTaskAtIndentPlusOne_linksToNewTasks`, `absorbMeetingTasks_consecutiveTasks_allAbsorbedInOrder`, `absorbMeetingTasks_noteBlocksTask_taskNotAbsorbed`, `absorbMeetingTasks_appendsAfterExistingTasks`, `absorbMeetingTasks_sweepsChildTaskDayEntries_andSetsOriginMinutes`, `absorbMeetingTasks_deepSubtree_allDayEntriesCollected` |
-| reconcileTaskParents sets task.parent for each task DayEntry from visual indentation: scan backward for first entry with lower indentLevel; if it is a task, it is the parent; otherwise parent = nil; runs before absorbMeetingTasks so child links are set before DayEntries are deleted | Uniform task hierarchy | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `reconcile_topLevelTask_parentIsNil`, `reconcile_indentedUnderTask_parentSet`, `reconcile_indentedUnderNote_parentIsNil`, `reconcile_indentedUnderMeeting_parentIsNil`, `reconcile_deepHierarchy_threeLevel`, `reconcile_reparentsAfterReorder` |
-| materializeChildDayEntries recursively inserts DayEntries for all Task.children in DFS order at increasing indentLevels, shifting existing entries; used when a meeting task is moved to the diary so children materialise alongside the parent | Uniform task hierarchy | gbpDiaryTests/Domain/DayEntryReorderTests.swift | `materialize_singleChild_createsDayEntryAtLevelPlusOne`, `materialize_deepTree_DFSOrder_correctLevels`, `materialize_shiftsExistingEntries`, `materialize_emptyChildren_noOp` |
+| Scheduled filter uses `scheduledAt` in `[dayStart, dayEnd)` and todo/started status | Day view sections | gbpDiaryTests/Domain/DayTaskFilteringTests.swift | `scheduled_requiresTodoOrStartedAndWithinDayBounds`, `scheduled_excludesTasksAlreadyInEntries` |
+| Inbox filter: status todo/started, parent == nil, project == nil, assignee == nil | Day view sidebar | gbpDiaryTests/Domain/DayTaskFilteringTests.swift | `inbox_includesUnassignedTopLevelActiveTasks`, `inbox_includesStartedButExcludesOtherStatuses` |
+| notesId derives a stable focus ID by bit-complementing all 16 UUID bytes; result is its own inverse and never collides with organic UUIDs | Inline task notes / meeting minutes | gbpDiaryTests/Models/DayEntryContentTests.swift | (tested indirectly via `notesAreaFocusId` usage) |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 

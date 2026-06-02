@@ -86,11 +86,6 @@ struct EntryNotesSubArea: View {
                     .allowsHitTesting(isFocused)
                     .opacity(isFocused ? 1 : 0)
             }
-            #if os(macOS)
-            .overlay {
-                if !isFocused { NoteViewModeOverlay() }
-            }
-            #endif
             .contentShape(Rectangle())
             .onTapGesture { focusedEntryId.wrappedValue = focusId }
             .padding(.horizontal, 4)

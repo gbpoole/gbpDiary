@@ -14,6 +14,8 @@ import SwiftData
     @Relationship(inverse: \Project.documents)
     var projects: [Project]
 
+    var dayRecord: DayRecord?
+
     init(id: UUID = UUID(), summary: String? = nil) {
         self.id = id
         self.summary = summary

@@ -1,20 +1,15 @@
 import SwiftUI
 import SwiftData
-import Textual
 
 struct EntryRowView: View {
     @Bindable var entry: DayEntry
     var focusedEntryId: FocusState<UUID?>.Binding
-    var onAddNoteAfter: (() -> Void)? = nil
     var onMoveToPrevious: (() -> Void)? = nil
     var onMoveToNext: (() -> Void)? = nil
     var onDeleteEmpty: (() -> Void)? = nil
-    var onIndent: (() -> Void)? = nil
-    var onOutdent: (() -> Void)? = nil
     var hasChildren: Bool = false
     var isCollapsed: Bool = false
     var onToggleCollapse: (() -> Void)? = nil
-    var onSplitNote: (() -> Void)? = nil
     var isNotesFocused: Bool = false
     var onMoveToNextFromNotes: (() -> Void)? = nil
     var onDropDiaryEntry: ((String) -> Bool)? = nil
@@ -23,7 +18,6 @@ struct EntryRowView: View {
     var onDropExternalOntoMeetingTask: ((String, Task) -> Bool)? = nil
 
     @Environment(\.modelContext) private var modelContext
-    @State private var editingTask: Task?
     @State private var editingMinutes: Minutes?
     @State private var showingDeleteConfirm = false
     @State private var isDropTargeted = false
@@ -36,8 +30,7 @@ struct EntryRowView: View {
     var body: some View {
         Group {
             switch entry.kind {
-            case .note:    noteRow
-            case .task:    taskRow
+            case .note, .task: EmptyView()
             case .meeting: meetingRow
             }
         }
@@ -63,147 +56,6 @@ struct EntryRowView: View {
             }
         } message: {
             Text("This will also delete the associated meeting notes.")
-        }
-    }
-
-    private func indent() {
-        if let handler = onIndent { handler() } else { entry.indentLevel = min(entry.indentLevel + 1, 6) }
-    }
-
-    private func outdent() {
-        if let handler = onOutdent { handler() } else { entry.indentLevel = max(entry.indentLevel - 1, 0) }
-    }
-
-    // MARK: - Visual line helpers (note row only)
-
-    // Inspect the focused NSTextView's layout manager to determine whether the
-    // insertion point sits on the topmost or bottommost visual line. Used to
-    // decide whether an arrow key should move between entries or stay within
-    // the multi-line note text. Defaults to true (navigate between entries) on
-    // any platform or state where the check isn't possible.
-#if os(macOS)
-    private var cursorIsOnFirstVisualLine: Bool {
-        guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
-              let lm = tv.layoutManager,
-              lm.numberOfGlyphs > 0 else { return true }
-        let pos = min(tv.selectedRange().location, tv.string.utf16.count)
-        let glyph = min(lm.glyphIndexForCharacter(at: pos), lm.numberOfGlyphs - 1)
-        let curY = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
-        let topY = lm.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil).minY
-        return curY <= topY + 1
-    }
-
-    private var cursorIsOnLastVisualLine: Bool {
-        guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
-              let lm = tv.layoutManager,
-              lm.numberOfGlyphs > 0 else { return true }
-        let sel = tv.selectedRange()
-        let pos = min(sel.location + sel.length, tv.string.utf16.count)
-        let glyph = min(lm.glyphIndexForCharacter(at: pos), lm.numberOfGlyphs - 1)
-        let curY = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
-        let botY = lm.lineFragmentRect(forGlyphAt: lm.numberOfGlyphs - 1, effectiveRange: nil).minY
-        return curY >= botY - 1
-    }
-#endif
-
-    // MARK: - Note
-
-    private var noteRow: some View {
-        NoteEntryContent(
-            text: $entry.text,
-            isFocused: isEntryFocused,
-            focusedEntryId: focusedEntryId,
-            focusId: entry.id,
-            onIndent: indent,
-            onOutdent: outdent,
-            onMoveToPrevious: onMoveToPrevious,
-            onMoveToNext: onMoveToNext,
-            allowMoveToPrevious: {
-                #if os(macOS)
-                return cursorIsOnFirstVisualLine
-                #else
-                return true
-                #endif
-            },
-            allowMoveToNext: {
-                #if os(macOS)
-                return cursorIsOnLastVisualLine
-                #else
-                return true
-                #endif
-            },
-            onSplit: onSplitNote
-        )
-        .padding(8)
-        .background(Color.secondary.opacity(0.06))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .padding(.horizontal)
-        .padding(.vertical, 4)
-        .contextMenu {
-            deleteButton
-            #if os(macOS)
-            if isEntryFocused, onSplitNote != nil {
-                Divider()
-                Button("Split Note Here") { onSplitNote?() }
-            }
-            #endif
-        }
-    }
-
-    // MARK: - Task
-
-    private var taskRow: some View {
-        let notesText = entry.task?.notes ?? ""
-        let showNotes = (!notesText.isEmpty || isEntryFocused || isNotesFocused) && !isCollapsed
-        return VStack(alignment: .leading, spacing: 0) {
-            rowCard(verticalPadding: 2) {
-                TaskEntryContent(
-                    task: entry.task,
-                    focusedEntryId: focusedEntryId,
-                    focusId: entry.id,
-                    onEdit: { task in editingTask = task },
-                    onMoveToPrevious: onMoveToPrevious,
-                    onMoveToNext: showNotes
-                        ? { focusedEntryId.wrappedValue = entry.notesAreaFocusId }
-                        : onMoveToNext,
-                    onIndent: onIndent,
-                    onOutdent: onOutdent
-                )
-            }
-            .contextMenu { deleteButton }
-            .sheet(item: $editingTask) { task in
-                TaskEditorSheet(task: task, defaultDate: entry.createdAt)
-            }
-            .dropDestination(for: String.self) { items, _ in
-                guard let str = items.first else { return false }
-                return onDropOntoEntry?(str) ?? false
-            } isTargeted: { isDropTargeted = $0 }
-            .overlay {
-                if isDropTargeted {
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.accentColor, lineWidth: 2)
-                        .padding(.horizontal)
-                        .padding(.vertical, 2)
-                        .allowsHitTesting(false)
-                }
-            }
-            if showNotes, let task = entry.task {
-                EntryNotesSubArea(
-                    text: Binding(
-                        get: { task.notes ?? "" },
-                        set: { task.notes = $0.isEmpty ? nil : $0 }
-                    ),
-                    isFocused: isNotesFocused,
-                    focusedEntryId: focusedEntryId,
-                    focusId: entry.notesAreaFocusId,
-                    placeholder: "Add task notes…",
-                    onMoveToPrevious: { focusedEntryId.wrappedValue = entry.id },
-                    onMoveToNext: onMoveToNextFromNotes
-                )
-                .padding(.leading, Self.indentStep)
-                .padding(.horizontal)
-                .padding(.bottom, 4)
-            }
         }
     }
 
@@ -238,8 +90,8 @@ struct EntryRowView: View {
                         isFocused: isEntryFocused,
                         focusBinding: focusedEntryId,
                         focusId: entry.id,
-                        onIndent: indent,
-                        onOutdent: outdent,
+                        onIndent: nil,
+                        onOutdent: nil,
                         onMoveToPrevious: onMoveToPrevious,
                         onMoveToNext: nextForSummary
                     )
@@ -330,19 +182,11 @@ struct EntryRowView: View {
 
     private var deleteButton: some View {
         Button("Delete", role: .destructive) {
-            if entry.kind == .meeting && entry.minutes != nil {
+            if entry.minutes != nil {
                 showingDeleteConfirm = true
             } else {
                 modelContext.delete(entry)
             }
         }
-    }
-
-    private func rowCard<Content: View>(
-        verticalPadding: CGFloat,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        content()
-            .modifier(RowCardStyling(verticalPadding: verticalPadding))
     }
 }

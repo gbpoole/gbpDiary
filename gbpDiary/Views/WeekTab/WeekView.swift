@@ -74,7 +74,7 @@ struct WeekView: View {
             Divider()
                 .padding(.horizontal)
 
-            DayPageContent(date: day, dayRecord: record, allTasks: allTasks, showBacklog: false,
+            DayPageContent(date: day, dayRecord: record, allTasks: allTasks, showTaskSections: false,
                            onShowBanner: showBanner)
                 .padding(.bottom, 8)
         }

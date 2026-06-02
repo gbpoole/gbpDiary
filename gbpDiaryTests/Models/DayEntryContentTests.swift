@@ -33,32 +33,7 @@ struct DayEntryContentTests {
         #expect(minutes.summary == nil)
     }
 
-    @Test func detailTarget_returnsKindSpecificLinkedModel() {
-        let task = Task(summary: "draft")
-        let taskEntry = DayEntry(kind: .task)
-        taskEntry.task = task
-
-        if case let .task(linkedTask)? = taskEntry.detailTarget {
-            #expect(linkedTask.id == task.id)
-        } else {
-            Issue.record("Expected task detail target")
-        }
-
-        let minutes = Minutes(meetingAt: .now)
-        let meetingEntry = DayEntry(kind: .meeting)
-        meetingEntry.minutes = minutes
-
-        if case let .meeting(linkedMinutes)? = meetingEntry.detailTarget {
-            #expect(linkedMinutes.id == minutes.id)
-        } else {
-            Issue.record("Expected meeting detail target")
-        }
-
-        let noteEntry = DayEntry(kind: .note, text: "note")
-        #expect(noteEntry.detailTarget == nil)
-    }
-
-    @Test func isInlineSummaryEmpty_trimsWhitespaceAndNewlines() {
+@Test func isInlineSummaryEmpty_trimsWhitespaceAndNewlines() {
         let noteEntry = DayEntry(kind: .note, text: "  \n ")
         #expect(noteEntry.isInlineSummaryEmpty)
 

@@ -18,6 +18,7 @@ import SwiftData
 
     @Relationship(deleteRule: .cascade, inverse: \DayEntry.dayRecord) var entries: [DayEntry]
     @Relationship(deleteRule: .nullify, inverse: \Task.dayRecord) var tasks: [Task]
+    @Relationship(deleteRule: .nullify, inverse: \Document.dayRecord) var documents: [Document]
 
     init(date: Date, id: UUID = UUID()) {
         self.id = id
@@ -25,6 +26,7 @@ import SwiftData
         self.focusTagsJSON = "[]"
         self.entries = []
         self.tasks = []
+        self.documents = []
         let now = Date()
         self.createdAt = now
         self.updatedAt = now

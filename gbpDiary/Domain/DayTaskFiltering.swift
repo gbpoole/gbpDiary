@@ -29,27 +29,12 @@ enum DayTaskFiltering {
         }
     }
 
-    static func followUpsDueTasks(allTasks: [Task], dayEnd: Date) -> [Task] {
-        allTasks.filter {
-            guard let fu = $0.followUpAt else { return false }
-            return fu < dayEnd && $0.status == .followUpPending
-        }
-    }
-
-    static func backlogTasks(allTasks: [Task], dayStart: Date) -> [Task] {
+    static func inboxTasks(allTasks: [Task]) -> [Task] {
         allTasks.filter {
             ($0.status == .todo || $0.status == .started)
                 && $0.parent == nil
-                && $0.dayRecord == nil     // not already in a diary
-                && $0.originMinutes == nil // not in a meeting
-                && ($0.scheduledAt == nil || $0.scheduledAt! < dayStart)
-        }
-    }
-
-    static func completedTodayTasks(allTasks: [Task], dayStart: Date, dayEnd: Date) -> [Task] {
-        allTasks.filter {
-            guard let c = $0.completedAt else { return false }
-            return c >= dayStart && c < dayEnd
+                && $0.project == nil
+                && $0.assignee == nil
         }
     }
 }
