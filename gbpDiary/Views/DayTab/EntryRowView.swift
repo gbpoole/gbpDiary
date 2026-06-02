@@ -7,7 +7,6 @@ struct EntryRowView: View {
     var onMoveToPrevious: (() -> Void)? = nil
     var onMoveToNext: (() -> Void)? = nil
     var onDeleteEmpty: (() -> Void)? = nil
-    var hasChildren: Bool = false
     var isCollapsed: Bool = false
     var onToggleCollapse: (() -> Void)? = nil
     var isNotesFocused: Bool = false
@@ -32,20 +31,6 @@ struct EntryRowView: View {
             switch entry.kind {
             case .note, .task: EmptyView()
             case .meeting: meetingRow
-            }
-        }
-        .padding(.leading, CGFloat(entry.indentLevel) * Self.indentStep)
-        .overlay(alignment: .topLeading) {
-            if hasChildren {
-                Button { onToggleCollapse?() } label: {
-                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .frame(width: 20, height: 28)
-                .contentShape(Rectangle())
-                .padding(.leading, max(0, CGFloat(entry.indentLevel) * Self.indentStep - 14))
             }
         }
         .alert("Delete Meeting?", isPresented: $showingDeleteConfirm) {
@@ -82,6 +67,8 @@ struct EntryRowView: View {
                 summaryBinding: summaryBinding,
                 minutes: entry.minutes,
                 isEntryFocused: isEntryFocused,
+                isCollapsed: isCollapsed,
+                onToggleCollapse: onToggleCollapse,
                 onEdit: { minutes in editingMinutes = minutes },
                 inlineText: { binding in
                     InlineEditableSingleLineText(

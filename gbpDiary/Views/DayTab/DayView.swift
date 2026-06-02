@@ -203,7 +203,8 @@ struct DayPageContent: View {
                 }
             ),
             label: "Day Note",
-            placeholder: "Nothing recorded."
+            showHeader: false,
+            placeholder: "Add a note for today…"
         )
         .padding(.horizontal)
         .padding(.top, 12)
@@ -212,11 +213,9 @@ struct DayPageContent: View {
 
     @ViewBuilder
     private var meetingsSection: some View {
-        if !dayMeetings.isEmpty {
-            DaySectionHeader(title: "Meetings", onAdd: addMeeting)
-            ForEach(Array(dayMeetings.enumerated()), id: \.element.id) { idx, entry in
-                meetingRow(entry: entry, index: idx)
-            }
+        DaySectionHeader(title: "Meetings", onAdd: addMeeting)
+        ForEach(Array(dayMeetings.enumerated()), id: \.element.id) { idx, entry in
+            meetingRow(entry: entry, index: idx)
         }
     }
 
@@ -325,6 +324,15 @@ struct DayPageContent: View {
             onMoveToPrevious: index > 0 ? { pendingFocusId = newTasks[index - 1].id } : nil,
             onMoveToNext: index < count - 1 ? { pendingFocusId = newTasks[index + 1].id } : nil,
             onMoveToNextFromNotes: index < count - 1 ? { pendingFocusId = newTasks[index + 1].id } : nil,
+            onDropOntoTask: { uuidString in
+                guard let id = UUID(uuidString: uuidString),
+                      let dragged = findAnyTask(id: id),
+                      dragged.id != task.id else { return false }
+                dragged.parent = task
+                dragged.dayRecord = nil
+                dragged.originMinutes = nil
+                return true
+            },
             onExternalDropOntoSubtask: { uuidString, targetTask in
                 guard let id = UUID(uuidString: uuidString),
                       let dragged = findAnyTask(id: id),

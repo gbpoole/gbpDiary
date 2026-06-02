@@ -239,26 +239,6 @@ struct TaskSubtreeView: View {
                 onMoveToPrevious: prevMove(for: task),
                 onMoveToNext: nextMove(for: task)
             )
-            .dropDestination(for: String.self) { items, _ in
-                guard let uuidString = items.first,
-                      let id = UUID(uuidString: uuidString),
-                      id != task.id
-                else { return false }
-                if let onMakeSubtask,
-                   let dragged = findDescendant(id: id) ?? sortedRoots.first(where: { $0.id == id }),
-                   !isDescendant(task, of: dragged) {
-                    onMakeSubtask(dragged, task)
-                    return true
-                }
-                return onDropExternalOntoTask?(uuidString, task) ?? false
-            } isTargeted: { dropTargetId = $0 ? task.id : nil }
-            .overlay {
-                if dropTargetId == task.id {
-                    RoundedRectangle(cornerRadius: 3)
-                        .stroke(Color.accentColor, lineWidth: 1.5)
-                        .allowsHitTesting(false)
-                }
-            }
 
             InlineRowEditButton(action: { editingTask = task })
             if focusedId.wrappedValue != task.id {
@@ -268,6 +248,26 @@ struct TaskSubtreeView: View {
         .contentShape(Rectangle())
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
+        .dropDestination(for: String.self) { items, _ in
+            guard let uuidString = items.first,
+                  let id = UUID(uuidString: uuidString),
+                  id != task.id
+            else { return false }
+            if let onMakeSubtask,
+               let dragged = findDescendant(id: id) ?? sortedRoots.first(where: { $0.id == id }),
+               !isDescendant(task, of: dragged) {
+                onMakeSubtask(dragged, task)
+                return true
+            }
+            return onDropExternalOntoTask?(uuidString, task) ?? false
+        } isTargeted: { dropTargetId = $0 ? task.id : nil }
+        .overlay {
+            if dropTargetId == task.id {
+                RoundedRectangle(cornerRadius: 3)
+                    .stroke(Color.accentColor, lineWidth: 1.5)
+                    .allowsHitTesting(false)
+            }
+        }
         .contextMenu {
             Button("Edit Task") { editingTask = task }
             Divider()
