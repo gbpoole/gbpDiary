@@ -70,8 +70,8 @@ Old `DayEntry(kind:.note)` entries are auto-migrated into `DayRecord.notes` the 
 
 | Section | Location | Filter |
 |---------|----------|--------|
-| New Tasks | Inline | `task.dayRecord == thisRecord`, status != completed/cancelled, parent == nil |
-| Completed | Inline | `completedAt` in `[dayStart, dayEnd)` across all tasks |
+| New Tasks | Inline | `task.dayRecord == thisRecord`, parent == nil — **all statuses shown** |
+| Completed | Inline | `status == .completed && completedAt` in `[dayStart, dayEnd)`, excluding dayRecord tasks |
 | Meetings | Inline | `DayEntry.kind == .meeting` in this DayRecord |
 | Documents | Inline | `Document.dayRecord == thisRecord` |
 | Scheduled | Sidebar | `scheduledAt` in `[dayStart, dayEnd)` AND status todo/started |
@@ -260,7 +260,9 @@ Maintain this table and keep it current whenever this file changes behavior rule
 
 | Rule / Requirement | Source Section | Test File | Test Name(s) |
 |---|---|---|---|
-| Task markCompleted sets status/completedAt and clears cancelledAt | Task state transitions | gbpDiaryTests/Models/TaskStateTransitionTests.swift | `markCompleted_setsExpectedFields` |
+| Task markCompleted sets status/completedAt (idempotent — only sets if nil); preserves cancelledAt | Task state transitions | gbpDiaryTests/Models/TaskStateTransitionTests.swift | `markCompleted_setsExpectedFields`, `markCompleted_preservesExistingCompletedAt`, `markCompleted_preservesExistingCancelledAt` |
+| Task markCancelled sets status/cancelledAt (idempotent — only sets if nil); preserves completedAt | Task state transitions | gbpDiaryTests/Models/TaskStateTransitionTests.swift | `markCancelled_setsExpectedFields`, `markCancelled_preservesExistingCancelledAt`, `markCancelled_preservesExistingCompletedAt` |
+| Cycling through all states preserves original timestamps (e.g., completedAt survives completed→followUp→cancelled→todo→completed) | Task state transitions | gbpDiaryTests/Models/TaskStateTransitionTests.swift | `cycling_preservesOriginalCompletedAt` |
 | Duration parsing + normalization (`h/d/w`) | Duration | gbpDiaryTests/Models/DurationTests.swift | `parse_validInputs_normalizesHours`, `parse_invalidInputs_returnsNil` |
 | Timesheet includes only completed tasks with duration in selected interval | Timesheet | gbpDiaryTests/Domain/TimesheetComputationTests.swift | `tasksInRange_requiresCompletedAtAndDuration` |
 | Scheduled filter uses `scheduledAt` in `[dayStart, dayEnd)` and todo/started status | Day view sections | gbpDiaryTests/Domain/DayTaskFilteringTests.swift | `scheduled_requiresTodoOrStartedAndWithinDayBounds`, `scheduled_excludesTasksAlreadyInEntries` |

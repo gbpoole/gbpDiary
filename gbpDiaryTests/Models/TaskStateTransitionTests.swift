@@ -6,13 +6,27 @@ import Testing
 struct TaskStateTransitionTests {
     @Test func markCompleted_setsExpectedFields() {
         let task = Task(summary: "a", status: .todo)
-        task.cancelledAt = FixedDates.reference
+        task.cancelledAt = FixedDates.reference  // pre-existing cancelledAt must be preserved
 
         task.markCompleted()
 
         #expect(task.status == .completed)
         #expect(task.completedAt != nil)
-        #expect(task.cancelledAt == nil)
+        #expect(task.cancelledAt == FixedDates.reference)  // not cleared
+    }
+
+    @Test func markCompleted_preservesExistingCompletedAt() {
+        let task = Task(summary: "a", status: .todo)
+        task.completedAt = FixedDates.reference
+        task.markCompleted()
+        #expect(task.completedAt == FixedDates.reference)
+    }
+
+    @Test func markCompleted_preservesExistingCancelledAt() {
+        let task = Task(summary: "a", status: .cancelled)
+        task.cancelledAt = FixedDates.reference
+        task.markCompleted()
+        #expect(task.cancelledAt == FixedDates.reference)
     }
 
     @Test func unmarkCompleted_reopensTask() {
@@ -27,13 +41,38 @@ struct TaskStateTransitionTests {
 
     @Test func markCancelled_setsExpectedFields() {
         let task = Task(summary: "a", status: .completed)
-        task.completedAt = FixedDates.reference
+        task.completedAt = FixedDates.reference  // pre-existing completedAt must be preserved
 
         task.markCancelled()
 
         #expect(task.status == .cancelled)
         #expect(task.cancelledAt != nil)
-        #expect(task.completedAt == nil)
+        #expect(task.completedAt == FixedDates.reference)  // not cleared
+    }
+
+    @Test func markCancelled_preservesExistingCancelledAt() {
+        let task = Task(summary: "a", status: .todo)
+        task.cancelledAt = FixedDates.reference
+        task.markCancelled()
+        #expect(task.cancelledAt == FixedDates.reference)
+    }
+
+    @Test func markCancelled_preservesExistingCompletedAt() {
+        let task = Task(summary: "a", status: .completed)
+        task.completedAt = FixedDates.reference
+        task.markCancelled()
+        #expect(task.completedAt == FixedDates.reference)
+    }
+
+    @Test func cycling_preservesOriginalCompletedAt() {
+        let task = Task(summary: "a", status: .completed)
+        task.completedAt = FixedDates.reference
+        task.setFollowUp(date: FixedDates.dayStart(offsetDays: 1))
+        task.markCancelled()
+        task.unmarkCancelled()
+        task.status = .started; task.updatedAt = Date()
+        task.markCompleted()
+        #expect(task.completedAt == FixedDates.reference)
     }
 
     @Test func unmarkCancelled_reopensTask() {

@@ -101,18 +101,21 @@ struct DayPageContent: View {
     private var dayStart: Date { DayTaskFiltering.dayBounds(for: date).dayStart }
     private var dayEnd: Date { DayTaskFiltering.dayBounds(for: date).dayEnd }
 
-    // Tasks explicitly created for this day, not yet complete, root level only.
+    // All root tasks for this day record, regardless of status. Status changes alter
+    // visual appearance only; tasks don't leave the day they were created for.
     private var newTasks: [Task] {
         (dayRecord?.tasks ?? [])
-            .filter { $0.parent == nil && $0.status != .completed && $0.status != .cancelled }
+            .filter { $0.parent == nil }
             .sorted { $0.sortOrder < $1.sortOrder }
     }
 
-    // All tasks completed on this day, regardless of which day they were created for.
+    // Tasks completed today that are NOT already shown in newTasks.
+    // Checks status == .completed because completedAt now persists through cycling.
     private var completedTasks: [Task] {
-        allTasks.filter {
-            guard let at = $0.completedAt else { return false }
-            return at >= dayStart && at < dayEnd
+        let dayTaskIds = Set((dayRecord?.tasks ?? []).map(\.id))
+        return allTasks.filter {
+            guard let at = $0.completedAt, $0.status == .completed else { return false }
+            return at >= dayStart && at < dayEnd && !dayTaskIds.contains($0.id)
         }.sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
     }
 
@@ -529,6 +532,7 @@ struct DayTaskSidebar: View {
     @State private var editingTask: Task?
     @State private var scheduledExpanded = true
     @State private var inboxExpanded = true
+    @State private var pendingStatusIds: Set<UUID> = []
 
     private var dayStart: Date { DayTaskFiltering.dayBounds(for: date).dayStart }
     private var dayEnd: Date { DayTaskFiltering.dayBounds(for: date).dayEnd }
@@ -538,12 +542,18 @@ struct DayTaskSidebar: View {
     }
 
     private var scheduled: [Task] {
-        DayTaskFiltering.scheduledTasks(
+        let base = DayTaskFiltering.scheduledTasks(
             allTasks: allTasks, dayStart: dayStart, dayEnd: dayEnd, taskEntryIds: dayTaskIds)
+        let baseIds = Set(base.map(\.id))
+        let held = allTasks.filter { pendingStatusIds.contains($0.id) && !baseIds.contains($0.id) }
+        return (base + held).sorted { ($0.scheduledAt ?? .distantPast) < ($1.scheduledAt ?? .distantPast) }
     }
 
     private var inbox: [Task] {
-        DayTaskFiltering.inboxTasks(allTasks: allTasks)
+        let base = DayTaskFiltering.inboxTasks(allTasks: allTasks)
+        let baseIds = Set(base.map(\.id))
+        let held = allTasks.filter { pendingStatusIds.contains($0.id) && !baseIds.contains($0.id) }
+        return base + held
     }
 
     var body: some View {
@@ -553,8 +563,16 @@ struct DayTaskSidebar: View {
                     sectionHeader("Scheduled", expanded: $scheduledExpanded)
                     if scheduledExpanded {
                         ForEach(scheduled) { task in
-                            TaskRowView(task: task, onEdit: { editingTask = task })
+                            TaskRowView(
+                                task: task,
+                                onEdit: { editingTask = task },
+                                onBeforeStatusChange: {
+                                    if task.status == .started { pendingStatusIds.insert(task.id) }
+                                }
+                            )
+                            .opacity(pendingStatusIds.contains(task.id) ? 0.5 : 1.0)
                         }
+                        .animation(.easeInOut(duration: 0.25), value: scheduled.map(\.id))
                     }
                 }
 
@@ -568,13 +586,22 @@ struct DayTaskSidebar: View {
                             .padding(.vertical, 6)
                     } else {
                         ForEach(inbox) { task in
-                            TaskRowView(task: task, onEdit: { editingTask = task })
+                            TaskRowView(
+                                task: task,
+                                onEdit: { editingTask = task },
+                                onBeforeStatusChange: {
+                                    if task.status == .started { pendingStatusIds.insert(task.id) }
+                                }
+                            )
+                            .opacity(pendingStatusIds.contains(task.id) ? 0.5 : 1.0)
                         }
+                        .animation(.easeInOut(duration: 0.25), value: inbox.map(\.id))
                     }
                 }
             }
             .padding(.vertical, 8)
         }
+        .onChange(of: date) { pendingStatusIds.removeAll() }
         .sheet(item: $editingTask) { task in
             TaskEditorSheet(task: task, defaultDate: date)
         }

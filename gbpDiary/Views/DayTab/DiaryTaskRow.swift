@@ -16,6 +16,7 @@ struct DiaryTaskRow: View {
     var onDropOntoTask: ((String) -> Bool)? = nil
     var onExternalDropOntoSubtask: ((String, Task) -> Bool)? = nil
     var onExternalDropIntoSubtree: ((String) -> Bool)? = nil
+    var onBeforeStatusChange: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var editingTask: Task?
@@ -46,18 +47,6 @@ struct DiaryTaskRow: View {
                 subtreeArea
             }
         }
-        .overlay(alignment: .topLeading) {
-            if task.needsChevron {
-                Button { onToggleCollapse?() } label: {
-                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .frame(width: 20, height: 28)
-                .contentShape(Rectangle())
-            }
-        }
         .sheet(item: $editingTask) { t in
             TaskEditorSheet(task: t, defaultDate: task.dayRecord?.date ?? Date())
         }
@@ -78,7 +67,10 @@ struct DiaryTaskRow: View {
                         } else { onMoveToNext?() } }
                     : onMoveToNext,
             onIndent: onIndent,
-            onOutdent: onOutdent
+            onOutdent: onOutdent,
+            isCollapsed: isCollapsed,
+            onToggleCollapse: task.needsChevron ? onToggleCollapse : nil,
+            onBeforeStatusChange: onBeforeStatusChange
         )
         .modifier(RowCardStyling(verticalPadding: 2))
         .draggable(task.id.uuidString)

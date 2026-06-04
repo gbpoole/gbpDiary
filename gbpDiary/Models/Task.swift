@@ -73,8 +73,7 @@ extension Task {
     func markCompleted() {
         let now = Date()
         status = .completed
-        completedAt = now
-        cancelledAt = nil
+        if completedAt == nil { completedAt = now }
         updatedAt = now
     }
 
@@ -87,8 +86,7 @@ extension Task {
     func markCancelled() {
         let now = Date()
         status = .cancelled
-        cancelledAt = now
-        completedAt = nil
+        if cancelledAt == nil { cancelledAt = now }
         updatedAt = now
     }
 

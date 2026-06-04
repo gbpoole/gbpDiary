@@ -14,13 +14,26 @@ struct TaskRowView: View {
     var onMoveToNext: (() -> Void)? = nil
     var onIndent: (() -> Void)? = nil
     var onOutdent: (() -> Void)? = nil
+    var isCollapsed: Bool = false
+    var onToggleCollapse: (() -> Void)? = nil
+    var onBeforeStatusChange: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var showingFollowUpPicker = false
     @State private var followUpPickerDate = Date()
 
     var body: some View {
-        HStack(alignment: .center, spacing: 10) {
+        HStack(alignment: .center, spacing: 6) {
+            if let onToggleCollapse {
+                Button(action: onToggleCollapse) {
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .frame(width: 16, height: 22)
+                .contentShape(Rectangle())
+            }
             statusButton
             contentRow
         }
@@ -160,6 +173,7 @@ struct TaskRowView: View {
     }
 
     private func toggleStatus() {
+        onBeforeStatusChange?()
         switch task.status {
         case .todo:
             task.status = .started

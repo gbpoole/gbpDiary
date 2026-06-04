@@ -9,6 +9,9 @@ struct TaskEntryContent: View {
     let onMoveToNext: (() -> Void)?
     let onIndent: (() -> Void)?
     let onOutdent: (() -> Void)?
+    var isCollapsed: Bool = false
+    var onToggleCollapse: (() -> Void)? = nil
+    var onBeforeStatusChange: (() -> Void)? = nil
 
     var body: some View {
         if let task {
@@ -21,7 +24,10 @@ struct TaskEntryContent: View {
                 onMoveToPrevious: onMoveToPrevious,
                 onMoveToNext: onMoveToNext,
                 onIndent: onIndent,
-                onOutdent: onOutdent
+                onOutdent: onOutdent,
+                isCollapsed: isCollapsed,
+                onToggleCollapse: onToggleCollapse,
+                onBeforeStatusChange: onBeforeStatusChange
             )
         } else {
             HStack(alignment: .center, spacing: 10) {

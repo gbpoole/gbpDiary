@@ -44,6 +44,8 @@ struct TasksView: View {
         }
     }
 
+    // TODO: wire onBeforeStatusChange + pendingStatusIds (cleared on filter change)
+    //       when inline status cycling is added to this table.
     #if os(macOS)
     private var taskTable: some View {
         Table(filteredTasks) {
