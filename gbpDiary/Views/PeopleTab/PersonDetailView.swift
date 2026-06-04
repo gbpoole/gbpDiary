@@ -3,9 +3,11 @@ import SwiftData
 
 struct PersonDetailView: View {
     @Bindable var person: Person
+    var asSheet: Bool = false
 
     @Query(sort: \Task.createdAt) private var allTasks: [Task]
     @Query(sort: \Minutes.meetingAt, order: .reverse) private var allMinutes: [Minutes]
+    @Environment(\.dismiss) private var dismiss
 
     @State private var showingEdit = false
     @State private var editingTask: Task?
@@ -24,6 +26,17 @@ struct PersonDetailView: View {
     }
 
     var body: some View {
+        if asSheet {
+            NavigationStack { coreContent }
+            #if os(macOS)
+            .frame(minWidth: 500, minHeight: 480)
+            #endif
+        } else {
+            coreContent
+        }
+    }
+
+    private var coreContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 contactHeader
@@ -79,6 +92,11 @@ struct PersonDetailView: View {
         }
         .navigationTitle(person.name)
         .toolbar {
+            if asSheet {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
             ToolbarItem { Button { showingEdit = true } label: { Image(systemName: "pencil") } }
         }
         .sheet(isPresented: $showingEdit) { PersonEditorSheet(person: person) }

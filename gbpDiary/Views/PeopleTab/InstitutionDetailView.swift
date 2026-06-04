@@ -3,11 +3,23 @@ import SwiftData
 
 struct InstitutionDetailView: View {
     @Bindable var institution: Institution
+    var asSheet: Bool = false
 
+    @Environment(\.dismiss) private var dismiss
     @State private var showingEdit = false
-    @State private var selectedPerson: Person?
 
     var body: some View {
+        if asSheet {
+            NavigationStack { coreContent }
+            #if os(macOS)
+            .frame(minWidth: 420, minHeight: 320)
+            #endif
+        } else {
+            coreContent
+        }
+    }
+
+    private var coreContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 GroupBox("Members (\(institution.members.count))") {
@@ -43,6 +55,11 @@ struct InstitutionDetailView: View {
         }
         .navigationTitle(institution.name)
         .toolbar {
+            if asSheet {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
             ToolbarItem { Button { showingEdit = true } label: { Image(systemName: "pencil") } }
         }
         .sheet(isPresented: $showingEdit) { InstitutionEditorSheet(institution: institution) }

@@ -3,9 +3,11 @@ import SwiftData
 
 struct ProjectDetailView: View {
     @Bindable var project: Project
+    var asSheet: Bool = false
 
     @Query(sort: \Task.createdAt) private var allTasks: [Task]
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
 
     @State private var showingEditProject = false
     @State private var showingAddMinutes = false
@@ -27,6 +29,17 @@ struct ProjectDetailView: View {
     }
 
     var body: some View {
+        if asSheet {
+            NavigationStack { coreContent }
+            #if os(macOS)
+            .frame(minWidth: 500, minHeight: 500)
+            #endif
+        } else {
+            coreContent
+        }
+    }
+
+    private var coreContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
@@ -40,6 +53,11 @@ struct ProjectDetailView: View {
         }
         .navigationTitle(project.name)
         .toolbar {
+            if asSheet {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
             ToolbarItem {
                 Button { showingEditProject = true } label: { Image(systemName: "pencil") }
             }
