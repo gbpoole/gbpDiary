@@ -9,34 +9,49 @@ struct InstitutionsView: View {
     @State private var showingAddInstitution = false
 
     var body: some View {
-        NavigationSplitView {
-            List(selection: $selectedInstitution) {
-                ForEach(institutions) { institution in
-                    Text(institution.name)
-                        .tag(institution)
+        VStack(spacing: 0) {
+            institutionTable
+        }
+        .navigationTitle("Institutions")
+        .toolbar {
+            ToolbarItem {
+                Button { showingAddInstitution = true } label: {
+                    Image(systemName: "plus")
                 }
-            }
-            .navigationTitle("Institutions")
-            .toolbar {
-                ToolbarItem {
-                    Button { showingAddInstitution = true } label: {
-                        Image(systemName: "plus")
-                    }
-                }
-            }
-        } detail: {
-            if let institution = selectedInstitution {
-                InstitutionDetailView(institution: institution)
-            } else {
-                ContentUnavailableView("Select an Institution",
-                                       systemImage: "building.2",
-                                       description: Text("Choose an institution from the sidebar."))
             }
         }
-        .sheet(isPresented: $showingAddInstitution) {
-            InstitutionEditorSheet(institution: nil)
+        .sheet(item: $selectedInstitution) { InstitutionDetailView(institution: $0, asSheet: true) }
+        .sheet(isPresented: $showingAddInstitution) { InstitutionEditorSheet(institution: nil) }
+    }
+
+    #if os(macOS)
+    private var institutionTable: some View {
+        Table(institutions) {
+            TableColumn("Name") { institution in
+                Text(institution.name)
+                    .lineLimit(1)
+                    .onTapGesture { selectedInstitution = institution }
+            }
+            TableColumn("Members") { institution in
+                Text("\(institution.members.count)")
+                    .foregroundStyle(.secondary)
+            }
+            .width(80)
+            TableColumn("Projects") { institution in
+                Text("\(institution.projects.count)")
+                    .foregroundStyle(.secondary)
+            }
+            .width(80)
         }
     }
+    #else
+    private var institutionTable: some View {
+        List(institutions) { institution in
+            Text(institution.name)
+                .onTapGesture { selectedInstitution = institution }
+        }
+    }
+    #endif
 }
 
 struct InstitutionEditorSheet: View {
