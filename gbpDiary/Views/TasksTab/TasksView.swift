@@ -10,9 +10,11 @@ struct TasksView: View {
     @State private var personFilter: Person? = nil
     @State private var dateRangeFilter: ClosedRange<Date>? = nil
     @State private var editingTask: Task? = nil
+    @State private var pendingStatusIds: Set<UUID> = []
 
     private var filteredTasks: [Task] {
         allTasks.filter { task in
+            if pendingStatusIds.contains(task.id) { return true }
             let statusOk = statusFilter.map { task.status == $0 } ?? true
             let projectOk = projectFilter.map { task.project?.id == $0.id } ?? true
             let personOk = personFilter.map { task.assignee?.id == $0.id } ?? true
@@ -42,22 +44,28 @@ struct TasksView: View {
         .sheet(item: $editingTask) { task in
             TaskEditorSheet(task: task, defaultDate: Date())
         }
+        .onChange(of: statusFilter) { pendingStatusIds.removeAll() }
+        .onChange(of: projectFilter) { pendingStatusIds.removeAll() }
+        .onChange(of: personFilter) { pendingStatusIds.removeAll() }
+        .onChange(of: dateRangeFilter) { pendingStatusIds.removeAll() }
     }
 
-    // TODO: wire onBeforeStatusChange + pendingStatusIds (cleared on filter change)
-    //       when inline status cycling is added to this table.
     #if os(macOS)
     private var taskTable: some View {
         Table(filteredTasks) {
             TableColumn("Summary") { task in
                 Text(task.summary)
                     .lineLimit(1)
+                    .foregroundStyle(pendingStatusIds.contains(task.id) ? Color.secondary : Color.primary)
                     .onTapGesture { editingTask = task }
             }
             TableColumn("Status") { task in
-                TaskStatusIcon(status: task.status)
+                Button(action: { toggleStatus(task) }) {
+                    TaskStatusIcon(status: task.status)
+                }
+                .buttonStyle(.plain)
             }
-            .width(60)
+            .width(110)
             TableColumn("Project") { task in
                 Text(task.project?.name ?? "")
                     .foregroundStyle(.secondary)
@@ -81,6 +89,7 @@ struct TasksView: View {
             }
             .width(100)
         }
+        .animation(.easeInOut(duration: 0.25), value: filteredTasks.map(\.id))
     }
     #else
     private var taskTable: some View {
@@ -89,6 +98,26 @@ struct TasksView: View {
         }
     }
     #endif
+
+    private func toggleStatus(_ task: Task) {
+        pendingStatusIds.insert(task.id)
+        switch task.status {
+        case .todo:
+            task.status = .started
+            task.updatedAt = Date()
+        case .started:
+            task.markCompleted()
+        case .completed:
+            let tomorrow = Calendar.current.date(
+                byAdding: .day, value: 1,
+                to: Calendar.current.startOfDay(for: .now))!
+            task.setFollowUp(date: tomorrow)
+        case .followUpPending:
+            task.markCancelled()
+        case .cancelled:
+            task.unmarkCancelled()
+        }
+    }
 }
 
 struct TaskStatusIcon: View {
