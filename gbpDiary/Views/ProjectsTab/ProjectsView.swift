@@ -7,65 +7,92 @@ struct ProjectsView: View {
 
     @State private var selectedProject: Project?
     @State private var showingAddProject = false
+    @State private var showCompleted = false
 
-    private var rootProjects: [Project] {
-        projects.filter { $0.parent == nil && !$0.isCompleted }
+    private var filteredProjects: [Project] {
+        projects.filter { showCompleted || !$0.isCompleted }
     }
 
     var body: some View {
-        NavigationSplitView {
-            List(selection: $selectedProject) {
-                ForEach(rootProjects) { project in
-                    ProjectRowView(project: project, selectedProject: $selectedProject)
+        VStack(spacing: 0) {
+            filterBar
+            Divider()
+            projectTable
+        }
+        .navigationTitle("Projects")
+        .toolbar {
+            ToolbarItem {
+                Button { showingAddProject = true } label: {
+                    Image(systemName: "plus")
                 }
             }
-            .navigationTitle("Projects")
-            .toolbar {
-                ToolbarItem {
-                    Button { showingAddProject = true } label: {
-                        Image(systemName: "plus")
-                    }
-                }
-            }
-        } detail: {
-            if let project = selectedProject {
-                ProjectDetailView(project: project)
-            } else {
-                ContentUnavailableView("Select a Project",
-                                       systemImage: "folder",
-                                       description: Text("Choose a project from the sidebar."))
-            }
         }
-        .sheet(isPresented: $showingAddProject) {
-            ProjectEditorSheet(project: nil)
-        }
+        .sheet(item: $selectedProject) { ProjectDetailView(project: $0, asSheet: true) }
+        .sheet(isPresented: $showingAddProject) { ProjectEditorSheet(project: nil) }
     }
-}
 
-private struct ProjectRowView: View {
-    let project: Project
-    @Binding var selectedProject: Project?
+    private var filterBar: some View {
+        HStack(spacing: 12) {
+            Toggle("Show Completed", isOn: $showCompleted)
+                .toggleStyle(.checkbox)
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 6)
+    }
 
-    var body: some View {
-        DisclosureGroup {
-            ForEach(project.subprojects.filter { !$0.isCompleted }) { sub in
-                Text(sub.name)
-                    .onTapGesture { selectedProject = sub }
-            }
-        } label: {
-            HStack {
+    #if os(macOS)
+    private var projectTable: some View {
+        Table(filteredProjects) {
+            TableColumn("Name") { project in
                 Text(project.name)
-                Spacer()
-                if !project.meetings.isEmpty {
-                    Text(project.meetings.sorted { $0.meetingAt > $1.meetingAt }.first!.meetingAt,
-                         format: .dateTime.day().month())
-                        .font(.caption)
+                    .lineLimit(1)
+                    .onTapGesture { selectedProject = project }
+            }
+            TableColumn("Type") { project in
+                Text(project.projectType ?? "")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .width(100)
+            TableColumn("Parent") { project in
+                Text(project.parent?.name ?? "")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .width(120)
+            TableColumn("Subprojects") { project in
+                Text("\(project.subprojects.count)")
+                    .foregroundStyle(.secondary)
+            }
+            .width(90)
+            TableColumn("Last Meeting") { project in
+                if let latest = project.meetings.max(by: { $0.meetingAt < $1.meetingAt }) {
+                    Text(latest.meetingAt, format: .dateTime.day().month(.abbreviated).year())
                         .foregroundStyle(.secondary)
                 }
             }
+            .width(110)
+            TableColumn("Created") { project in
+                Text(project.createdAt, format: .dateTime.month(.abbreviated).day().year())
+                    .foregroundStyle(.secondary)
+            }
+            .width(100)
         }
-        .onTapGesture { selectedProject = project }
     }
+    #else
+    private var projectTable: some View {
+        List(filteredProjects) { project in
+            VStack(alignment: .leading, spacing: 2) {
+                Text(project.name)
+                if let type = project.projectType {
+                    Text(type).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .onTapGesture { selectedProject = project }
+        }
+    }
+    #endif
 }
 
 struct ProjectEditorSheet: View {
