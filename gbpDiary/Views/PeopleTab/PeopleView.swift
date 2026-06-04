@@ -8,51 +8,93 @@ struct PeopleView: View {
 
     @State private var selectedPerson: Person?
     @State private var showingAddPerson = false
+    @State private var institutionFilter: Institution? = nil
 
-    private var grouped: [(institution: Institution?, people: [Person])] {
-        var result: [(Institution?, [Person])] = []
-        let withInst = Dictionary(grouping: people.filter { $0.institution != nil }) { $0.institution! }
-        for inst in institutions {
-            if let group = withInst[inst] {
-                result.append((inst, group.sorted { $0.name < $1.name }))
-            }
+    private var filteredPeople: [Person] {
+        people.filter { person in
+            institutionFilter.map { person.institution?.id == $0.id } ?? true
         }
-        let unaffiliated = people.filter { $0.institution == nil }
-        if !unaffiliated.isEmpty { result.append((nil, unaffiliated)) }
-        return result
     }
 
     var body: some View {
-        NavigationSplitView {
-            List(selection: $selectedPerson) {
-                ForEach(grouped, id: \.institution?.id) { group in
-                    Section(group.institution?.name ?? "Unaffiliated") {
-                        ForEach(group.people) { person in
-                            Text(person.name)
-                                .tag(person)
-                        }
-                    }
+        VStack(spacing: 0) {
+            filterBar
+            Divider()
+            peopleTable
+        }
+        .navigationTitle("People")
+        .toolbar {
+            ToolbarItem {
+                Button { showingAddPerson = true } label: {
+                    Image(systemName: "plus")
                 }
-            }
-            .navigationTitle("People")
-            .toolbar {
-                ToolbarItem {
-                    Button { showingAddPerson = true } label: {
-                        Image(systemName: "plus")
-                    }
-                }
-            }
-        } detail: {
-            if let person = selectedPerson {
-                PersonDetailView(person: person)
-            } else {
-                ContentUnavailableView("Select a Person",
-                                       systemImage: "person",
-                                       description: Text("Choose someone from the list."))
             }
         }
+        .sheet(item: $selectedPerson) { PersonDetailView(person: $0, asSheet: true) }
         .sheet(isPresented: $showingAddPerson) { PersonEditorSheet(person: nil) }
     }
+
+    private var filterBar: some View {
+        HStack(spacing: 12) {
+            Picker("Institution", selection: $institutionFilter) {
+                Text("Any Institution").tag(Optional<Institution>.none)
+                ForEach(institutions) { inst in
+                    Text(inst.name).tag(Optional(inst))
+                }
+            }
+            .labelsHidden()
+            .fixedSize()
+            if institutionFilter != nil {
+                Button("Clear") { institutionFilter = nil }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(.horizontal)
+        .padding(.vertical, 6)
+    }
+
+    #if os(macOS)
+    private var peopleTable: some View {
+        Table(filteredPeople) {
+            TableColumn("Name") { person in
+                Text(person.name)
+                    .lineLimit(1)
+                    .onTapGesture { selectedPerson = person }
+            }
+            TableColumn("Email") { person in
+                Text(person.email ?? "")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .width(180)
+            TableColumn("Institution") { person in
+                Text(person.institution?.name ?? "")
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .width(140)
+            TableColumn("Projects") { person in
+                Text("\(person.devProjects.count + person.sciProjects.count)")
+                    .foregroundStyle(.secondary)
+            }
+            .width(70)
+        }
+    }
+    #else
+    private var peopleTable: some View {
+        List(filteredPeople) { person in
+            VStack(alignment: .leading, spacing: 2) {
+                Text(person.name)
+                if let inst = person.institution {
+                    Text(inst.name).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .onTapGesture { selectedPerson = person }
+        }
+    }
+    #endif
 }
 
 struct PersonEditorSheet: View {
@@ -118,4 +160,3 @@ struct PersonEditorSheet: View {
         dismiss()
     }
 }
-
