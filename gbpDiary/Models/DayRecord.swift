@@ -19,6 +19,7 @@ import SwiftData
     @Relationship(deleteRule: .cascade, inverse: \DayEntry.dayRecord) var entries: [DayEntry]
     @Relationship(deleteRule: .nullify, inverse: \Task.dayRecord) var tasks: [Task]
     @Relationship(deleteRule: .nullify, inverse: \Document.dayRecord) var documents: [Document]
+    @Relationship(deleteRule: .nullify, inverse: \Note.dayRecord) var noteItems: [Note]
 
     init(date: Date, id: UUID = UUID()) {
         self.id = id
@@ -27,6 +28,7 @@ import SwiftData
         self.entries = []
         self.tasks = []
         self.documents = []
+        self.noteItems = []
         let now = Date()
         self.createdAt = now
         self.updatedAt = now

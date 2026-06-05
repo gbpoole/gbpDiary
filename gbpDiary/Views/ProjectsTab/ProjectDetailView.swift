@@ -6,6 +6,7 @@ struct ProjectDetailView: View {
     var asSheet: Bool = false
 
     @Query(sort: \Task.createdAt) private var allTasks: [Task]
+    @Query(sort: \Note.createdAt) private var allNotes: [Note]
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
@@ -15,6 +16,7 @@ struct ProjectDetailView: View {
     @State private var selectedMinutes: Minutes?
     @State private var selectedDocument: Document?
     @State private var editingTask: Task?
+    @State private var editingNote: Note?
 
     private var openTasks: [Task] {
         allTasks.filter { $0.project?.id == project.id && ($0.status == .todo || $0.status == .started) }
@@ -26,6 +28,10 @@ struct ProjectDetailView: View {
 
     private var sortedMeetings: [Minutes] {
         project.meetings.sorted { $0.meetingAt > $1.meetingAt }
+    }
+
+    private var projectNotes: [Note] {
+        allNotes.filter { $0.project?.id == project.id }
     }
 
     var body: some View {
@@ -48,6 +54,7 @@ struct ProjectDetailView: View {
                 if !completedTasks.isEmpty { completedTasksSection }
                 meetingsSection
                 documentsSection
+                notesSection
             }
             .padding()
         }
@@ -68,6 +75,7 @@ struct ProjectDetailView: View {
         .sheet(isPresented: $showingAddDocument) { DocumentEditorSheet(document: nil) }
         .sheet(item: $selectedDocument) { doc in DocumentDetailView(document: doc, asSheet: true) }
         .sheet(item: $editingTask) { t in TaskEditorSheet(task: t, defaultDate: Date()) }
+        .sheet(item: $editingNote) { n in NoteEditorSheet(note: n) }
     }
 
     private var header: some View {
@@ -170,6 +178,36 @@ struct ProjectDetailView: View {
             .padding(.top, 4)
         } label: {
             Text("Documents (\(project.documents.count))")
+        }
+    }
+
+    private var notesSection: some View {
+        GroupBox("Notes (\(projectNotes.count))") {
+            if projectNotes.isEmpty {
+                Text("No notes.").foregroundStyle(.secondary)
+            } else {
+                ForEach(projectNotes) { note in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(note.content.isEmpty ? "Empty note" : note.content)
+                            .lineLimit(3)
+                            .foregroundStyle(note.content.isEmpty ? .tertiary : .primary)
+                        if !note.tags.isEmpty {
+                            HStack(spacing: 4) {
+                                ForEach(note.tags, id: \.self) { tag in
+                                    Chip(label: tag, color: .teal)
+                                }
+                            }
+                        }
+                        Text(note.createdAt, format: .dateTime.day().month(.abbreviated).year())
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                    }
+                    .padding(.vertical, 2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { editingNote = note }
+                }
+            }
         }
     }
 }

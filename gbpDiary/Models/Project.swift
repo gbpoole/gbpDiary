@@ -26,6 +26,7 @@ import SwiftData
     var meetings: [Minutes]
     var documents: [Document]
     @Relationship(deleteRule: .nullify, inverse: \Task.project) var tasks: [Task]
+    @Relationship(deleteRule: .nullify, inverse: \Note.project) var notes: [Note]
 
     init(name: String, id: UUID = UUID()) {
         self.id = id
@@ -38,6 +39,7 @@ import SwiftData
         self.meetings = []
         self.documents = []
         self.tasks = []
+        self.notes = []
         let now = Date()
         self.createdAt = now
         self.updatedAt = now

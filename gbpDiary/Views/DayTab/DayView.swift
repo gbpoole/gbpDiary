@@ -90,8 +90,10 @@ struct DayPageContent: View {
     @State private var showingAddTask = false
     @State private var editingTask: Task?
     @State private var editingDocument: Document?
+    @State private var editingNote: Note?
     @State private var collapsedTaskIds: Set<UUID> = []
     @State private var collapsedMeetingIds: Set<UUID> = []
+    @State private var notesDropTargetIndex: Int?
     #if os(macOS)
     @State private var deleteMonitor = DeleteKeyMonitor()
     @State private var focusClearMonitor = FocusClearMonitor()
@@ -129,6 +131,10 @@ struct DayPageContent: View {
         (dayRecord?.documents ?? []).sorted { $0.createdAt < $1.createdAt }
     }
 
+    private var dayNotes: [Note] {
+        (dayRecord?.noteItems ?? []).sorted { $0.sortOrder < $1.sortOrder }
+    }
+
     // Tasks scheduled for the sidebar section (excludes tasks already in newTasks).
     private var scheduled: [Task] {
         let dayTaskIds = Set((dayRecord?.tasks ?? []).map(\.persistentModelID))
@@ -143,7 +149,7 @@ struct DayPageContent: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                dayNoteSection
+                notesSection
                 meetingsSection
                 newTasksSection
                 completedTasksSection
@@ -164,13 +170,19 @@ struct DayPageContent: View {
         .sheet(item: $editingDocument) { doc in
             DocumentDetailView(document: doc, asSheet: true)
         }
+        .sheet(item: $editingNote) { n in
+            NoteEditorSheet(note: n)
+        }
         .onChange(of: pendingFocusId) { _, newId in
             if let id = newId {
                 focusedEntryId = id
                 pendingFocusId = nil
             }
         }
-        .onAppear { migrateOldNotes() }
+        .onAppear {
+            migrateOldNotes()
+            migrateDayNote()
+        }
         #if os(macOS)
         .onAppear {
             deleteMonitor.start()
@@ -196,22 +208,15 @@ struct DayPageContent: View {
 
     // MARK: - Sections
 
-    private var dayNoteSection: some View {
-        MarkdownEditorSection(
-            text: Binding(
-                get: { dayRecord?.notes ?? "" },
-                set: { newValue in
-                    let record = findOrCreateDayRecord()
-                    record.notes = newValue.isEmpty ? nil : newValue
-                }
-            ),
-            label: "Day Note",
-            showHeader: false,
-            placeholder: "Add a note for today…"
-        )
-        .padding(.horizontal)
-        .padding(.top, 12)
-        .padding(.bottom, 4)
+    @ViewBuilder
+    private var notesSection: some View {
+        DaySectionHeader(title: "Notes", onAdd: addNote)
+        notesDropZone(belowIndex: -1)
+        ForEach(Array(dayNotes.enumerated()), id: \.element.id) { idx, note in
+            noteRow(note: note, index: idx)
+                .draggable(note.id.uuidString)
+            notesDropZone(belowIndex: idx)
+        }
     }
 
     @ViewBuilder
@@ -419,6 +424,72 @@ struct DayPageContent: View {
         editingDocument = doc
     }
 
+    private func addNote() {
+        let record = findOrCreateDayRecord()
+        let note = Note(
+            content: "",
+            sortOrder: (record.noteItems.map(\.sortOrder).max() ?? -1) + 1
+        )
+        note.dayRecord = record
+        modelContext.insert(note)
+        pendingFocusId = note.id
+    }
+
+    private func noteRow(note: Note, index: Int) -> some View {
+        let count = dayNotes.count
+        return DayNoteRow(
+            note: note,
+            focusedEntryId: $focusedEntryId,
+            onMoveToPrevious: index > 0 ? { pendingFocusId = dayNotes[index - 1].id } : nil,
+            onMoveToNext: index < count - 1 ? { pendingFocusId = dayNotes[index + 1].id } : nil,
+            onEdit: { editingNote = note },
+            onDelete: {
+                let i = dayNotes.firstIndex(where: { $0.id == note.id })
+                if let i, i > 0 { pendingFocusId = dayNotes[i - 1].id }
+                modelContext.delete(note)
+            }
+        )
+    }
+
+    private func notesDropZone(belowIndex: Int) -> some View {
+        Color.clear
+            .frame(maxWidth: .infinity, minHeight: 4)
+            .dropDestination(for: String.self) { items, _ in
+                guard let s = items.first else { return false }
+                reorderNote(draggedIdString: s, belowIndex: belowIndex)
+                return true
+            } isTargeted: { targeted in
+                notesDropTargetIndex = targeted ? belowIndex : nil
+            }
+            .overlay {
+                if notesDropTargetIndex == belowIndex {
+                    Color.accentColor.frame(height: 2)
+                }
+            }
+    }
+
+    private func reorderNote(draggedIdString: String, belowIndex: Int) {
+        guard let id = UUID(uuidString: draggedIdString),
+              let fromIdx = dayNotes.firstIndex(where: { $0.id == id }) else { return }
+        let targetInsert = belowIndex + 1
+        var reordered = dayNotes
+        let note = reordered.remove(at: fromIdx)
+        var adjusted = fromIdx < targetInsert ? targetInsert - 1 : targetInsert
+        adjusted = max(0, min(adjusted, reordered.count))
+        reordered.insert(note, at: adjusted)
+        for (i, n) in reordered.enumerated() { n.sortOrder = i }
+    }
+
+    private func migrateDayNote() {
+        guard let record = dayRecord,
+              let text = record.notes,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        let note = Note(content: text, sortOrder: 0)
+        note.dayRecord = record
+        modelContext.insert(note)
+        record.notes = nil
+    }
+
     // Concatenates old DayEntry(kind:.note) entries into DayRecord.notes and deletes them.
     private func migrateOldNotes() {
         let noteEntries = (dayRecord?.entries ?? []).filter { $0.kind == .note }
@@ -452,6 +523,14 @@ struct DayPageContent: View {
                 guard entry.isInlineSummaryEmpty else { return false }
                 if let m = entry.minutes { modelContext.delete(m) }
                 modelContext.delete(entry)
+                return true
+            }
+        } else if let note = dayNotes.first(where: { $0.id == focusId }) {
+            deleteMonitor.action = {
+                guard note.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+                let idx = dayNotes.firstIndex(where: { $0.id == focusId })
+                if let i = idx, i > 0 { pendingFocusId = dayNotes[i - 1].id }
+                modelContext.delete(note)
                 return true
             }
         } else {
