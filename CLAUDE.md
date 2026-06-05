@@ -58,11 +58,11 @@ DayPageContent
   └── ScrollView
         └── VStack
               ├── activitySection     ActivitySection — Focus blocks + Activities + Unspecified entries
-              ├── notesSection        DayNoteRow per Note in dayRecord.noteItems (drag-to-reorder)
               ├── meetingsSection     EntryRowView (kind == .meeting) per DayEntry
               ├── newTasksSection     DiaryTaskRow per Task with dayRecord == thisRecord
               ├── completedTasksSection  CompletedTaskRow for tasks completedAt in day
               ├── documentsSection    DayDocumentRow per Document.dayRecord == thisRecord
+              ├── notesSection        DayNoteRow per Note in dayRecord.noteItems (drag-to-reorder)
               └── sidebarSections     (Scheduled + Inbox; hidden when showTaskSections == false)
 ```
 
