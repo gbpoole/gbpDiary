@@ -20,6 +20,7 @@ struct EntryNotesSubArea: View {
 
     @Environment(\.openURL) private var openURL
     @State private var linkFlags = LinkTapFlags()
+    @State private var tapRequestCount = 0
 
 #if os(macOS)
     private var cursorIsOnFirstVisualLine: Bool {
@@ -102,15 +103,14 @@ struct EntryNotesSubArea: View {
                     .opacity(isFocused ? 1 : 0)
             }
             .contentShape(Rectangle())
-            .simultaneousGesture(
-                TapGesture().onEnded {
-                    if linkFlags.didTapLink {
-                        linkFlags.didTapLink = false
-                    } else {
-                        focusedEntryId.wrappedValue = focusId
-                    }
+            .simultaneousGesture(TapGesture().onEnded { tapRequestCount += 1 })
+            .onChange(of: tapRequestCount) {
+                if linkFlags.didTapLink {
+                    linkFlags.didTapLink = false
+                } else {
+                    focusedEntryId.wrappedValue = focusId
                 }
-            )
+            }
             .padding(.horizontal, 4)
             .padding(.vertical, 4)
         }
