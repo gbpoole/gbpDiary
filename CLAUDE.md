@@ -33,13 +33,14 @@ Targets: macOS 15.7 · iOS 26 · Swift 6 (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainA
 ```
 ContentView
   ├── Day tab       → DayView(date:)
-  ├── Tasks tab     → TasksView()         [filterable global task table]
+  ├── Tasks tab     → TasksView()         [filterable full-width table]
   ├── Week tab      → WeekView(weekOf:)
   ├── Timesheet     → TimesheetView()
-  ├── Projects      → ProjectsView()      [NavigationSplitView internally]
-  ├── People        → PeopleView()        [NavigationSplitView internally]
-  ├── Minutes       → MinutesListView()   [NavigationSplitView internally]
-  └── Documents     → DocumentsListView() [NavigationSplitView internally]
+  ├── Projects      → ProjectsView()      [filterable full-width table]
+  ├── People        → PeopleView()        [filterable full-width table]
+  ├── Institutions  → InstitutionsView()  [full-width table]
+  ├── Minutes       → MinutesListView()   [filterable full-width table]
+  └── Documents     → DocumentsListView() [filterable full-width table]
 ```
 
 ### Data layer
@@ -183,7 +184,7 @@ Prefer `@Query` at the top of a view for simple sorts/filters. For dynamic filte
 
 All transitions are in `Task` extension methods (`markCompleted()`, `unmarkCompleted()`, `markCancelled()`, `unmarkCancelled()`, `setFollowUp(date:)`, `markFollowUpDone()`, `setDuration(_:)`). Call these methods from views; do not mutate `status`, `completedAt`, `cancelledAt`, or `followUpAt` directly.
 
-Status cycle (via tap on status icon in `TaskRowView`): `.todo` → `.started` → `.completed`. Long-press / context menu provides access to cancel, follow-up, and reopen.
+Status cycle (via tap on status icon in `TaskRowView` or in the `TasksView` table): `.todo` → `.started` → `.completed` → `.followUpPending` → `.cancelled` → `.todo`. Long-press / context menu provides direct access to cancel, follow-up, and reopen. In `TasksView`, a tapped task stays visible during the cycle (`pendingStatusIds`) and is only removed from the filtered list when filters change.
 
 The full state transition table is in the handoff spec (`/Users/gbpoole/swift_app_handoff_spec.md`, section 3).
 
@@ -210,6 +211,10 @@ When a meeting `DayEntry` is created, `addMeeting()` automatically creates and l
 - `TasksView` — filterable macOS Table (or List on iOS) of all tasks. Filter controls in `TasksFilterBar`.
 - `MinutesDetailView(minutes:asSheet:)` — detail view for a `Minutes` record; pass `asSheet: true` when presenting as a sheet.
 - `DocumentDetailView(document:asSheet:)` — same pattern for `Document`.
+- `ProjectDetailView(project:asSheet:)` — same pattern for `Project`.
+- `PersonDetailView(person:asSheet:)` — same pattern for `Person`.
+- `InstitutionDetailView(institution:asSheet:)` — same pattern for `Institution`.
+- All entity list pages (`ProjectsView`, `PeopleView`, `InstitutionsView`, `MinutesListView`, `DocumentsListView`) use the same `VStack { filterBar + Divider + Table }` pattern as `TasksView`: macOS `Table` with tap-to-open-sheet on the primary column, iOS `List`. Each has a filter bar (project or institution picker where relevant).
 
 ### macOS-specific: DeleteKeyMonitor
 
@@ -222,6 +227,40 @@ On macOS, applying `.alert()` in the outer modifier chain of a block view (outsi
 ### SwiftUI quirk: `LazyVStack` + nested `ScrollView` → infinite layout loop
 
 Do **not** place a view that contains a `ScrollView` inside a `LazyVStack`. `LazyVStack`'s lazy measurement algorithm re-proposes heights as cells scroll into view; if the nested `ScrollView` (or any `NSViewRepresentable` inside it, such as `StructuredText` or `TextEditor`) reports a slightly different size between passes, SwiftUI enters an infinite measure → invalidate → re-measure cycle. Each pass allocates new view descriptors, producing unbounded memory growth and 100 % CPU. **Fix:** use a plain `VStack` instead. For sections bounded in number (e.g., 7 days in `WeekView`) the performance difference is negligible. `DayPageContent` contains a nested `ScrollView`, so any container that holds multiple `DayPageContent` instances must use `VStack`, not `LazyVStack`.
+
+### SwiftUI quirk: Textual `StructuredText` link taps vs. edit-mode gesture
+
+`StructuredText` (Textual package) adds a `SpatialTapGesture` overlay on every text fragment to handle link taps. `.allowsHitTesting(false)` on the `StructuredText` view blocks all events including this overlay — links become unclickable.
+
+When `StructuredText` is used inside a `ZStack` alongside an outer `.simultaneousGesture(TapGesture())` that activates edit mode, the outer gesture callback fires **before** the inner `SpatialTapGesture.onEnded` (which calls `openURL`). Checking a flag synchronously in the outer gesture will always see `false`.
+
+**Fix:** Use a class-based flag (not `@State` — class mutations are immediately visible across closures) and defer the check with `.onChange(of:)`. Example from `EntryNotesSubArea`:
+
+```swift
+private final class LinkTapFlags { var didTapLink = false }
+
+@State private var linkFlags = LinkTapFlags()
+@State private var tapRequestCount = 0
+
+// On StructuredText:
+.environment(\.openURL, OpenURLAction { url in
+    linkFlags.didTapLink = true   // class mutation: immediately visible
+    openURL(url)
+    return .handled
+})
+
+// On the outer ZStack:
+.simultaneousGesture(TapGesture().onEnded { tapRequestCount += 1 })
+.onChange(of: tapRequestCount) {
+    if linkFlags.didTapLink {
+        linkFlags.didTapLink = false  // link was tapped — suppress edit mode
+    } else {
+        focusedEntryId.wrappedValue = focusId  // normal tap — activate edit mode
+    }
+}
+```
+
+`.onChange` fires after all synchronous gesture callbacks in the current event cycle, so the flag is set before the check runs.
 
 ### Platform guards
 
