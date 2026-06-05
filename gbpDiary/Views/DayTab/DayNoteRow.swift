@@ -13,16 +13,6 @@ struct DayNoteRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            EntryNotesSubArea(
-                text: $note.content,
-                isFocused: isFocused,
-                focusedEntryId: focusedEntryId,
-                focusId: note.id,
-                placeholder: "Note…",
-                onMoveToPrevious: onMoveToPrevious,
-                onMoveToNext: onMoveToNext
-            )
-
             HStack(spacing: 4) {
                 if let project = note.project {
                     Chip(label: project.name, color: .indigo)
@@ -36,7 +26,17 @@ struct DayNoteRow: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.bottom, 4)
+            .padding(.top, 4)
+
+            EntryNotesSubArea(
+                text: $note.content,
+                isFocused: isFocused,
+                focusedEntryId: focusedEntryId,
+                focusId: note.id,
+                placeholder: "Note…",
+                onMoveToPrevious: onMoveToPrevious,
+                onMoveToNext: onMoveToNext
+            )
         }
         .padding(.horizontal)
         .contextMenu {
