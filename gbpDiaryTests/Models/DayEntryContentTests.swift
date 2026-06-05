@@ -20,6 +20,7 @@ struct DayEntryContentTests {
         #expect(entry.inlineSummary == "task A")
         entry.inlineSummary = "task B"
         #expect(task.summary == "task B")
+        #expect(entry.inlineSummary == "task B")
     }
 
     @Test func inlineSummary_forMeeting_roundTripsEmptyAsNilSummary() {

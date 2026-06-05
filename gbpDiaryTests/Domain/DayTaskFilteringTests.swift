@@ -25,6 +25,15 @@ struct DayTaskFilteringTests {
         #expect(ids == Set([task.persistentModelID]))
     }
 
+    @Test func taskEntryIds_includesDayRecordOwnedTasks() {
+        let day = DayRecord(date: FixedDates.dayStart())
+        let task = Task(summary: "owned")
+        day.tasks = [task]
+
+        let ids = DayTaskFiltering.taskEntryIds(from: day)
+        #expect(ids == Set([task.persistentModelID]))
+    }
+
     @Test func scheduled_excludesTasksAlreadyInEntries() {
         let dayStart = FixedDates.dayStart()
         let dayEnd = Calendar.current.date(byAdding: .day, value: 1, to: dayStart) ?? dayStart

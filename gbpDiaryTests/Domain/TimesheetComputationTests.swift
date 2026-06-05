@@ -52,8 +52,9 @@ struct TimesheetComputationTests {
             now: now
         )
 
+        let expectedEnd = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: now))
         #expect(interval.start == Calendar.current.startOfDay(for: now))
-        #expect(interval.end > interval.start)
+        #expect(interval.end == expectedEnd)
     }
 
     @Test func rangeInterval_yesterday_coversPreviousDayOnly() {
