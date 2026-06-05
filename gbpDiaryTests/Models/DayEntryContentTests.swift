@@ -41,4 +41,14 @@ struct DayEntryContentTests {
         noteEntry.inlineSummary = "x"
         #expect(!noteEntry.isInlineSummaryEmpty)
     }
+
+    @Test func notesId_isOwnInverse() {
+        let id = UUID()
+        #expect(notesId(for: notesId(for: id)) == id)
+    }
+
+    @Test func notesId_differFromSourceId() {
+        let id = UUID()
+        #expect(notesId(for: id) != id)
+    }
 }

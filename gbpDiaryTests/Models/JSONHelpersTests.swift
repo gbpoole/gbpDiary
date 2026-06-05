@@ -24,4 +24,16 @@ struct JSONHelpersTests {
         #expect(task.tags.isEmpty)
         #expect(task.followedUpHistory.isEmpty)
     }
+
+    @Test func noteTags_roundTripViaJsonStorage() {
+        let note = Note(content: "summary")
+        note.tags = ["swift", "diary"]
+        #expect(note.tags == ["swift", "diary"])
+    }
+
+    @Test func noteTags_defaultToEmptyOnInvalidJson() {
+        let note = Note(content: "x")
+        note.tagsJSON = "bad"
+        #expect(note.tags.isEmpty)
+    }
 }

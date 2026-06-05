@@ -230,11 +230,12 @@ struct TimesheetComputationTests {
         e1.task = taskA
         let e2 = TaskTimeEntry(date: FixedDates.reference, duration: Duration(value: 1, unit: .h))
         e2.task = taskA
-        let e3 = TaskTimeEntry(date: FixedDates.reference, duration: Duration(value: 3, unit: .h))
+        // 5h for projectB so A (3h) ≠ B (5h) — a broken filter returning all entries would fail
+        let e3 = TaskTimeEntry(date: FixedDates.reference, duration: Duration(value: 5, unit: .h))
         e3.task = taskB
 
         let all = [e1, e2, e3]
         #expect(TimesheetComputation.hours(for: projectA, entries: all) == 3.0)
-        #expect(TimesheetComputation.hours(for: projectB, entries: all) == 3.0)
+        #expect(TimesheetComputation.hours(for: projectB, entries: all) == 5.0)
     }
 }

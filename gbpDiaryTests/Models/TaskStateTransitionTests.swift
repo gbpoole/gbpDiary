@@ -118,4 +118,27 @@ struct TaskStateTransitionTests {
         #expect(task.status == .completed)
         #expect(task.completedAt != nil)
     }
+
+    @Test func setDuration_completesStartedTask() {
+        let task = Task(summary: "a", status: .started)
+
+        task.setDuration(Duration(value: 1, unit: .h))
+
+        #expect(task.status == .completed)
+        #expect(task.completedAt != nil)
+    }
+
+    @Test func setDuration_doesNotOverwriteExistingCompletedAt() {
+        let task = Task(summary: "a", status: .completed)
+        task.completedAt = FixedDates.reference
+        let dur = Duration(value: 1, unit: .h)
+
+        task.setDuration(dur)
+
+        // Primary job: duration is stored regardless
+        #expect(task.duration == dur)
+        // Guard: timestamp and status must be unchanged
+        #expect(task.completedAt == FixedDates.reference)
+        #expect(task.status == .completed)
+    }
 }
