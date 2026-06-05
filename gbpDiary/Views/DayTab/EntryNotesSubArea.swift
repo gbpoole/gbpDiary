@@ -1,6 +1,14 @@
 import SwiftUI
 import Textual
 
+// Tracks whether a link tap just occurred so the simultaneous edit-mode gesture can be suppressed.
+// Stored as a class so mutations in the openURL closure are visible immediately to the
+// simultaneously-firing TapGesture closure (value-type @State would queue a re-render, not
+// propagate synchronously across two closures in the same event cycle).
+private final class LinkTapFlags {
+    var didTapLink = false
+}
+
 struct EntryNotesSubArea: View {
     @Binding var text: String
     let isFocused: Bool
@@ -9,6 +17,9 @@ struct EntryNotesSubArea: View {
     let placeholder: String
     var onMoveToPrevious: (() -> Void)? = nil
     var onMoveToNext: (() -> Void)? = nil
+
+    @Environment(\.openURL) private var openURL
+    @State private var linkFlags = LinkTapFlags()
 
 #if os(macOS)
     private var cursorIsOnFirstVisualLine: Bool {
@@ -58,7 +69,11 @@ struct EntryNotesSubArea: View {
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                             .padding(.leading, 6)
                             .padding(.vertical, 6)
-                            .allowsHitTesting(false)
+                            .environment(\.openURL, OpenURLAction { url in
+                                linkFlags.didTapLink = true
+                                openURL(url)
+                                return .handled
+                            })
                     }
                 }
 
@@ -87,7 +102,15 @@ struct EntryNotesSubArea: View {
                     .opacity(isFocused ? 1 : 0)
             }
             .contentShape(Rectangle())
-            .onTapGesture { focusedEntryId.wrappedValue = focusId }
+            .simultaneousGesture(
+                TapGesture().onEnded {
+                    if linkFlags.didTapLink {
+                        linkFlags.didTapLink = false
+                    } else {
+                        focusedEntryId.wrappedValue = focusId
+                    }
+                }
+            )
             .padding(.horizontal, 4)
             .padding(.vertical, 4)
         }
