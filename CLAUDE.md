@@ -57,7 +57,8 @@ The Day tab renders a `DayPageContent` view with four typed sections. Meetings a
 DayPageContent
   └── ScrollView
         └── VStack
-              ├── dayNoteSection      MarkdownEditorSection bound to DayRecord.notes
+              ├── activitySection     ActivitySection — Focus blocks + Activities + Unspecified entries
+              ├── notesSection        DayNoteRow per Note in dayRecord.noteItems (drag-to-reorder)
               ├── meetingsSection     EntryRowView (kind == .meeting) per DayEntry
               ├── newTasksSection     DiaryTaskRow per Task with dayRecord == thisRecord
               ├── completedTasksSection  CompletedTaskRow for tasks completedAt in day
@@ -65,12 +66,14 @@ DayPageContent
               └── sidebarSections     (Scheduled + Inbox; hidden when showTaskSections == false)
 ```
 
-Old `DayEntry(kind:.note)` entries are auto-migrated into `DayRecord.notes` the first time each day is opened (`migrateOldNotes()` called on `.onAppear`).
+Old `DayEntry(kind:.note)` entries are auto-migrated into `DayRecord.notes` the first time each day is opened (`migrateOldNotes()` called on `.onAppear`). The legacy `DayRecord.notes: String?` field is then migrated into a `Note` item via `migrateDayNote()`, also called on `.onAppear`, and cleared afterward.
 
 ### Day view sections (inline and sidebar)
 
 | Section | Location | Filter |
 |---------|----------|--------|
+| Activity | Inline | `dayRecord.focusBlocks` sorted by `sortOrder`; `TaskTimeEntry` objects for `focusBlock == nil` shown as Unspecified |
+| Notes | Inline | `dayRecord.noteItems` sorted by `sortOrder`; reorderable by drag |
 | New Tasks | Inline | `task.dayRecord == thisRecord`, parent == nil — **all statuses shown** |
 | Completed | Inline | `status == .completed && completedAt` in `[dayStart, dayEnd)`, excluding dayRecord tasks |
 | Meetings | Inline | `DayEntry.kind == .meeting` in this DayRecord |
@@ -104,7 +107,29 @@ Task
   meetingTaskSortOrder: Int  (ordering within minutes.newTasks; default 0)
   parent   → Task?
   children → [Task]          cascade delete
+  duration : Duration?       (legacy; used as fallback when timeEntries is empty)
+  timeEntries → [TaskTimeEntry]  cascade delete ↔ TaskTimeEntry.task
+  focusBlocks → [FocusBlock]     nullify ↔ FocusBlock.task
+  loggedDuration: Duration?  (computed from timeEntries; nil if no entries)
   NOTE: Task no longer has a `minutes` relationship.
+
+TaskTimeEntry                (a single logged time entry; used in Activity section)
+  date      : Date           (calendar day for which time is logged)
+  duration  : Duration
+  comment   : String?
+  sortOrder : Int
+  task     → Task?           (no @Relationship — Task side declares the inverse)
+  focusBlock→ FocusBlock?    (nil = unspecified; no @Relationship)
+
+FocusBlock                   (a primary work block for a day; shown in Activity section)
+  duration  : Duration       (explicitly entered total time)
+  sortOrder : Int
+  task     → Task?           (backed by a task; nil if project-backed)
+  project  → Project?        (backed by a project; nil if task-backed)
+  dayRecord→ DayRecord?      (owning day)
+  activities → [TaskTimeEntry]  nullify ↔ TaskTimeEntry.focusBlock
+  displayLabel: String       (task.summary ?? project.name ?? "Focus block")
+  netHours: Double           (duration.hoursNormalized − sum of activities)
 
 DayEntry                     (a single diary block for one day)
   kind      : DayEntryKind   (.note | .task | .meeting)
@@ -115,10 +140,12 @@ DayEntry                     (a single diary block for one day)
   minutes  → Minutes?        (set when kind == .meeting)
   dayRecord→ DayRecord?
 
-DayRecord                    (date, notes?, focusTags[])
-  entries  → [DayEntry]      (cascade delete; only meeting kind used now)
-  tasks    → [Task]          (nullify on delete; "new tasks" for this day)
-  documents→ [Document]      (nullify on delete)
+DayRecord                    (date, notes?: String [legacy], focusTags[])
+  entries   → [DayEntry]     (cascade delete; only meeting kind used now)
+  tasks     → [Task]         (nullify on delete; "new tasks" for this day)
+  documents → [Document]     (nullify on delete)
+  noteItems → [Note]         (nullify on delete; replaces legacy notes: String?)
+  focusBlocks → [FocusBlock] (cascade delete ↔ FocusBlock.dayRecord)
 
 Project
   parent       → Project?
@@ -128,6 +155,8 @@ Project
   institutions → [Institution] ↔ Institution.projects
   meetings     → [Minutes]   ↔ Minutes.projects
   documents    → [Document]  ↔ Document.projects
+  notes        → [Note]      ↔ Note.project
+  focusBlocks  → [FocusBlock] nullify ↔ FocusBlock.project
 
 Person
   institution    → Institution?  ↔ Institution.members
@@ -141,6 +170,8 @@ Institution
 
 Minutes
   summary   : String?        (one-line summary; editable inline in diary)
+  duration  : Duration?      (optional; same h/d/w format as tasks)
+  meetingAt : Date           (defaults to nearest quarter-hour when created)
   newTasks  → [Task]     ↔ Task.originMinutes  (nullify on delete)
   projects  → [Project]  ↔ Project.meetings
   attendees → [Person]   ↔ Person.minutesAttended
@@ -154,7 +185,12 @@ Document
 Attachment     (fileURL + bookmarkData for sandbox persistence)
   document → Document?
 
-Note           (standalone, not yet wired into UI)
+Note
+  content   : String         (markdown; edited inline in DayNoteRow)
+  sortOrder : Int            (drag-to-reorder within a day)
+  tagsJSON  : String         (JSON-encoded [String]; use computed `tags` property)
+  dayRecord → DayRecord?     (set when captured from a day's Notes section)
+  project   → Project?       (optional; displayed as blue chip above note content)
 ```
 
 Each `@Model` has `@Attribute(.unique) var id: UUID` for stable external identity (used by the import pipeline). SwiftData also assigns its own `persistentModelID`.
@@ -194,31 +230,37 @@ User input is a string like `"1.5h"`, `"2d"`, `"1w"`. Parse with `Duration.parse
 
 ### Meeting entries
 
-When a meeting `DayEntry` is created, `addMeeting()` automatically creates and links a `Minutes` object. Deleting a meeting entry requires confirmation (alert) because it also deletes the linked `Minutes`. The meeting's one-line summary is stored on `Minutes.summary` and edited inline in the diary row.
+When a meeting `DayEntry` is created, `addMeeting()` automatically creates and links a `Minutes` object with `meetingAt` defaulting to the nearest quarter-hour (rounding from `Date()`). Deleting a meeting entry requires confirmation (alert) because it also deletes the linked `Minutes`. The meeting's one-line summary is stored on `Minutes.summary` and edited inline in the diary row. The day-view row shows the time chip and optional duration chip alongside the inline summary. Tapping the pencil icon opens `MinutesDetailView`; within that view a further pencil toolbar button opens `MinutesEditorSheet` for full meta editing (attendees, projects, duration, time).
 
 ### Shared UI components
 
-- `Chip(label:color:)` — pill label for project/person/tag/duration metadata. Defined in `TaskRowView.swift`.
+- `Chip(label:color:)` — pill label for project/person/tag/duration metadata. Defined in `TaskRowView.swift`. **Canonical color palette:** projects=`.blue`, people=`.purple`, duration=`.gray`, tags=`.teal`, meeting time=`.blue`, follow-up date=`.orange`/`.red`. Use these colors consistently across all views.
 - `FlowLayout` — wrapping HStack-like layout. Defined in `MinutesDetailView.swift`.
 - `TaskRowView` — renders a task row. Used in DayView sidebar, TasksView, ProjectDetailView, PersonDetailView. Supports `inlineEditing: Bool`.
 - `DiaryTaskRow` — renders a root day-task (Task with dayRecord set) with inline editing, notes sub-area, collapse/expand, and subtask tree.
-- `TaskEditorSheet` — full task editing sheet. Accepts `task: Task?` (nil = create new) and `defaultDate: Date`.
+- `TaskEditorSheet` — full task editing sheet. Accepts `task: Task?` (nil = create new) and `defaultDate: Date`. New tasks default to unscheduled; notes field has a visible rounded border. When editing an existing task, a "Time Log" section shows all `TaskTimeEntry` items with an "Add Entry…" button opening `LogTimeSheet`.
 - `EntryRowView` — renders a meeting `DayEntry` with inline summary, minutes notes sub-area, and embedded New Tasks subtree. (Note/task DayEntry kinds are no longer rendered.)
+- `DayNoteRow` — renders a single `Note` in the day's Notes section. Shows project chip (`.blue`) and tag chips (`.teal`) above the inline markdown content, with a pencil `InlineRowEditButton` on the same header row. Supports drag-to-reorder.
+- `NoteEditorSheet` — sheet for editing `Note.project` and `Note.tags` (content is always edited inline). Accepts `note: Note`.
+- `ActivitySection` — top section in `DayPageContent` showing Focus blocks, their Activities, and any Unspecified time entries. "+" opens `FocusBlockEditorSheet`. Total logged time footer shown when non-empty.
+- `FocusBlockRow` — collapsible row for one `FocusBlock`. Shows source icon (folder for project-backed, checkmark for task-backed), duration chip, net unspecified time label, "+" to open `LogTimeSheet`, pencil to edit. Context menu includes delete with alert when activities exist.
+- `FocusBlockEditorSheet` — sheet for creating or editing a `FocusBlock`. Segmented picker: Task or Project source. Duration text field with `Duration.parse(_:)` validation.
+- `LogTimeSheet` — lightweight sheet for adding a `TaskTimeEntry`. Pre-fillable with `presetTask`, `presetFocusBlock`, `presetDate`. Task picker shown when no preset task.
 - `DayTaskSidebar` — collapsible sidebar with Scheduled and Inbox sections for a given day.
 - `DaySectionHeader` — reusable section header with title and optional "+" button.
 - `CompletedTaskRow` — read-only struck-through task row with completion time; tap opens `TaskEditorSheet`.
 - `DayDocumentRow` — one-line document row (icon + summary) in the day's Documents section.
 - `TasksView` — filterable macOS Table (or List on iOS) of all tasks. Filter controls in `TasksFilterBar`.
-- `MinutesDetailView(minutes:asSheet:)` — detail view for a `Minutes` record; pass `asSheet: true` when presenting as a sheet.
+- `MinutesDetailView(minutes:asSheet:)` — detail view for a `Minutes` record; pass `asSheet: true` when presenting as a sheet. Toolbar pencil button opens `MinutesEditorSheet` for full meta editing.
 - `DocumentDetailView(document:asSheet:)` — same pattern for `Document`.
-- `ProjectDetailView(project:asSheet:)` — same pattern for `Project`.
+- `ProjectDetailView(project:asSheet:)` — same pattern for `Project`. Includes a Notes section showing notes linked to the project.
 - `PersonDetailView(person:asSheet:)` — same pattern for `Person`.
 - `InstitutionDetailView(institution:asSheet:)` — same pattern for `Institution`.
 - All entity list pages (`ProjectsView`, `PeopleView`, `InstitutionsView`, `MinutesListView`, `DocumentsListView`) use the same `VStack { filterBar + Divider + Table }` pattern as `TasksView`: macOS `Table` with tap-to-open-sheet on the primary column, iOS `List`. Each has a filter bar (project or institution picker where relevant).
 
 ### macOS-specific: DeleteKeyMonitor
 
-`onKeyPress(.delete)` cannot intercept ⌫ inside a `TextField` because `NSTextField.deleteBackward:` fires inside `interpretKeyEvents:` before SwiftUI's handler runs. `DeleteKeyMonitor` uses `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` to intercept at the event level. It is started/stopped in `.onAppear`/`.onDisappear` of `DayPageContent`. The action closure checks whether the focused entry is empty before deleting — use a kind-aware check (`task.summary`, `minutes.summary`, `entry.text`) not a generic `entry.text` check.
+`onKeyPress(.delete)` cannot intercept ⌫ inside a `TextField` because `NSTextField.deleteBackward:` fires inside `interpretKeyEvents:` before SwiftUI's handler runs. `DeleteKeyMonitor` uses `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` to intercept at the event level. It is started/stopped in `.onAppear`/`.onDisappear` of `DayPageContent`. The action closure checks whether the focused entry is empty before deleting — use a kind-aware check (`task.summary`, `minutes.summary`, `note.content`, `entry.text`) not a generic `entry.text` check.
 
 ### macOS SwiftUI quirk: `.alert()` and layout padding
 
@@ -275,7 +317,6 @@ Use `#if os(macOS)` for macOS-specific sizing (`.frame(minWidth:minHeight:)` on 
 - **iCloud sync**: add `cloudKitContainerIdentifier` to `ModelConfiguration` when ready.
 - **iPhone UI**: Day screen as home with fast capture loop.
 - **Schema migration**: versioned SwiftData migration stages for future model changes.
-- **Note entity**: model exists, no UI yet.
 - **`DayRecord` focusTags**: model has `focusTags` field, not exposed in UI.
 - **Timesheet hierarchy validation**: child duration > parent duration warning.
 - **Week view drag-to-reorder**: drag-and-drop works per-day in WeekView but reorder logic is independent per day section.
@@ -307,6 +348,8 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Scheduled filter uses `scheduledAt` in `[dayStart, dayEnd)` and todo/started status | Day view sections | gbpDiaryTests/Domain/DayTaskFilteringTests.swift | `scheduled_requiresTodoOrStartedAndWithinDayBounds`, `scheduled_excludesTasksAlreadyInEntries` |
 | Inbox filter: status todo/started, parent == nil, project == nil, assignee == nil | Day view sidebar | gbpDiaryTests/Domain/DayTaskFilteringTests.swift | `inbox_includesUnassignedTopLevelActiveTasks`, `inbox_includesStartedButExcludesOtherStatuses` |
 | notesId derives a stable focus ID by bit-complementing all 16 UUID bytes; result is its own inverse and never collides with organic UUIDs | Inline task notes / meeting minutes | gbpDiaryTests/Models/DayEntryContentTests.swift | (tested indirectly via `notesAreaFocusId` usage) |
+| `entriesInRange` filters `TaskTimeEntry` objects whose `date` falls within the interval; `totalHours(entries:)` sums their `hoursNormalized` | Timesheet entry-based aggregation | gbpDiaryTests/Domain/TimesheetComputationTests.swift | `entriesInRange_filtersCorrectly`, `totalHours_entries_sumsHours` |
+| `FocusBlock.netHours` = max(0, block.duration.hoursNormalized − sum of activity durations) | Activity section | *(pure model computation — no SwiftData needed; add to TimesheetComputationTests or a new FocusBlockTests file)* | `focusBlock_netHours_subtractsActivities`, `focusBlock_netHours_clampsToZero` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 

@@ -17,23 +17,15 @@ struct TaskRowView: View {
     var isCollapsed: Bool = false
     var onToggleCollapse: (() -> Void)? = nil
     var onBeforeStatusChange: (() -> Void)? = nil
+    var onLogTime: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var showingFollowUpPicker = false
     @State private var followUpPickerDate = Date()
+    @State private var showingLogTime = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
-            if let onToggleCollapse {
-                Button(action: onToggleCollapse) {
-                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .frame(width: 16, height: 22)
-                .contentShape(Rectangle())
-            }
             statusButton
             contentRow
         }
@@ -46,6 +38,9 @@ struct TaskRowView: View {
                 initialDate: task.followUpAt ?? Calendar.current.date(byAdding: .day, value: 1, to: .now)!,
                 onSave: { date in task.setFollowUp(date: date) }
             )
+        }
+        .sheet(isPresented: $showingLogTime) {
+            LogTimeSheet(presetTask: task, presetDate: Date())
         }
     }
 
@@ -165,6 +160,14 @@ struct TaskRowView: View {
         }
         if task.status != .cancelled {
             Button("Cancel Task") { task.markCancelled() }
+        }
+        Divider()
+        Button("Log time today…") {
+            if let logTime = onLogTime {
+                logTime()
+            } else {
+                showingLogTime = true
+            }
         }
         Divider()
         Button("Delete", role: .destructive) {

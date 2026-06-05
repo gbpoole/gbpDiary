@@ -27,6 +27,7 @@ import SwiftData
     var documents: [Document]
     @Relationship(deleteRule: .nullify, inverse: \Task.project) var tasks: [Task]
     @Relationship(deleteRule: .nullify, inverse: \Note.project) var notes: [Note]
+    @Relationship(deleteRule: .nullify, inverse: \FocusBlock.project) var focusBlocks: [FocusBlock]
 
     init(name: String, id: UUID = UUID()) {
         self.id = id
@@ -40,6 +41,7 @@ import SwiftData
         self.documents = []
         self.tasks = []
         self.notes = []
+        self.focusBlocks = []
         let now = Date()
         self.createdAt = now
         self.updatedAt = now

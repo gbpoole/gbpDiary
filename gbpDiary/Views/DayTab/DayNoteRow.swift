@@ -15,7 +15,7 @@ struct DayNoteRow: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 if let project = note.project {
-                    Chip(label: project.name, color: .indigo)
+                    Chip(label: project.name, color: .blue)
                 }
                 ForEach(note.tags, id: \.self) { tag in
                     Chip(label: tag, color: .teal)

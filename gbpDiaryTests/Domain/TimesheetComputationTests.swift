@@ -192,4 +192,48 @@ struct TimesheetComputationTests {
         let result = TimesheetComputation.tasksInRange(allTasks: [beforeStart, inside], interval: interval)
         #expect(result.map(\.id) == [inside.id])
     }
+
+    // MARK: - Entry-based (TaskTimeEntry) tests
+
+    @Test func entriesInRange_filtersCorrectly() {
+        let now = FixedDates.reference
+        let interval = DateInterval(start: now.addingTimeInterval(-3600), end: now)
+
+        let inside = TaskTimeEntry(date: now.addingTimeInterval(-1800), duration: Duration(value: 1, unit: .h))
+        let before = TaskTimeEntry(date: now.addingTimeInterval(-7200), duration: Duration(value: 2, unit: .h))
+        let after = TaskTimeEntry(date: now.addingTimeInterval(60), duration: Duration(value: 0.5, unit: .h))
+
+        let result = TimesheetComputation.entriesInRange(allEntries: [inside, before, after], interval: interval)
+        #expect(result.map(\.id) == [inside.id])
+    }
+
+    @Test func totalHours_entries_sumsHours() {
+        let e1 = TaskTimeEntry(date: FixedDates.reference, duration: Duration(value: 1.5, unit: .h))
+        let e2 = TaskTimeEntry(date: FixedDates.reference, duration: Duration(value: 1, unit: .d))  // 7.6h
+
+        let total = TimesheetComputation.totalHours(entries: [e1, e2])
+        #expect(total == 9.1)
+    }
+
+    @Test func hours_for_project_entries_sumsMatchingEntries() {
+        let projectA = Project(name: "A")
+        let projectB = Project(name: "B")
+
+        let taskA = Task(summary: "taskA")
+        taskA.project = projectA
+
+        let taskB = Task(summary: "taskB")
+        taskB.project = projectB
+
+        let e1 = TaskTimeEntry(date: FixedDates.reference, duration: Duration(value: 2, unit: .h))
+        e1.task = taskA
+        let e2 = TaskTimeEntry(date: FixedDates.reference, duration: Duration(value: 1, unit: .h))
+        e2.task = taskA
+        let e3 = TaskTimeEntry(date: FixedDates.reference, duration: Duration(value: 3, unit: .h))
+        e3.task = taskB
+
+        let all = [e1, e2, e3]
+        #expect(TimesheetComputation.hours(for: projectA, entries: all) == 3.0)
+        #expect(TimesheetComputation.hours(for: projectB, entries: all) == 3.0)
+    }
 }

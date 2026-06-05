@@ -57,4 +57,23 @@ enum TimesheetComputation {
             .compactMap { $0.duration?.hoursNormalized }
             .reduce(0, +)
     }
+
+    // Entry-based computation (TaskTimeEntry).
+
+    static func entriesInRange(
+        allEntries: [TaskTimeEntry],
+        interval: DateInterval
+    ) -> [TaskTimeEntry] {
+        allEntries.filter { interval.contains($0.date) }
+    }
+
+    static func totalHours(entries: [TaskTimeEntry]) -> Double {
+        entries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
+    }
+
+    static func hours(for project: Project, entries: [TaskTimeEntry]) -> Double {
+        entries
+            .filter { $0.task?.project?.id == project.id }
+            .reduce(0.0) { $0 + $1.duration.hoursNormalized }
+    }
 }

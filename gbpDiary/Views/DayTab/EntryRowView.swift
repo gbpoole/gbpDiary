@@ -63,44 +63,62 @@ struct EntryRowView: View {
             set: { entry.inlineSummary = $0 }
         )
         return VStack(alignment: .leading, spacing: 0) {
-            MeetingEntryContent(
-                summaryBinding: summaryBinding,
-                minutes: entry.minutes,
-                isEntryFocused: isEntryFocused,
-                isCollapsed: isCollapsed,
-                onToggleCollapse: onToggleCollapse,
-                onEdit: { minutes in editingMinutes = minutes },
-                inlineText: { binding in
-                    InlineEditableSingleLineText(
-                        placeholder: "Meeting summary",
-                        text: binding,
-                        isFocused: isEntryFocused,
-                        focusBinding: focusedEntryId,
-                        focusId: entry.id,
-                        onIndent: nil,
-                        onOutdent: nil,
-                        onMoveToPrevious: onMoveToPrevious,
-                        onMoveToNext: nextForSummary
-                    )
+            HStack(alignment: .center, spacing: 6) {
+                Group {
+                    if let toggle = onToggleCollapse {
+                        Button(action: toggle) {
+                            Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .contentShape(Rectangle())
+                    } else {
+                        Color.clear
+                    }
                 }
-            )
-            .contextMenu { deleteButton }
-            .modifier(RowCardStyling(verticalPadding: 2))
-            .draggable(entry.id.uuidString)
-            .sheet(item: $editingMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
-            .dropDestination(for: String.self) { items, _ in
-                guard let str = items.first else { return false }
-                return onDropOntoEntry?(str) ?? false
-            } isTargeted: { isDropTargeted = $0 }
-            .overlay {
-                if isDropTargeted {
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color.accentColor, lineWidth: 2)
-                        .padding(.horizontal)
-                        .padding(.vertical, 2)
-                        .allowsHitTesting(false)
+                .frame(width: 16, height: 22)
+                MeetingEntryContent(
+                    summaryBinding: summaryBinding,
+                    minutes: entry.minutes,
+                    isEntryFocused: isEntryFocused,
+                    isCollapsed: isCollapsed,
+                    onToggleCollapse: nil,
+                    onEdit: { minutes in editingMinutes = minutes },
+                    inlineText: { binding in
+                        InlineEditableSingleLineText(
+                            placeholder: "Meeting summary",
+                            text: binding,
+                            isFocused: isEntryFocused,
+                            focusBinding: focusedEntryId,
+                            focusId: entry.id,
+                            onIndent: nil,
+                            onOutdent: nil,
+                            onMoveToPrevious: onMoveToPrevious,
+                            onMoveToNext: nextForSummary
+                        )
+                    }
+                )
+                .contextMenu { deleteButton }
+                .background(Color.secondary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .overlay {
+                    if isDropTargeted {
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color.accentColor, lineWidth: 2)
+                            .allowsHitTesting(false)
+                    }
                 }
+                .padding(.trailing)
+                .sheet(item: $editingMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
+                .dropDestination(for: String.self) { items, _ in
+                    guard let str = items.first else { return false }
+                    return onDropOntoEntry?(str) ?? false
+                } isTargeted: { isDropTargeted = $0 }
             }
+            .padding(.leading)
+            .padding(.vertical, 2)
+            .draggable(entry.id.uuidString)
             if showNotes, let minutes = entry.minutes {
                 EntryNotesSubArea(
                     text: Binding(

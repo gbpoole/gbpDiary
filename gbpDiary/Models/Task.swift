@@ -48,6 +48,12 @@ import SwiftData
     // Ordering within the diary (root tasks) or among siblings within a parent.
     var sortOrder: Int = 0
 
+    @Relationship(deleteRule: .cascade, inverse: \TaskTimeEntry.task)
+    var timeEntries: [TaskTimeEntry]
+
+    @Relationship(deleteRule: .nullify, inverse: \FocusBlock.task)
+    var focusBlocks: [FocusBlock]
+
     init(
         summary: String,
         id: UUID = UUID(),
@@ -60,12 +66,23 @@ import SwiftData
         self.tagsJSON = "[]"
         self.followedUpHistoryJSON = "[]"
         self.children = []
+        self.timeEntries = []
+        self.focusBlocks = []
         self.createdAt = createdAt
         self.updatedAt = createdAt
     }
 }
 
 extension Task {
+    var loggedHoursNormalized: Double {
+        timeEntries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
+    }
+
+    var loggedDuration: Duration? {
+        guard !timeEntries.isEmpty else { return nil }
+        return Duration(value: loggedHoursNormalized, unit: .h)
+    }
+
     var needsChevron: Bool {
         !children.isEmpty || (notes.map { !$0.isEmpty } ?? false)
     }

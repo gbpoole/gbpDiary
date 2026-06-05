@@ -4,6 +4,7 @@ import SwiftData
 struct TimesheetView: View {
     @Query(sort: \Task.completedAt, order: .reverse) private var allTasks: [Task]
     @Query(sort: \Project.name) private var projects: [Project]
+    @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allEntries: [TaskTimeEntry]
 
     @State private var selectedRange: TimesheetRange = .pastWeek
     @State private var customStart: Date = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
@@ -17,16 +18,31 @@ struct TimesheetView: View {
         )
     }
 
-    private var tasksInRange: [Task] {
-        TimesheetComputation.tasksInRange(allTasks: allTasks, interval: rangeInterval)
+    private var entriesInRange: [TaskTimeEntry] {
+        TimesheetComputation.entriesInRange(allEntries: allEntries, interval: rangeInterval)
     }
 
-    private var totalHours: Double {
-        TimesheetComputation.totalHours(tasks: tasksInRange)
+    // Legacy: tasks with no time entries that have a duration field set.
+    private var legacyTasksInRange: [Task] {
+        TimesheetComputation.tasksInRange(allTasks: allTasks, interval: rangeInterval)
+            .filter { $0.timeEntries.isEmpty }
     }
+
+    private var entryHours: Double {
+        TimesheetComputation.totalHours(entries: entriesInRange)
+    }
+
+    private var legacyHours: Double {
+        TimesheetComputation.totalHours(tasks: legacyTasksInRange)
+    }
+
+    private var totalHours: Double { entryHours + legacyHours }
+
+    private var totalTaskCount: Int { Set(entriesInRange.compactMap(\.task?.id)).union(Set(legacyTasksInRange.map(\.id))).count }
 
     private func hours(for project: Project) -> Double {
-        TimesheetComputation.hours(for: project, tasks: tasksInRange)
+        TimesheetComputation.hours(for: project, entries: entriesInRange)
+        + TimesheetComputation.hours(for: project, tasks: legacyTasksInRange)
     }
 
     var body: some View {
@@ -68,9 +84,14 @@ struct TimesheetView: View {
                 VStack(alignment: .leading) {
                     Text("\(String(format: "%.1f", totalHours)) h")
                         .font(.largeTitle.bold())
-                    Text("\(String(format: "%.1f", totalHours / 7.6)) d  ·  \(tasksInRange.count) tasks")
+                    Text("\(String(format: "%.1f", totalHours / 7.6)) d  ·  \(totalTaskCount) tasks")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                    if legacyHours > 0 {
+                        Text("Includes \(String(format: "%.1f", legacyHours)) h from tasks without time entries")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
                 Spacer()
             }
@@ -81,7 +102,7 @@ struct TimesheetView: View {
         GroupBox("By Project") {
             let used = projects.filter { hours(for: $0) > 0 }
             if used.isEmpty {
-                Text("No completed tasks with duration in this range.")
+                Text("No logged time in this range.")
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 4)
             } else {

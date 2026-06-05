@@ -52,43 +52,65 @@ struct DiaryTaskRow: View {
         }
     }
 
+    private var chevronGutter: some View {
+        Group {
+            if task.needsChevron, let toggle = onToggleCollapse {
+                Button(action: toggle) {
+                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+            } else {
+                Color.clear
+            }
+        }
+        .frame(width: 16, height: 22)
+    }
+
     private var rowCard: some View {
-        TaskEntryContent(
-            task: task,
-            focusedEntryId: focusedEntryId,
-            focusId: task.id,
-            onEdit: { t in editingTask = t },
-            onMoveToPrevious: onMoveToPrevious,
-            onMoveToNext: showNotes
-                ? { focusedEntryId.wrappedValue = task.notesAreaFocusId }
-                : showChildren
-                    ? { if let first = task.children.sorted(by: { $0.sortOrder < $1.sortOrder }).first {
-                            focusedEntryId.wrappedValue = first.id
-                        } else { onMoveToNext?() } }
-                    : onMoveToNext,
-            onIndent: onIndent,
-            onOutdent: onOutdent,
-            isCollapsed: isCollapsed,
-            onToggleCollapse: task.needsChevron ? onToggleCollapse : nil,
-            onBeforeStatusChange: onBeforeStatusChange
-        )
-        .modifier(RowCardStyling(verticalPadding: 2))
+        HStack(alignment: .center, spacing: 6) {
+            chevronGutter
+            TaskEntryContent(
+                task: task,
+                focusedEntryId: focusedEntryId,
+                focusId: task.id,
+                onEdit: { t in editingTask = t },
+                onMoveToPrevious: onMoveToPrevious,
+                onMoveToNext: showNotes
+                    ? { focusedEntryId.wrappedValue = task.notesAreaFocusId }
+                    : showChildren
+                        ? { if let first = task.children.sorted(by: { $0.sortOrder < $1.sortOrder }).first {
+                                focusedEntryId.wrappedValue = first.id
+                            } else { onMoveToNext?() } }
+                        : onMoveToNext,
+                onIndent: onIndent,
+                onOutdent: onOutdent,
+                isCollapsed: isCollapsed,
+                onToggleCollapse: nil,
+                onBeforeStatusChange: onBeforeStatusChange
+            )
+            .background(Color.secondary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay {
+                if isDropTargeted {
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.accentColor, lineWidth: 2)
+                        .allowsHitTesting(false)
+                }
+            }
+            .padding(.trailing)
+            .dropDestination(for: String.self) { items, _ in
+                guard let str = items.first else { return false }
+                return onDropOntoTask?(str) ?? false
+            } isTargeted: { isDropTargeted = $0 }
+        }
+        .padding(.leading)
+        .padding(.vertical, 2)
         .draggable(task.id.uuidString)
         .contextMenu {
             Button("Delete", role: .destructive) { modelContext.delete(task) }
-        }
-        .dropDestination(for: String.self) { items, _ in
-            guard let str = items.first else { return false }
-            return onDropOntoTask?(str) ?? false
-        } isTargeted: { isDropTargeted = $0 }
-        .overlay {
-            if isDropTargeted {
-                RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.accentColor, lineWidth: 2)
-                    .padding(.horizontal)
-                    .padding(.vertical, 2)
-                    .allowsHitTesting(false)
-            }
         }
     }
 

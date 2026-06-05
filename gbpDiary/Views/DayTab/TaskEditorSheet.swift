@@ -22,6 +22,8 @@ struct TaskEditorSheet: View {
     @State private var scheduledDate: Date?
     @State private var followUpDate: Date?
     @State private var tagsText = ""
+    @State private var showingLogTime = false
+    @State private var deletingEntry: TaskTimeEntry?
 
     private var isNew: Bool { task == nil }
 
@@ -112,6 +114,10 @@ struct TaskEditorSheet: View {
                 Section("Tags") {
                     TextField("Comma-separated tags", text: $tagsText)
                 }
+
+                if let t = task {
+                    timeLogSection(t)
+                }
             }
             .navigationTitle(isNew ? "New Task" : "Edit Task")
             .toolbar {
@@ -129,9 +135,63 @@ struct TaskEditorSheet: View {
                 populateFromTask()
             }
         }
+        .sheet(isPresented: $showingLogTime) {
+            if let t = task {
+                LogTimeSheet(presetTask: t, presetDate: defaultDate)
+            }
+        }
         #if os(macOS)
         .frame(minWidth: 480, minHeight: 520)
         #endif
+    }
+
+    @ViewBuilder
+    private func timeLogSection(_ t: Task) -> some View {
+        Section {
+            let entries = t.timeEntries.sorted { $0.date > $1.date }
+            if entries.isEmpty {
+                Text("No time logged yet.")
+                    .foregroundStyle(.secondary)
+                    .font(.callout)
+            } else {
+                ForEach(entries) { entry in
+                    HStack {
+                        Text(entry.date, format: .dateTime.month(.abbreviated).day())
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Chip(label: entry.duration.displayString, color: .gray)
+                        if let c = entry.comment {
+                            Text(c)
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            modelContext.delete(entry)
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
+                    }
+                    .contextMenu {
+                        Button("Delete", role: .destructive) {
+                            modelContext.delete(entry)
+                        }
+                    }
+                }
+            }
+            Button("Add Entry…") { showingLogTime = true }
+        } header: {
+            HStack {
+                Text("Time Log")
+                if let logged = t.loggedDuration {
+                    Spacer()
+                    Chip(label: logged.displayString, color: .gray)
+                }
+            }
+        }
     }
 
     private func populateFromTask() {

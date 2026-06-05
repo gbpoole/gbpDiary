@@ -94,6 +94,13 @@ struct DayPageContent: View {
     @State private var collapsedTaskIds: Set<UUID> = []
     @State private var collapsedMeetingIds: Set<UUID> = []
     @State private var notesDropTargetIndex: Int?
+
+    @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allTimeEntries: [TaskTimeEntry]
+
+    private var todayTimeEntries: [TaskTimeEntry] {
+        let cal = Calendar.current
+        return allTimeEntries.filter { cal.isDate($0.date, inSameDayAs: date) }
+    }
     #if os(macOS)
     @State private var deleteMonitor = DeleteKeyMonitor()
     @State private var focusClearMonitor = FocusClearMonitor()
@@ -149,6 +156,7 @@ struct DayPageContent: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
+                ActivitySection(dayRecord: dayRecord, date: date, todayEntries: todayTimeEntries)
                 notesSection
                 meetingsSection
                 newTasksSection
@@ -736,7 +744,8 @@ struct SectionHeader: View {
 #Preview {
     DiaryView()
         .modelContainer(for: [Task.self, DayRecord.self, DayEntry.self, Project.self,
-                               Person.self, Institution.self, Minutes.self],
+                               Person.self, Institution.self, Minutes.self,
+                               FocusBlock.self, TaskTimeEntry.self],
                         inMemory: true)
         .frame(width: 600, height: 700)
 }
