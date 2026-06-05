@@ -115,70 +115,78 @@ struct DiaryTaskRow: View {
     }
 
     private var notesArea: some View {
-        EntryNotesSubArea(
-            text: Binding(
-                get: { task.notes ?? "" },
-                set: { task.notes = $0.isEmpty ? nil : $0 }
-            ),
-            isFocused: isNotesFocused,
-            focusedEntryId: focusedEntryId,
-            focusId: task.notesAreaFocusId,
-            placeholder: "Add task notes…",
-            onMoveToPrevious: { focusedEntryId.wrappedValue = task.id },
-            onMoveToNext: showChildren
-                ? { if let first = task.children.sorted(by: { $0.sortOrder < $1.sortOrder }).first {
-                        focusedEntryId.wrappedValue = first.id
-                    } else { onMoveToNextFromNotes?() } }
-                : onMoveToNextFromNotes
-        )
-        .padding(.leading, Self.indentStep)
-        .padding(.horizontal)
+        HStack(alignment: .top, spacing: 6) {
+            Color.clear.frame(width: 16)
+            EntryNotesSubArea(
+                text: Binding(
+                    get: { task.notes ?? "" },
+                    set: { task.notes = $0.isEmpty ? nil : $0 }
+                ),
+                isFocused: isNotesFocused,
+                focusedEntryId: focusedEntryId,
+                focusId: task.notesAreaFocusId,
+                placeholder: "Add task notes…",
+                onMoveToPrevious: { focusedEntryId.wrappedValue = task.id },
+                onMoveToNext: showChildren
+                    ? { if let first = task.children.sorted(by: { $0.sortOrder < $1.sortOrder }).first {
+                            focusedEntryId.wrappedValue = first.id
+                        } else { onMoveToNextFromNotes?() } }
+                    : onMoveToNextFromNotes
+            )
+            .padding(.leading, Self.indentStep)
+        }
+        .padding(.leading)
+        .padding(.trailing)
         .padding(.bottom, 4)
     }
 
     private var subtreeArea: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Subtasks")
-                .font(.caption.bold())
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.top, 6)
-                .padding(.bottom, 2)
+        HStack(alignment: .top, spacing: 6) {
+            Color.clear.frame(width: 16)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Subtasks")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 6)
+                    .padding(.bottom, 2)
 
-            TaskSubtreeView(
-                tasks: task.children,
-                collapsedIds: $subtreeCollapsedIds,
-                focusedId: focusedEntryId,
-                defaultDate: task.dayRecord?.date ?? Date(),
-                onEdit: { editingTask = $0 },
-                onMakeSubtask: { dragged, target in
-                    dragged.parent = target
-                    dragged.dayRecord = nil
-                    dragged.originMinutes = nil
-                },
-                onPromote: { [task] child in
-                    child.parent = task
-                    child.dayRecord = nil
-                    child.originMinutes = nil
-                },
-                onDelete: { modelContext.delete($0) },
-                onDropExternal: onExternalDropIntoSubtree,
-                onDropExternalOntoTask: onExternalDropOntoSubtask,
-                onNavigatePrev: {
-                    let hasNotes = !(task.notes ?? "").isEmpty
-                    if hasNotes {
-                        focusedEntryId.wrappedValue = task.notesAreaFocusId
-                    } else {
-                        focusedEntryId.wrappedValue = task.id
-                    }
-                },
-                onNavigateNext: onMoveToNextFromNotes
-            )
-            .padding(.bottom, 4)
+                TaskSubtreeView(
+                    tasks: task.children,
+                    collapsedIds: $subtreeCollapsedIds,
+                    focusedId: focusedEntryId,
+                    defaultDate: task.dayRecord?.date ?? Date(),
+                    onEdit: { editingTask = $0 },
+                    onMakeSubtask: { dragged, target in
+                        dragged.parent = target
+                        dragged.dayRecord = nil
+                        dragged.originMinutes = nil
+                    },
+                    onPromote: { [task] child in
+                        child.parent = task
+                        child.dayRecord = nil
+                        child.originMinutes = nil
+                    },
+                    onDelete: { modelContext.delete($0) },
+                    onDropExternal: onExternalDropIntoSubtree,
+                    onDropExternalOntoTask: onExternalDropOntoSubtask,
+                    onNavigatePrev: {
+                        let hasNotes = !(task.notes ?? "").isEmpty
+                        if hasNotes {
+                            focusedEntryId.wrappedValue = task.notesAreaFocusId
+                        } else {
+                            focusedEntryId.wrappedValue = task.id
+                        }
+                    },
+                    onNavigateNext: onMoveToNextFromNotes
+                )
+                .padding(.bottom, 4)
+            }
+            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+            .padding(.leading, Self.indentStep)
         }
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-        .padding(.leading, Self.indentStep)
-        .padding(.horizontal)
+        .padding(.leading)
+        .padding(.trailing)
         .padding(.bottom, 4)
     }
 }

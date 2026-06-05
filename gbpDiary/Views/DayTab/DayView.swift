@@ -156,7 +156,7 @@ struct DayPageContent: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                ActivitySection(dayRecord: dayRecord, date: date, todayEntries: todayTimeEntries)
+                ActivitySection(dayRecord: dayRecord, date: date, todayEntries: todayTimeEntries, meetings: dayMeetings, findOrCreateDayRecord: findOrCreateDayRecord)
                 notesSection
                 meetingsSection
                 newTasksSection

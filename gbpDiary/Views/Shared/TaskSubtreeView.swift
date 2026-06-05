@@ -144,20 +144,23 @@ struct TaskSubtreeView: View {
         let hasNotes = !(task.notes ?? "").isEmpty
         let isNotesFocused = focusedId.wrappedValue == task.notesAreaFocusId
         if (hasNotes || isNotesFocused) && !collapsedIds.wrappedValue.contains(task.id) {
-            EntryNotesSubArea(
-                text: Binding(
-                    get: { task.notes ?? "" },
-                    set: { task.notes = $0.isEmpty ? nil : $0 }
-                ),
-                isFocused: isNotesFocused,
-                focusedEntryId: focusedId,
-                focusId: task.notesAreaFocusId,
-                placeholder: "Add notes…",
-                onMoveToPrevious: { focusedId.wrappedValue = task.id },
-                onMoveToNext: notesNextMove(for: task)
-            )
-            .padding(.leading, 8)
-            .padding(.trailing, 8)
+            // Mirror taskRow's HStack structure: spacer matches chevron width, same spacing.
+            HStack(alignment: .top, spacing: 4) {
+                Color.clear.frame(width: 14)
+                EntryNotesSubArea(
+                    text: Binding(
+                        get: { task.notes ?? "" },
+                        set: { task.notes = $0.isEmpty ? nil : $0 }
+                    ),
+                    isFocused: isNotesFocused,
+                    focusedEntryId: focusedId,
+                    focusId: task.notesAreaFocusId,
+                    placeholder: "Add notes…",
+                    onMoveToPrevious: { focusedId.wrappedValue = task.id },
+                    onMoveToNext: notesNextMove(for: task)
+                )
+            }
+            .padding(.horizontal, 8)
             .padding(.bottom, 4)
         }
     }
@@ -176,25 +179,28 @@ struct TaskSubtreeView: View {
     // AnyView at the recursive call site breaks Swift's opaque-return-type cycle.
     private func childrenSection(of parent: Task) -> AnyView {
         let children = parent.children.sorted { $0.sortOrder < $1.sortOrder }
-        let view = VStack(alignment: .leading, spacing: 0) {
-            Text("Subtasks")
-                .font(.caption.bold())
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 8)
-                .padding(.top, 6)
-                .padding(.bottom, 2)
-            ForEach(children) { child in
-                taskRow(child)
-                    .draggable(child.id.uuidString)
-                taskNotesArea(for: child)
-                if !collapsedIds.wrappedValue.contains(child.id), !child.children.isEmpty {
-                    childrenSection(of: child)
+        let view = HStack(alignment: .top, spacing: 4) {
+            Color.clear.frame(width: 14)
+            VStack(alignment: .leading, spacing: 0) {
+                Text("Subtasks")
+                    .font(.caption.bold())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 6)
+                    .padding(.bottom, 2)
+                ForEach(children) { child in
+                    taskRow(child)
+                        .draggable(child.id.uuidString)
+                    taskNotesArea(for: child)
+                    if !collapsedIds.wrappedValue.contains(child.id), !child.children.isEmpty {
+                        childrenSection(of: child)
+                    }
                 }
+                .padding(.bottom, 2)
             }
-            .padding(.bottom, 2)
+            .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
         }
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-        .padding(.leading, Self.indentStep)
+        .padding(.leading, 8)
         .padding(.trailing, 8)
         .padding(.bottom, 4)
         return AnyView(view)

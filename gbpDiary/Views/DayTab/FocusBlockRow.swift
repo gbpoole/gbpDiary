@@ -7,6 +7,7 @@ struct FocusBlockRow: View {
 
     var block: FocusBlock
     var date: Date
+    var meetings: [DayEntry] = []
 
     // @Query-driven so activity rows appear immediately without relationship-refresh lag.
     private var blockActivities: [TaskTimeEntry] {
@@ -22,7 +23,6 @@ struct FocusBlockRow: View {
     @State private var isCollapsed = false
     @State private var showingLogTime = false
     @State private var showingEditor = false
-    @State private var showingDeleteAlert = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -54,10 +54,6 @@ struct FocusBlockRow: View {
             .padding(.trailing)
             .contextMenu {
                 Button("Edit Focus Block…") { showingEditor = true }
-                Divider()
-                Button("Delete Focus Block…", role: .destructive) {
-                    showingDeleteAlert = true
-                }
             }
             .sheet(isPresented: $showingEditor) {
                 if let record = block.dayRecord {
@@ -66,18 +62,6 @@ struct FocusBlockRow: View {
             }
             .sheet(isPresented: $showingLogTime) {
                 LogTimeSheet(presetFocusBlock: block, presetDate: date)
-            }
-            .alert("Delete Focus Block?", isPresented: $showingDeleteAlert) {
-                Button("Cancel", role: .cancel) {}
-                Button("Delete", role: .destructive) {
-                    modelContext.delete(block)
-                }
-            } message: {
-                if !blockActivities.isEmpty {
-                    Text("This will remove the focus block and unlink its \(blockActivities.count) activit\(blockActivities.count == 1 ? "y" : "ies").")
-                } else {
-                    Text("This will permanently remove the focus block.")
-                }
             }
         }
         .padding(.leading)
@@ -113,7 +97,7 @@ struct FocusBlockRow: View {
 
     private var durationChips: some View {
         HStack(spacing: 4) {
-            Chip(label: block.duration.displayString, color: .gray)
+            Chip(label: block.slot.displayName, color: .gray)
             if netHours > 0 && !blockActivities.isEmpty {
                 let netDur = Duration(value: netHours, unit: .h)
                 Text("\(netDur.displayString) unspecified")
@@ -140,16 +124,59 @@ struct FocusBlockRow: View {
     }
 
     @ViewBuilder
+    private var meetingRows: some View {
+        ForEach(meetings, id: \.id) { entry in
+            if let minutes = entry.minutes {
+                MeetingActivityRow(minutes: minutes)
+            }
+        }
+    }
+
+    @ViewBuilder
     private var activityRows: some View {
+        meetingRows
         ForEach(blockActivities) { entry in
             ActivityEntryRow(entry: entry)
         }
     }
 }
 
+private struct MeetingActivityRow: View {
+    var minutes: Minutes
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 6) {
+            Color.clear.frame(width: 16, height: 1)
+            HStack(alignment: .center, spacing: 6) {
+                Image(systemName: "calendar")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.blue)
+                    .frame(width: 18)
+                    .padding(.leading, 2)
+                Text(minutes.summary ?? "Meeting")
+                    .font(.subheadline)
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 0)
+                Chip(label: minutes.meetingAt.formatted(date: .omitted, time: .shortened), color: .blue)
+                if let d = minutes.duration {
+                    Chip(label: d.displayString, color: .gray)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.03))
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .padding(.trailing)
+        }
+        .padding(.leading)
+        .padding(.vertical, 1)
+    }
+}
+
 private struct ActivityEntryRow: View {
-    @Environment(\.modelContext) private var modelContext
     var entry: TaskTimeEntry
+
+    @State private var showingEdit = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
@@ -172,26 +199,25 @@ private struct ActivityEntryRow: View {
                         .foregroundStyle(.secondary)
                 }
 
-                Spacer(minLength: 0)
-
-                Chip(label: entry.duration.displayString, color: .gray)
-
                 if let comment = entry.comment, !comment.isEmpty {
                     Text(comment)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
+
+                Spacer(minLength: 0)
+
+                Chip(label: entry.duration.displayString, color: .gray)
+                InlineRowEditButton { showingEdit = true }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(Color.secondary.opacity(0.03))
             .clipShape(RoundedRectangle(cornerRadius: 5))
             .padding(.trailing)
-            .contextMenu {
-                Button("Delete", role: .destructive) {
-                    modelContext.delete(entry)
-                }
+            .sheet(isPresented: $showingEdit) {
+                LogTimeSheet(existingEntry: entry)
             }
         }
         .padding(.leading)

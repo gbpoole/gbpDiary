@@ -120,64 +120,72 @@ struct EntryRowView: View {
             .padding(.vertical, 2)
             .draggable(entry.id.uuidString)
             if showNotes, let minutes = entry.minutes {
-                EntryNotesSubArea(
-                    text: Binding(
-                        get: { minutes.minutesContent ?? "" },
-                        set: { minutes.minutesContent = $0.isEmpty ? nil : $0 }
-                    ),
-                    isFocused: isNotesFocused,
-                    focusedEntryId: focusedEntryId,
-                    focusId: entry.notesAreaFocusId,
-                    placeholder: "Add meeting minutes…",
-                    onMoveToPrevious: { focusedEntryId.wrappedValue = entry.id },
-                    onMoveToNext: hasTasks
-                        ? { if let first = rootTasks.first { focusedEntryId.wrappedValue = first.id } else { onMoveToNextFromNotes?() } }
-                        : onMoveToNextFromNotes
-                )
-                .padding(.leading, Self.indentStep)
-                .padding(.horizontal)
+                HStack(alignment: .top, spacing: 6) {
+                    Color.clear.frame(width: 16)
+                    EntryNotesSubArea(
+                        text: Binding(
+                            get: { minutes.minutesContent ?? "" },
+                            set: { minutes.minutesContent = $0.isEmpty ? nil : $0 }
+                        ),
+                        isFocused: isNotesFocused,
+                        focusedEntryId: focusedEntryId,
+                        focusId: entry.notesAreaFocusId,
+                        placeholder: "Add meeting minutes…",
+                        onMoveToPrevious: { focusedEntryId.wrappedValue = entry.id },
+                        onMoveToNext: hasTasks
+                            ? { if let first = rootTasks.first { focusedEntryId.wrappedValue = first.id } else { onMoveToNextFromNotes?() } }
+                            : onMoveToNextFromNotes
+                    )
+                    .padding(.leading, Self.indentStep)
+                }
+                .padding(.leading)
+                .padding(.trailing)
                 .padding(.bottom, 4)
             }
             if !isCollapsed, let minutes = entry.minutes,
                !minutes.newTasks.filter({ $0.parent == nil }).isEmpty {
-                VStack(alignment: .leading, spacing: 0) {
-                    Text("New Tasks")
-                        .font(.caption.bold())
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.top, 6)
-                        .padding(.bottom, 2)
-                    TaskSubtreeView(
-                        tasks: minutes.newTasks.filter { $0.parent == nil },
-                        collapsedIds: $meetingTaskCollapsedIds,
-                        focusedId: focusedEntryId,
-                        defaultDate: minutes.meetingAt,
-                        onEdit: { _ in },
-                        onReorder: { task, i in task.sortOrder = i },
-                        onMakeSubtask: { dragged, target in dragged.parent = target },
-                        onPromote: { task in task.parent = nil },
-                        onRemove: onRemoveFromMeeting,
-                        onDelete: { task in
-                            task.originMinutes = nil
-                            task.parent = nil
-                            modelContext.delete(task)
-                        },
-                        onDropExternal: onDropDiaryEntry,
-                        onDropExternalOntoTask: onDropExternalOntoMeetingTask,
-                        onNavigatePrev: {
-                            if showNotes {
-                                focusedEntryId.wrappedValue = entry.notesAreaFocusId
-                            } else {
-                                focusedEntryId.wrappedValue = entry.id
-                            }
-                        },
-                        onNavigateNext: onMoveToNextFromNotes
-                    )
-                    .padding(.bottom, 4)
+                HStack(alignment: .top, spacing: 6) {
+                    Color.clear.frame(width: 16)
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text("New Tasks")
+                            .font(.caption.bold())
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 6)
+                            .padding(.bottom, 2)
+                        TaskSubtreeView(
+                            tasks: minutes.newTasks.filter { $0.parent == nil },
+                            collapsedIds: $meetingTaskCollapsedIds,
+                            focusedId: focusedEntryId,
+                            defaultDate: minutes.meetingAt,
+                            onEdit: { _ in },
+                            onReorder: { task, i in task.sortOrder = i },
+                            onMakeSubtask: { dragged, target in dragged.parent = target },
+                            onPromote: { task in task.parent = nil },
+                            onRemove: onRemoveFromMeeting,
+                            onDelete: { task in
+                                task.originMinutes = nil
+                                task.parent = nil
+                                modelContext.delete(task)
+                            },
+                            onDropExternal: onDropDiaryEntry,
+                            onDropExternalOntoTask: onDropExternalOntoMeetingTask,
+                            onNavigatePrev: {
+                                if showNotes {
+                                    focusedEntryId.wrappedValue = entry.notesAreaFocusId
+                                } else {
+                                    focusedEntryId.wrappedValue = entry.id
+                                }
+                            },
+                            onNavigateNext: onMoveToNextFromNotes
+                        )
+                        .padding(.bottom, 4)
+                    }
+                    .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+                    .padding(.leading, Self.indentStep)
                 }
-                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
-                .padding(.leading, Self.indentStep)
-                .padding(.horizontal)
+                .padding(.leading)
+                .padding(.trailing)
                 .padding(.bottom, 4)
             }
         }

@@ -15,12 +15,31 @@ struct FocusBlockEditorSheet: View {
 
     @Query(sort: \Task.summary) private var allTasks: [Task]
     @Query(sort: \Project.name) private var allProjects: [Project]
+    @Query(sort: \FocusBlock.sortOrder) private var allFocusBlocks: [FocusBlock]
+
+    // Other blocks for this day (the current block, if editing, is excluded so its slot remains available).
+    private var siblingsForDay: [FocusBlock] {
+        allFocusBlocks.filter { $0.dayRecord?.id == dayRecord.id && $0.id != existingBlock?.id }
+    }
+
+    // Slots that can still be chosen: removes taken slots and enforces all-day ↔ half-day exclusivity.
+    private var availableSlots: [DaySlot] {
+        let taken = Set(siblingsForDay.map(\.slot))
+        let hasAllDay  = taken.contains(.allDay)
+        let hasHalfDay = taken.contains(.morning) || taken.contains(.afternoon)
+        return DaySlot.allCases.filter { slot in
+            guard !taken.contains(slot) else { return false }
+            if slot == .allDay && hasHalfDay { return false }
+            if (slot == .morning || slot == .afternoon) && hasAllDay { return false }
+            return true
+        }
+    }
 
     @State private var source: FocusSource = .task
+    @State private var selectedSlot: DaySlot = .allDay
     @State private var selectedTask: Task?
     @State private var selectedProject: Project?
-    @State private var durationText = ""
-    @State private var durationError = false
+    @State private var showingDeleteConfirm = false
 
     var body: some View {
         NavigationStack {
@@ -51,22 +70,25 @@ struct FocusBlockEditorSheet: View {
                     }
                 }
 
-                Section("Duration") {
-                    HStack {
-                        TextField("e.g. 1.5h, 2d", text: $durationText)
-                            .onChange(of: durationText) { _, _ in durationError = false }
-                        if durationError {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .foregroundStyle(.red)
+                Section("Schedule") {
+                    Picker("Time Slot", selection: $selectedSlot) {
+                        ForEach(availableSlots, id: \.self) { s in
+                            Text(s.displayName).tag(s)
                         }
                     }
-                    Text("Units: h (hours), d (days ≈7.6h)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
                 }
+
             }
             .navigationTitle(existingBlock == nil ? "Add Focus Block" : "Edit Focus Block")
             .toolbar {
+                if existingBlock != nil {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Delete") { showingDeleteConfirm = true }
+                            .foregroundStyle(.red)
+                    }
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
@@ -74,6 +96,15 @@ struct FocusBlockEditorSheet: View {
                     Button(existingBlock == nil ? "Add" : "Save") { save() }
                         .disabled(!canSave)
                 }
+            }
+            .alert("Delete Focus Block?", isPresented: $showingDeleteConfirm) {
+                Button("Cancel", role: .cancel) {}
+                Button("Delete", role: .destructive) {
+                    if let block = existingBlock { modelContext.delete(block) }
+                    dismiss()
+                }
+            } message: {
+                Text("This will permanently delete this focus block and unlink any logged activities.")
             }
         }
         .onAppear { loadExisting() }
@@ -87,13 +118,15 @@ struct FocusBlockEditorSheet: View {
     }
 
     private var canSave: Bool {
-        let hasSource = source == .task ? selectedTask != nil : selectedProject != nil
-        return hasSource && Duration.parse(durationText) != nil
+        source == .task ? selectedTask != nil : selectedProject != nil
     }
 
     private func loadExisting() {
-        guard let block = existingBlock else { return }
-        durationText = block.duration.displayString
+        guard let block = existingBlock else {
+            if let first = availableSlots.first { selectedSlot = first }
+            return
+        }
+        selectedSlot = block.slot
         if let t = block.task {
             source = .task
             selectedTask = t
@@ -104,10 +137,7 @@ struct FocusBlockEditorSheet: View {
     }
 
     private func save() {
-        guard let duration = Duration.parse(durationText) else {
-            durationError = true
-            return
-        }
+        let duration = selectedSlot.defaultDuration
 
         let block: FocusBlock
         if let existing = existingBlock {
@@ -120,6 +150,7 @@ struct FocusBlockEditorSheet: View {
         }
 
         block.duration = duration
+        block.slot = selectedSlot
         if source == .task {
             block.task = selectedTask
             block.project = nil

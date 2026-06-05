@@ -61,6 +61,28 @@ enum DayEntryKind: String, Codable {
     case meeting
 }
 
+enum DaySlot: String, Codable, CaseIterable {
+    case allDay
+    case morning
+    case afternoon
+
+    var displayName: String {
+        switch self {
+        case .allDay:    "All Day"
+        case .morning:   "Morning"
+        case .afternoon: "Afternoon"
+        }
+    }
+
+    var defaultDuration: Duration {
+        switch self {
+        case .allDay:    Duration(value: 1.0, unit: .d)
+        case .morning:   Duration(value: 0.5, unit: .d)
+        case .afternoon: Duration(value: 0.5, unit: .d)
+        }
+    }
+}
+
 // MARK: - JSON helpers for array attributes
 // SwiftData/CoreData cannot materialize Array<String> or Array<Date> at runtime.
 // Store them as JSON strings and expose via computed properties instead.

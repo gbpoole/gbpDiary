@@ -90,6 +90,7 @@ All use `@Query(sort: \Task.createdAt) var allTasks` filtered in-memory.
 Value types (Codable structs, not `@Model`) in `Models/ValueTypes.swift`:
 - `TaskStatus`: `todo | started | completed | cancelled | followUpPending`
 - `DayEntryKind`: `note | task | meeting`
+- `DaySlot`: `allDay | morning | afternoon` — time-of-day slot for a `FocusBlock`; morning = before noon, afternoon = noon and later
 - `DurationUnit`: `h | d | w` (hours / days≈7.6h / weeks≈38h)
 - `Duration`: `value + unit + hoursNormalized`. Use `Duration.parse("1.5h")` for user input.
 - `SourceContext`: import provenance metadata (not used by UI, preserved for import pipeline)
@@ -123,6 +124,7 @@ TaskTimeEntry                (a single logged time entry; used in Activity secti
 
 FocusBlock                   (a primary work block for a day; shown in Activity section)
   duration  : Duration       (explicitly entered total time)
+  slot      : DaySlot        (allDay | morning | afternoon; default allDay)
   sortOrder : Int
   task     → Task?           (backed by a task; nil if project-backed)
   project  → Project?        (backed by a project; nil if task-backed)
@@ -350,6 +352,7 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | notesId derives a stable focus ID by bit-complementing all 16 UUID bytes; result is its own inverse and never collides with organic UUIDs | Inline task notes / meeting minutes | gbpDiaryTests/Models/DayEntryContentTests.swift | (tested indirectly via `notesAreaFocusId` usage) |
 | `entriesInRange` filters `TaskTimeEntry` objects whose `date` falls within the interval; `totalHours(entries:)` sums their `hoursNormalized` | Timesheet entry-based aggregation | gbpDiaryTests/Domain/TimesheetComputationTests.swift | `entriesInRange_filtersCorrectly`, `totalHours_entries_sumsHours` |
 | `FocusBlock.netHours` = max(0, block.duration.hoursNormalized − sum of activity durations) | Activity section | *(pure model computation — no SwiftData needed; add to TimesheetComputationTests or a new FocusBlockTests file)* | `focusBlock_netHours_subtractsActivities`, `focusBlock_netHours_clampsToZero` |
+| Meeting slot classification: morning = start < noon; afternoon = end ≥ noon; meeting with no duration treated as point in time; spans-noon meeting appears in both slots | Activity section / `MeetingSlotClassifier` | `gbpDiaryTests/Domain/MeetingSlotTests.swift` | `slots_morningOnly_noDuration`, `slots_afternoonOnly_noduration`, `slots_spansNoon_morningStartLongDuration`, `slots_morningOnly_shortDurationEndsBeforeNoon`, `slots_exactlyAtNoon_isAfternoon`, `slots_endsExactlyAtNoon_spansNoon` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 
