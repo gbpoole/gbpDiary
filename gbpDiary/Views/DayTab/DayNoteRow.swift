@@ -23,19 +23,20 @@ struct DayNoteRow: View {
                 onMoveToNext: onMoveToNext
             )
 
-            if note.project != nil || !note.tags.isEmpty {
-                HStack(spacing: 4) {
-                    if let project = note.project {
-                        Chip(label: project.name, color: .indigo)
-                    }
-                    ForEach(note.tags, id: \.self) { tag in
-                        Chip(label: tag, color: .teal)
-                    }
-                    Spacer(minLength: 0)
+            HStack(spacing: 4) {
+                if let project = note.project {
+                    Chip(label: project.name, color: .indigo)
                 }
-                .padding(.horizontal, 12)
-                .padding(.bottom, 4)
+                ForEach(note.tags, id: \.self) { tag in
+                    Chip(label: tag, color: .teal)
+                }
+                Spacer(minLength: 0)
+                if let onEdit {
+                    InlineRowEditButton(action: onEdit)
+                }
             }
+            .padding(.horizontal, 12)
+            .padding(.bottom, 4)
         }
         .padding(.horizontal)
         .contextMenu {
