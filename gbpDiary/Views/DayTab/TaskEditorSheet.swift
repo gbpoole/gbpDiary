@@ -42,6 +42,9 @@ struct TaskEditorSheet: View {
                             .scrollContentBackground(.hidden)
                             .frame(minHeight: 72)
                     }
+                    .padding(4)
+                    .background(.background, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25), lineWidth: 1))
                 }
 
                 Section("Status") {
@@ -124,8 +127,6 @@ struct TaskEditorSheet: View {
         .onAppear {
             if task != nil {
                 populateFromTask()
-            } else {
-                scheduledDate = defaultDate
             }
         }
         #if os(macOS)

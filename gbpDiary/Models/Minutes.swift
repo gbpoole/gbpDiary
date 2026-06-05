@@ -6,6 +6,7 @@ import SwiftData
     var meetingAt: Date
     var summary: String?
     var minutesContent: String?
+    var duration: Duration?
     var createdAt: Date
     var updatedAt: Date
 

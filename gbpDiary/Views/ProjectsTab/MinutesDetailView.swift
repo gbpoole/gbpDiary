@@ -6,6 +6,7 @@ struct MinutesDetailView: View {
     var asSheet: Bool = false
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @State private var showingEdit = false
 
     var body: some View {
         if asSheet {
@@ -37,6 +38,12 @@ struct MinutesDetailView: View {
                     Button("Done") { dismiss() }
                 }
             }
+            ToolbarItem {
+                Button { showingEdit = true } label: { Image(systemName: "pencil") }
+            }
+        }
+        .sheet(isPresented: $showingEdit) {
+            MinutesEditorSheet(minutes: minutes, project: nil)
         }
     }
 
@@ -52,6 +59,10 @@ struct MinutesDetailView: View {
                 set: { minutes.summary = $0.isEmpty ? nil : $0 }
             ))
             .textFieldStyle(.plain)
+            if let dur = minutes.duration {
+                Label(dur.displayString, systemImage: "clock")
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -110,8 +121,10 @@ struct MinutesEditorSheet: View {
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Query(sort: \Person.name) private var allPeople: [Person]
 
-    @State private var meetingAt: Date = Date()
+    @State private var meetingAt: Date = Self.nearestQuarterHour(from: Date())
     @State private var summary = ""
+    @State private var durationText = ""
+    @State private var durationError = false
     @State private var selectedProjects: Set<Project.ID> = []
     @State private var selectedAttendees: Set<Person.ID> = []
 
@@ -120,6 +133,20 @@ struct MinutesEditorSheet: View {
             Form {
                 DatePicker("Meeting date & time", selection: $meetingAt)
                 TextField("One-line summary", text: $summary)
+
+                Section("Duration") {
+                    HStack {
+                        TextField("e.g. 1.5h, 2d", text: $durationText)
+                            .onChange(of: durationText) { _, _ in durationError = false }
+                        if durationError {
+                            Image(systemName: "exclamationmark.circle.fill")
+                                .foregroundStyle(.red)
+                        }
+                    }
+                    Text("Units: h (hours), d (days ≈7.6h)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
 
                 Section("Projects") {
                     ForEach(allProjects) { p in
@@ -151,6 +178,7 @@ struct MinutesEditorSheet: View {
             if let m = minutes {
                 meetingAt = m.meetingAt
                 summary = m.summary ?? ""
+                durationText = m.duration?.displayString ?? ""
                 selectedProjects = Set(m.projects.map(\.id))
                 selectedAttendees = Set(m.attendees.map(\.id))
             } else if let p = project {
@@ -163,6 +191,16 @@ struct MinutesEditorSheet: View {
     }
 
     private func save() {
+        let trimmedDur = durationText.trimmingCharacters(in: .whitespaces)
+        var parsedDuration: Duration? = nil
+        if !trimmedDur.isEmpty {
+            guard let d = Duration.parse(trimmedDur) else {
+                durationError = true
+                return
+            }
+            parsedDuration = d
+        }
+
         let m = minutes ?? {
             let new = Minutes(meetingAt: meetingAt)
             modelContext.insert(new)
@@ -170,10 +208,18 @@ struct MinutesEditorSheet: View {
         }()
         m.meetingAt = meetingAt
         m.summary = summary.isEmpty ? nil : summary
+        m.duration = parsedDuration
         m.projects = allProjects.filter { selectedProjects.contains($0.id) }
         m.attendees = allPeople.filter { selectedAttendees.contains($0.id) }
         m.updatedAt = Date()
         dismiss()
+    }
+
+    private static func nearestQuarterHour(from date: Date) -> Date {
+        let quarterHour = 15.0 * 60.0
+        let interval = date.timeIntervalSinceReferenceDate
+        let rounded = (interval / quarterHour).rounded() * quarterHour
+        return Date(timeIntervalSinceReferenceDate: rounded)
     }
 }
 

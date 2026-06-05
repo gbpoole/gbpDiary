@@ -404,9 +404,21 @@ struct DayPageContent: View {
         (record.tasks.filter { $0.parent == nil }.map(\.sortOrder).max() ?? -1) + 1
     }
 
+    private func nearestQuarterHour(on day: Date) -> Date {
+        let quarterHour = 15.0 * 60.0
+        let now = Date()
+        let interval = now.timeIntervalSinceReferenceDate
+        let rounded = (interval / quarterHour).rounded() * quarterHour
+        let roundedNow = Date(timeIntervalSinceReferenceDate: rounded)
+        let cal = Calendar.current
+        let hour = cal.component(.hour, from: roundedNow)
+        let minute = cal.component(.minute, from: roundedNow)
+        return cal.date(bySettingHour: hour, minute: minute, second: 0, of: day) ?? day
+    }
+
     private func addMeeting() {
         let record = findOrCreateDayRecord()
-        let meeting = Minutes(meetingAt: date)
+        let meeting = Minutes(meetingAt: nearestQuarterHour(on: date))
         modelContext.insert(meeting)
         let entry = DayEntry(kind: .meeting, text: "",
                              sortOrder: (record.entries.map(\.sortOrder).max() ?? -1) + 1)
