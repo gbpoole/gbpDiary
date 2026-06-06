@@ -263,15 +263,14 @@ struct DayPageContent: View {
 
     @ViewBuilder
     private var documentsSection: some View {
-        if !dayDocuments.isEmpty {
-            DaySectionHeader(title: "Documents", onAdd: addDocument)
-            ForEach(dayDocuments) { doc in
-                DayDocumentRow(document: doc)
-                    .onTapGesture { editingDocument = doc }
-                    .contextMenu {
-                        Button("Delete", role: .destructive) { modelContext.delete(doc) }
-                    }
-            }
+        DaySectionHeader(title: "Documents", onAdd: addDocument)
+        ForEach(dayDocuments) { doc in
+            DayDocumentRow(document: doc, onEdit: { editingDocument = doc })
+                .onTapGesture { editingDocument = doc }
+                .contextMenu {
+                    Button("Edit…") { editingDocument = doc }
+                    Button("Delete", role: .destructive) { modelContext.delete(doc) }
+                }
         }
     }
 

@@ -85,6 +85,45 @@ struct TaskStateTransitionTests {
         #expect(task.cancelledAt == nil)
     }
 
+    @Test func markCancelled_clearsFollowUpAt() {
+        let task = Task(summary: "a", status: .followUpPending)
+        task.followUpAt = FixedDates.dayStart(offsetDays: 1)
+
+        task.markCancelled()
+
+        #expect(task.followUpAt == nil)
+    }
+
+    @Test func unmarkCancelled_clearsFollowUpAt() {
+        let task = Task(summary: "a", status: .cancelled)
+        task.cancelledAt = FixedDates.reference
+        task.followUpAt = FixedDates.dayStart(offsetDays: 1)
+
+        task.unmarkCancelled()
+
+        #expect(task.followUpAt == nil)
+    }
+
+    @Test func clearFollowUp_revertsToCompleted() {
+        let task = Task(summary: "a", status: .followUpPending)
+        task.followUpAt = FixedDates.dayStart(offsetDays: 1)
+
+        task.clearFollowUp()
+
+        #expect(task.followUpAt == nil)
+        #expect(task.status == .completed)
+    }
+
+    @Test func clearFollowUp_noOpWhenNotFollowUpPending() {
+        let task = Task(summary: "a", status: .completed)
+        task.completedAt = FixedDates.reference
+
+        task.clearFollowUp()
+
+        #expect(task.status == .completed)
+        #expect(task.completedAt == FixedDates.reference)
+    }
+
     @Test func setFollowUp_setsPendingStateAndDate() {
         let task = Task(summary: "a", status: .completed)
         let due = FixedDates.dayStart(offsetDays: 1)

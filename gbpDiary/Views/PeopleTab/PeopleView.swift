@@ -75,6 +75,12 @@ struct PeopleView: View {
                     .lineLimit(1)
             }
             .width(140)
+            TableColumn("Tags") { person in
+                Text(person.tags.joined(separator: ", "))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .width(160)
             TableColumn("Projects") { person in
                 Text("\(person.devProjects.count + person.sciProjects.count)")
                     .foregroundStyle(.secondary)
@@ -107,6 +113,7 @@ struct PersonEditorSheet: View {
 
     @State private var name = ""
     @State private var email = ""
+    @State private var tagsText = ""
     @State private var selectedInstitution: Institution?
 
     var body: some View {
@@ -120,6 +127,9 @@ struct PersonEditorSheet: View {
                     ForEach(institutions) { inst in
                         Text(inst.name).tag(Optional(inst))
                     }
+                }
+                Section("Tags") {
+                    TextField("Comma-separated tags", text: $tagsText)
                 }
             }
             .navigationTitle(person == nil ? "New Person" : "Edit Person")
@@ -135,26 +145,32 @@ struct PersonEditorSheet: View {
             if let p = person {
                 name = p.name
                 email = p.email ?? ""
+                tagsText = p.tags.joined(separator: ", ")
                 selectedInstitution = p.institution
             }
         }
         #if os(macOS)
-        .frame(minWidth: 380, minHeight: 260)
+        .frame(minWidth: 380, minHeight: 280)
         #endif
     }
 
     private func save() {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
+        let parsedTags = tagsText.split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
         if let p = person {
             p.name = trimmed
             p.email = email.isEmpty ? nil : email
             p.institution = selectedInstitution
+            p.tags = parsedTags
             p.updatedAt = Date()
         } else {
             let p = Person(name: trimmed)
             p.email = email.isEmpty ? nil : email
             p.institution = selectedInstitution
+            p.tags = parsedTags
             modelContext.insert(p)
         }
         dismiss()

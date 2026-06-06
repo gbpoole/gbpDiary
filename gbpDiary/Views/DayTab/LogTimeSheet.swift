@@ -61,7 +61,7 @@ struct LogTimeSheet: View {
             .navigationTitle(isEditing ? "Edit Activity" : "Log Time")
             .toolbar {
                 if isEditing {
-                    ToolbarItem(placement: .cancellationAction) {
+                    ToolbarItem(placement: .destructiveAction) {
                         Button("Delete") { showingDeleteConfirm = true }
                             .foregroundStyle(.red)
                     }

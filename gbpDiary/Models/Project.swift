@@ -5,20 +5,27 @@ import SwiftData
     @Attribute(.unique) var id: UUID
     var name: String
     var projectDescription: String?
-    var projectType: String?
+    @Attribute(originalName: "projectType") var stream: String?
+    var tagsJSON: String
+    var tags: [String] {
+        get { jsonDecode([String].self, tagsJSON) ?? [] }
+        set { tagsJSON = jsonEncode(newValue) }
+    }
     var isCompleted: Bool
     var createdAt: Date
     var updatedAt: Date
 
     var parent: Project?
-    @Relationship(deleteRule: .nullify)
+    @Relationship(deleteRule: .nullify, inverse: \Project.parent)
     var subprojects: [Project]
 
     @Relationship(inverse: \Person.devProjects)
     var devTeam: [Person]
+    @Relationship(deleteRule: .nullify) var devLead: Person?
 
     @Relationship(inverse: \Person.sciProjects)
     var sciTeam: [Person]
+    @Relationship(deleteRule: .nullify) var sciLead: Person?
 
     @Relationship(inverse: \Institution.projects)
     var institutions: [Institution]
@@ -32,6 +39,8 @@ import SwiftData
     init(name: String, id: UUID = UUID()) {
         self.id = id
         self.name = name
+        self.stream = nil
+        self.tagsJSON = "[]"
         self.isCompleted = false
         self.subprojects = []
         self.devTeam = []

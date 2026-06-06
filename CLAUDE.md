@@ -40,12 +40,15 @@ ContentView
   ├── People        → PeopleView()        [filterable full-width table]
   ├── Institutions  → InstitutionsView()  [full-width table]
   ├── Minutes       → MinutesListView()   [filterable full-width table]
-  └── Documents     → DocumentsListView() [filterable full-width table]
+  ├── Documents     → DocumentsListView() [filterable full-width table]
+  └── Tags          → TagsView()          [computed table of all tags across Projects and People]
 ```
 
 ### Data layer
 
 All persistence is SwiftData. Models live in `gbpDiary/Models/`. The `ModelContainer` is created in `gbpDiaryApp` and injected via `.modelContainer()`.
+
+**`AttachmentStorage`** (`gbpDiary/Models/AttachmentStorage.swift`) is a pure domain helper (no SwiftData) that manages the on-disk location for attachment files. On macOS files are copied to `~/Library/Application Support/Attachments/`; on iOS to the app's `Documents/Attachments/`. When iCloud is enabled, uncomment the ubiquity-container block in `attachmentsDirectory` and run a one-time migration.
 
 **Task is the canonical domain object.** Tasks are identity-stable across all views. They do not "belong" to a day via a stored list — they appear in day sections through date predicate queries on `scheduledAt` and `completedAt`.
 
@@ -94,6 +97,7 @@ Value types (Codable structs, not `@Model`) in `Models/ValueTypes.swift`:
 - `DurationUnit`: `h | d | w` (hours / days≈7.6h / weeks≈38h)
 - `Duration`: `value + unit + hoursNormalized`. Use `Duration.parse("1.5h")` for user input.
 - `SourceContext`: import provenance metadata (not used by UI, preserved for import pipeline)
+- `AttachmentKind`: `pdf | image | text | other` — stored in `Attachment.kind`; `text` covers `.txt`, `.md`, `.csv`, `.json`, `.yaml`, etc.
 
 `@Model` entities and their key relationships:
 
@@ -150,10 +154,15 @@ DayRecord                    (date, notes?: String [legacy], focusTags[])
   focusBlocks → [FocusBlock] (cascade delete ↔ FocusBlock.dayRecord)
 
 Project
+  stream       : String?         (research/work stream; renamed from `projectType`)
+  tagsJSON     : String          (JSON-encoded [String]; use computed `tags` property)
+  tags         : [String]        (computed; wraps tagsJSON)
   parent       → Project?
-  subprojects  → [Project]   nullify on parent delete
+  subprojects  → [Project]   nullify on parent delete; inverse of `parent` declared explicitly
   devTeam      → [Person]    ↔ Person.devProjects
+  devLead      → Person?     nullify on delete; UI requires a lead when devTeam is non-empty
   sciTeam      → [Person]    ↔ Person.sciProjects
+  sciLead      → Person?     nullify on delete; UI requires a lead when sciTeam is non-empty
   institutions → [Institution] ↔ Institution.projects
   meetings     → [Minutes]   ↔ Minutes.projects
   documents    → [Document]  ↔ Document.projects
@@ -161,6 +170,8 @@ Project
   focusBlocks  → [FocusBlock] nullify ↔ FocusBlock.project
 
 Person
+  tagsJSON     : String          (JSON-encoded [String]; use computed `tags` property)
+  tags         : [String]        (computed; wraps tagsJSON)
   institution    → Institution?  ↔ Institution.members
   devProjects    → [Project]
   sciProjects    → [Project]
@@ -179,13 +190,20 @@ Minutes
   attendees → [Person]   ↔ Person.minutesAttended
 
 Document
-  summary     : String?
+  summary             : String?
+  documentDescription : String?  (free-text note explaining relevance/contents)
   attachments → [Attachment]  cascade delete ↔ Attachment.document
   projects    → [Project]     ↔ Project.documents
   dayRecord  → DayRecord?     (set when captured from a day's Documents section)
 
-Attachment     (fileURL + bookmarkData for sandbox persistence)
-  document → Document?
+Attachment     (file copied into app container on import via `AttachmentStorage`)
+  fileName      : String
+  fileURL       : URL          (absolute path within app container — always valid, no resolution needed)
+  bookmarkData  : Data?        (unused for new attachments; reserved for migrating pre-existing bookmarked files)
+  kind          : AttachmentKind
+  mimeType      : String?
+  fileSizeBytes : Int?
+  document      → Document?
 
 Note
   content   : String         (markdown; edited inline in DayNoteRow)
@@ -251,13 +269,14 @@ When a meeting `DayEntry` is created, `addMeeting()` automatically creates and l
 - `DayTaskSidebar` — collapsible sidebar with Scheduled and Inbox sections for a given day.
 - `DaySectionHeader` — reusable section header with title and optional "+" button.
 - `CompletedTaskRow` — read-only struck-through task row with completion time; tap opens `TaskEditorSheet`.
-- `DayDocumentRow` — one-line document row (icon + summary) in the day's Documents section.
+- `DayDocumentRow` — document row in the day's Documents section. Shows icon + summary + attachment count chip (gray) + pencil edit button on the first line; `documentDescription` as caption on the second line when non-empty. Requires `onEdit: () -> Void`.
 - `TasksView` — filterable macOS Table (or List on iOS) of all tasks. Filter controls in `TasksFilterBar`.
 - `MinutesDetailView(minutes:asSheet:)` — detail view for a `Minutes` record; pass `asSheet: true` when presenting as a sheet. Toolbar pencil button opens `MinutesEditorSheet` for full meta editing.
 - `DocumentDetailView(document:asSheet:)` — same pattern for `Document`.
 - `ProjectDetailView(project:asSheet:)` — same pattern for `Project`. Includes a Notes section showing notes linked to the project.
 - `PersonDetailView(person:asSheet:)` — same pattern for `Person`.
 - `InstitutionDetailView(institution:asSheet:)` — same pattern for `Institution`.
+- `TagsView` — computed table of all unique tags used across `Project.tags` and `Person.tags`. Columns: tag name, project count, people count. Tap a row to open `TagDetailSheet` showing chips for all matching projects and people. No model of its own; derives from `@Query` on `Project` and `Person`.
 - All entity list pages (`ProjectsView`, `PeopleView`, `InstitutionsView`, `MinutesListView`, `DocumentsListView`) use the same `VStack { filterBar + Divider + Table }` pattern as `TasksView`: macOS `Table` with tap-to-open-sheet on the primary column, iOS `List`. Each has a filter bar (project or institution picker where relevant).
 
 ### macOS-specific: DeleteKeyMonitor
@@ -343,7 +362,8 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Rule / Requirement | Source Section | Test File | Test Name(s) |
 |---|---|---|---|
 | Task markCompleted sets status/completedAt (idempotent — only sets if nil); preserves cancelledAt | Task state transitions | gbpDiaryTests/Models/TaskStateTransitionTests.swift | `markCompleted_setsExpectedFields`, `markCompleted_preservesExistingCompletedAt`, `markCompleted_preservesExistingCancelledAt` |
-| Task markCancelled sets status/cancelledAt (idempotent — only sets if nil); preserves completedAt | Task state transitions | gbpDiaryTests/Models/TaskStateTransitionTests.swift | `markCancelled_setsExpectedFields`, `markCancelled_preservesExistingCancelledAt`, `markCancelled_preservesExistingCompletedAt` |
+| Task markCancelled sets status/cancelledAt (idempotent — only sets if nil); preserves completedAt; clears followUpAt | Task state transitions | gbpDiaryTests/Models/TaskStateTransitionTests.swift | `markCancelled_setsExpectedFields`, `markCancelled_preservesExistingCancelledAt`, `markCancelled_preservesExistingCompletedAt`, `markCancelled_clearsFollowUpAt` |
+| Task unmarkCancelled reopens to todo, clears cancelledAt and followUpAt | Task state transitions | gbpDiaryTests/Models/TaskStateTransitionTests.swift | `unmarkCancelled_reopensTask`, `unmarkCancelled_clearsFollowUpAt` |
 | Cycling through all states preserves original timestamps (e.g., completedAt survives completed→followUp→cancelled→todo→completed) | Task state transitions | gbpDiaryTests/Models/TaskStateTransitionTests.swift | `cycling_preservesOriginalCompletedAt` |
 | Duration parsing + normalization (`h/d/w`) | Duration | gbpDiaryTests/Models/DurationTests.swift | `parse_validInputs_normalizesHours`, `parse_invalidInputs_returnsNil` |
 | Timesheet includes only completed tasks with duration in selected interval | Timesheet | gbpDiaryTests/Domain/TimesheetComputationTests.swift | `tasksInRange_requiresCompletedAtAndDuration` |
@@ -358,6 +378,7 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | `Task.needsChevron` is true when the task has children OR a non-empty notes string; false for empty-string notes | UI expand/collapse indicator | `gbpDiaryTests/Models/TaskComputedPropertyTests.swift` | `needsChevron_trueWhenHasChildren`, `needsChevron_trueWhenHasNonEmptyNotes`, `needsChevron_falseWhenNoChildrenOrNotes`, `needsChevron_falseWhenNotesIsEmptyString` |
 | `DaySlot.defaultDuration`: allDay=1.0d (7.6h), morning=0.5d (3.8h), afternoon=0.5d (3.8h) | Focus block scheduling | `gbpDiaryTests/Models/ValueTypesTests.swift` | `daySlot_defaultDuration_allDay_isOneDay`, `daySlot_defaultDuration_morning_isHalfDay`, `daySlot_defaultDuration_afternoon_isHalfDay` |
 | `notesId(for:)` is its own inverse: `notesId(notesId(x)) == x`; always produces a UUID distinct from the input | Inline notes focus management | `gbpDiaryTests/Models/DayEntryContentTests.swift` | `notesId_isOwnInverse`, `notesId_differFromSourceId` |
+| `Task.clearFollowUp()` clears `followUpAt` and reverts `.followUpPending` → `.completed`; no-op on other statuses | Task state transitions | `gbpDiaryTests/Models/TaskStateTransitionTests.swift` | `clearFollowUp_revertsToCompleted`, `clearFollowUp_noOpWhenNotFollowUpPending` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 

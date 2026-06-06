@@ -105,13 +105,20 @@ struct PersonDetailView: View {
     }
 
     private var contactHeader: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             if let inst = person.institution {
                 Text(inst.name).foregroundStyle(.secondary)
             }
             if let email = person.email {
                 Link(email, destination: URL(string: "mailto:\(email)")!)
                     .font(.subheadline)
+            }
+            if !person.tags.isEmpty {
+                FlowLayout(spacing: 6) {
+                    ForEach(person.tags, id: \.self) { tag in
+                        Chip(label: tag, color: .teal)
+                    }
+                }
             }
         }
     }

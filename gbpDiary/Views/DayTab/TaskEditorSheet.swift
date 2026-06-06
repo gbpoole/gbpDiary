@@ -20,6 +20,7 @@ struct TaskEditorSheet: View {
     @State private var selectedProject: Project?
     @State private var selectedAssignee: Person?
     @State private var scheduledDate: Date?
+    @State private var followUpEnabled = false
     @State private var followUpDate: Date?
     @State private var tagsText = ""
     @State private var showingLogTime = false
@@ -54,11 +55,20 @@ struct TaskEditorSheet: View {
                         Text("To Do").tag(TaskStatus.todo)
                         Text("Started").tag(TaskStatus.started)
                         Text("Completed").tag(TaskStatus.completed)
-                        Text("Follow-up Pending").tag(TaskStatus.followUpPending)
                         Text("Cancelled").tag(TaskStatus.cancelled)
                     }
-                    if status == .followUpPending {
-                        DatePicker("Follow-up date",
+                }
+
+                Section("Follow-up") {
+                    Toggle("Has follow-up date", isOn: $followUpEnabled)
+                        .onChange(of: followUpEnabled) { _, on in
+                            if on && followUpDate == nil {
+                                followUpDate = Calendar.current.date(byAdding: .day, value: 1,
+                                    to: Calendar.current.startOfDay(for: .now))
+                            }
+                        }
+                    if followUpEnabled {
+                        DatePicker("Date",
                                    selection: Binding(
                                        get: { followUpDate ?? Date() },
                                        set: { followUpDate = $0 }
@@ -198,10 +208,11 @@ struct TaskEditorSheet: View {
         guard let t = task else { return }
         summary = t.summary
         notes = t.notes ?? ""
-        status = t.status
+        status = t.status == .followUpPending ? .completed : t.status
         selectedProject = t.project
         selectedAssignee = t.assignee
         scheduledDate = t.scheduledAt
+        followUpEnabled = t.followUpAt != nil
         followUpDate = t.followUpAt
         tagsText = t.tags.joined(separator: ", ")
         durationText = t.duration?.displayString ?? ""
@@ -228,25 +239,32 @@ struct TaskEditorSheet: View {
         if let t = task {
             t.summary = trimmedSummary
             t.notes = notes.isEmpty ? nil : notes
-            t.status = status
             t.duration = parsedDuration
             t.scheduledAt = scheduledDate
-            t.followUpAt = (status == .followUpPending) ? followUpDate : nil
             t.project = selectedProject
             t.assignee = selectedAssignee
             t.tags = tags
             t.updatedAt = Date()
+            if followUpEnabled, let date = followUpDate {
+                t.setFollowUp(date: date)
+            } else {
+                t.clearFollowUp()
+                t.status = status
+            }
         } else {
             let newTask = Task(summary: trimmedSummary)
             newTask.notes = notes.isEmpty ? nil : notes
-            newTask.status = status
             newTask.duration = parsedDuration
             newTask.scheduledAt = scheduledDate
-            newTask.followUpAt = (status == .followUpPending) ? followUpDate : nil
             newTask.project = selectedProject
             newTask.assignee = selectedAssignee
             newTask.tags = tags
             modelContext.insert(newTask)
+            if followUpEnabled, let date = followUpDate {
+                newTask.setFollowUp(date: date)
+            } else {
+                newTask.status = status
+            }
             onTaskCreated?(newTask)
         }
         dismiss()

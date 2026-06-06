@@ -9,6 +9,7 @@ enum AppTab: String, CaseIterable {
     case institutions = "Institutions"
     case minutes = "Minutes"
     case documents = "Documents"
+    case tags = "Tags"
     case timesheet = "Timesheet"
 }
 
@@ -25,6 +26,7 @@ struct ContentView: View {
             case .institutions:  InstitutionsView()
             case .minutes:       MinutesListView()
             case .documents:     DocumentsListView()
+            case .tags:          TagsView()
             case .timesheet:     TimesheetView()
             }
         }

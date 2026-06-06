@@ -108,10 +108,7 @@ struct TasksView: View {
         case .started:
             task.markCompleted()
         case .completed:
-            let tomorrow = Calendar.current.date(
-                byAdding: .day, value: 1,
-                to: Calendar.current.startOfDay(for: .now))!
-            task.setFollowUp(date: tomorrow)
+            task.markCancelled()
         case .followUpPending:
             task.markCancelled()
         case .cancelled:

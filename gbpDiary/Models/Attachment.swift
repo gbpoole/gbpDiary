@@ -2,14 +2,14 @@ import Foundation
 import SwiftData
 
 enum AttachmentKind: String, Codable {
-    case pdf, image, other
+    case pdf, image, text, other
 }
 
 @Model final class Attachment {
     @Attribute(.unique) var id: UUID
     var fileName: String
-    var fileURL: URL
-    var bookmarkData: Data?
+    var fileURL: URL           // path within app container (copied via AttachmentStorage.store)
+    var bookmarkData: Data?    // unused for new attachments; reserved for migrating pre-existing bookmarks
     var kind: AttachmentKind
     var mimeType: String?
     var fileSizeBytes: Int?

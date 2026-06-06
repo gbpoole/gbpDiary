@@ -7,7 +7,7 @@ struct DocumentsListView: View {
     @Environment(\.modelContext) private var modelContext
 
     @State private var selectedDocument: Document?
-    @State private var showingAdd = false
+    @State private var creatingDocument: Document? = nil
     @State private var projectFilter: Project? = nil
 
     private var filteredDocuments: [Document] {
@@ -24,11 +24,15 @@ struct DocumentsListView: View {
         .navigationTitle("Documents")
         .toolbar {
             ToolbarItem {
-                Button { showingAdd = true } label: { Image(systemName: "plus") }
+                Button {
+                    let doc = Document()
+                    modelContext.insert(doc)
+                    creatingDocument = doc
+                } label: { Image(systemName: "plus") }
             }
         }
         .sheet(item: $selectedDocument) { DocumentDetailView(document: $0, asSheet: true) }
-        .sheet(isPresented: $showingAdd) { DocumentEditorSheet(document: nil) }
+        .sheet(item: $creatingDocument) { DocumentDetailView(document: $0, asSheet: true) }
     }
 
     private var filterBar: some View {

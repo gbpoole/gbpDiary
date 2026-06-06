@@ -84,7 +84,7 @@ struct FocusBlockEditorSheet: View {
             .navigationTitle(existingBlock == nil ? "Add Focus Block" : "Edit Focus Block")
             .toolbar {
                 if existingBlock != nil {
-                    ToolbarItem(placement: .cancellationAction) {
+                    ToolbarItem(placement: .destructiveAction) {
                         Button("Delete") { showingDeleteConfirm = true }
                             .foregroundStyle(.red)
                     }

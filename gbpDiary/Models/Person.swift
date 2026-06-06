@@ -5,6 +5,11 @@ import SwiftData
     @Attribute(.unique) var id: UUID
     var name: String
     var email: String?
+    var tagsJSON: String
+    var tags: [String] {
+        get { jsonDecode([String].self, tagsJSON) ?? [] }
+        set { tagsJSON = jsonEncode(newValue) }
+    }
     var createdAt: Date
     var updatedAt: Date
 
@@ -17,6 +22,7 @@ import SwiftData
     init(name: String, id: UUID = UUID()) {
         self.id = id
         self.name = name
+        self.tagsJSON = "[]"
         self.devProjects = []
         self.sciProjects = []
         self.minutesAttended = []

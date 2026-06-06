@@ -36,7 +36,8 @@ struct TaskRowView: View {
         .sheet(isPresented: $showingFollowUpPicker) {
             FollowUpDateSheet(
                 initialDate: task.followUpAt ?? Calendar.current.date(byAdding: .day, value: 1, to: .now)!,
-                onSave: { date in task.setFollowUp(date: date) }
+                onSave: { date in task.setFollowUp(date: date) },
+                onRemove: task.followUpAt != nil ? { task.clearFollowUp() } : nil
             )
         }
         .sheet(isPresented: $showingLogTime) {
@@ -123,10 +124,21 @@ struct TaskRowView: View {
             ForEach(task.tags, id: \.self) { tag in
                 Chip(label: tag, color: .teal)
             }
+            if task.status == .completed && task.followUpAt == nil {
+                Button(action: { showingFollowUpPicker = true }) {
+                    Image(systemName: "clock.badge.plus")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+            }
             if let fu = task.followUpAt {
                 let overdue = fu < Calendar.current.startOfDay(for: Date())
-                Chip(label: "↻ \(fu.formatted(.dateTime.day().month()))",
-                     color: overdue ? .red : .orange)
+                Button(action: { showingFollowUpPicker = true }) {
+                    Chip(label: "↻ \(fu.formatted(.dateTime.day().month()))",
+                         color: overdue ? .red : .orange)
+                }
+                .buttonStyle(.plain)
             }
             InlineRowEditButton(action: onEdit)
             if !isFocusedInline {
@@ -184,10 +196,7 @@ struct TaskRowView: View {
         case .started:
             task.markCompleted()
         case .completed:
-            let tomorrow = Calendar.current.date(
-                byAdding: .day, value: 1,
-                to: Calendar.current.startOfDay(for: .now))!
-            task.setFollowUp(date: tomorrow)
+            task.markCancelled()
         case .followUpPending:
             task.markCancelled()
         case .cancelled:
@@ -196,16 +205,18 @@ struct TaskRowView: View {
     }
 }
 
-private struct FollowUpDateSheet: View {
+struct FollowUpDateSheet: View {
     let initialDate: Date
     let onSave: (Date) -> Void
+    var onRemove: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var selectedDate: Date
 
-    init(initialDate: Date, onSave: @escaping (Date) -> Void) {
+    init(initialDate: Date, onSave: @escaping (Date) -> Void, onRemove: (() -> Void)? = nil) {
         self.initialDate = initialDate
         self.onSave = onSave
+        self.onRemove = onRemove
         _selectedDate = State(initialValue: initialDate)
     }
 
@@ -216,6 +227,12 @@ private struct FollowUpDateSheet: View {
             }
             .navigationTitle("Set Follow-up Date")
             .toolbar {
+                if let onRemove {
+                    ToolbarItem(placement: .destructiveAction) {
+                        Button("Remove Follow-up") { onRemove(); dismiss() }
+                            .foregroundStyle(.red)
+                    }
+                }
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { onSave(selectedDate); dismiss() }

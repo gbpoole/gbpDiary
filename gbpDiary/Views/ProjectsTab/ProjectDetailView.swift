@@ -49,6 +49,8 @@ struct ProjectDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
+                if !project.devTeam.isEmpty { devTeamSection }
+                if !project.sciTeam.isEmpty { sciTeamSection }
                 if !project.subprojects.isEmpty { subprojectsSection }
                 openTasksSection
                 if !completedTasks.isEmpty { completedTasksSection }
@@ -69,6 +71,7 @@ struct ProjectDetailView: View {
                 Button { showingEditProject = true } label: { Image(systemName: "pencil") }
             }
         }
+
         .sheet(isPresented: $showingEditProject) { ProjectEditorSheet(project: project) }
         .sheet(isPresented: $showingAddMinutes) { MinutesEditorSheet(minutes: nil, project: project) }
         .sheet(item: $selectedMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
@@ -79,12 +82,51 @@ struct ProjectDetailView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             if let desc = project.projectDescription {
                 Text(desc).foregroundStyle(.secondary)
             }
-            if let type = project.projectType {
-                Text(type).font(.caption).foregroundStyle(.tertiary)
+            HStack(spacing: 6) {
+                if let stream = project.stream {
+                    Chip(label: stream, color: .gray)
+                }
+                ForEach(project.tags, id: \.self) { tag in
+                    Chip(label: tag, color: .teal)
+                }
+            }
+        }
+    }
+
+    private var devTeamSection: some View {
+        GroupBox("Dev Team (\(project.devTeam.count))") {
+            FlowLayout(spacing: 6) {
+                ForEach(project.devTeam.sorted {
+                    if $0.id == project.devLead?.id { return true }
+                    if $1.id == project.devLead?.id { return false }
+                    return $0.name < $1.name
+                }) { person in
+                    Chip(
+                        label: person.id == project.devLead?.id ? "\(person.name) · Lead" : person.name,
+                        color: person.id == project.devLead?.id ? .orange : .purple
+                    )
+                }
+            }
+        }
+    }
+
+    private var sciTeamSection: some View {
+        GroupBox("Sci Team (\(project.sciTeam.count))") {
+            FlowLayout(spacing: 6) {
+                ForEach(project.sciTeam.sorted {
+                    if $0.id == project.sciLead?.id { return true }
+                    if $1.id == project.sciLead?.id { return false }
+                    return $0.name < $1.name
+                }) { person in
+                    Chip(
+                        label: person.id == project.sciLead?.id ? "\(person.name) · Lead" : person.name,
+                        color: person.id == project.sciLead?.id ? .orange : .purple
+                    )
+                }
             }
         }
     }

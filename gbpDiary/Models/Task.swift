@@ -104,12 +104,20 @@ extension Task {
         let now = Date()
         status = .cancelled
         if cancelledAt == nil { cancelledAt = now }
+        followUpAt = nil
         updatedAt = now
     }
 
     func unmarkCancelled() {
         status = .todo
         cancelledAt = nil
+        followUpAt = nil
+        updatedAt = Date()
+    }
+
+    func clearFollowUp() {
+        followUpAt = nil
+        if status == .followUpPending { status = .completed }
         updatedAt = Date()
     }
 
