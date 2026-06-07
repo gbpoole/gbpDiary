@@ -78,13 +78,16 @@ struct DayNoteRow: View {
             ForEach(note.attachments.sorted { $0.createdAt < $1.createdAt }) { att in
                 NoteAttachmentRow(
                     attachment: att,
-                    onPreview: { previewURL = att.fileURL },
+                    onPreview: { previewURL = att.renderURL ?? att.fileURL },
                     onDelete: {
                         removeMarkdownLink(for: att)
+                        if let r = att.renderURL { AttachmentStorage.delete(at: r) }
                         AttachmentStorage.delete(at: att.fileURL)
                         modelContext.delete(att)
                         note.attachments.removeAll { $0.id == att.id }
-                    }
+                    },
+                    onStepDown: att.kind == .image ? { stepRenderSize(for: att, by: -1) } : nil,
+                    onStepUp:   att.kind == .image ? { stepRenderSize(for: att, by: +1) } : nil
                 )
             }
         }
@@ -119,7 +122,11 @@ struct DayNoteRow: View {
             att.note = note
             modelContext.insert(att)
             note.attachments.append(att)
-            if kind == .image { appendMarkdownLink(for: att) }
+
+            if kind == .image {
+                setupRender(for: att, sourceURL: copiedURL)
+                appendMarkdownLink(for: att)
+            }
         }
         note.updatedAt = Date()
     }
@@ -157,24 +164,67 @@ struct DayNoteRow: View {
         att.note = note
         modelContext.insert(att)
         note.attachments.append(att)
+        setupRender(for: att, sourceURL: dest)
         appendMarkdownLink(for: att)
         note.updatedAt = Date()
     }
     #endif
 
+    // MARK: - Image render setup
+
+    private func setupRender(for att: Attachment, sourceURL: URL) {
+        let srcWidth = AttachmentStorage.capSource(at: sourceURL)
+        att.sourceImageWidth = srcWidth > 0 ? srcWidth : nil
+        guard srcWidth > 0 else { return }
+        let steps = AttachmentStorage.renderSteps(forSourceWidth: srcWidth)
+        let initialWidth = steps.last(where: { $0 <= 800 }) ?? steps[0]
+        guard let renderData = AttachmentStorage.resizedImageData(at: sourceURL, targetWidth: initialWidth) else { return }
+        let renderURL = AttachmentStorage.renderURL(forSourceURL: sourceURL, width: initialWidth)
+        try? renderData.write(to: renderURL)
+        att.renderURL = renderURL
+        att.renderWidth = initialWidth
+    }
+
+    private func stepRenderSize(for att: Attachment, by delta: Int) {
+        guard att.kind == .image,
+              let srcWidth = att.sourceImageWidth,
+              let currentWidth = att.renderWidth else { return }
+        let steps = AttachmentStorage.renderSteps(forSourceWidth: srcWidth)
+        guard let idx = steps.firstIndex(of: currentWidth) else { return }
+        let newIdx = idx + delta
+        guard steps.indices.contains(newIdx) else { return }
+        let newWidth = steps[newIdx]
+        guard let data = AttachmentStorage.resizedImageData(at: att.fileURL, targetWidth: newWidth) else { return }
+        let newRenderURL = AttachmentStorage.renderURL(forSourceURL: att.fileURL, width: newWidth)
+        try? data.write(to: newRenderURL)
+        if let oldRenderURL = att.renderURL {
+            removeMarkdownLink(forURL: oldRenderURL, fileName: att.fileName)
+            AttachmentStorage.delete(at: oldRenderURL)
+        }
+        att.renderURL = newRenderURL
+        att.renderWidth = newWidth
+        appendMarkdownLink(for: att)
+        note.updatedAt = Date()
+    }
+
     // MARK: - Markdown link helpers
 
     private func appendMarkdownLink(for att: Attachment) {
-        let link = "![\(att.fileName)](\(att.fileURL.absoluteString))"
+        let url = att.renderURL ?? att.fileURL
+        let link = "![\(att.fileName)](\(url.absoluteString))"
         note.content = note.content.isEmpty ? link : note.content + "\n" + link
     }
 
-    private func removeMarkdownLink(for att: Attachment) {
-        let link = "![\(att.fileName)](\(att.fileURL.absoluteString))"
+    private func removeMarkdownLink(forURL url: URL, fileName: String) {
+        let link = "![\(fileName)](\(url.absoluteString))"
         note.content = note.content
             .replacingOccurrences(of: "\n" + link, with: "")
             .replacingOccurrences(of: link + "\n", with: "")
             .replacingOccurrences(of: link, with: "")
+    }
+
+    private func removeMarkdownLink(for att: Attachment) {
+        removeMarkdownLink(forURL: att.renderURL ?? att.fileURL, fileName: att.fileName)
     }
 }
 
@@ -182,6 +232,8 @@ private struct NoteAttachmentRow: View {
     let attachment: Attachment
     let onPreview: () -> Void
     let onDelete: () -> Void
+    var onStepDown: (() -> Void)? = nil
+    var onStepUp: (() -> Void)? = nil
 
     private var icon: String {
         switch attachment.kind {
@@ -201,6 +253,28 @@ private struct NoteAttachmentRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+            if attachment.kind == .image,
+               let srcWidth = attachment.sourceImageWidth,
+               let currentWidth = attachment.renderWidth {
+                let steps = AttachmentStorage.renderSteps(forSourceWidth: srcWidth)
+                let atMin = steps.first == currentWidth
+                let atMax = steps.last == currentWidth
+                Text("\(currentWidth)px")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Button { onStepDown?() } label: {
+                    Image(systemName: "chevron.down").font(.caption2)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(atMin ? Color.secondary.opacity(0.3) : .secondary)
+                .disabled(atMin)
+                Button { onStepUp?() } label: {
+                    Image(systemName: "chevron.up").font(.caption2)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(atMax ? Color.secondary.opacity(0.3) : .secondary)
+                .disabled(atMax)
+            }
             Spacer()
             Button(action: onPreview) {
                 Image(systemName: "eye")

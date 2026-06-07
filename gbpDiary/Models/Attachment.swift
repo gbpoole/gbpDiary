@@ -15,6 +15,10 @@ enum AttachmentKind: String, Codable {
     var fileSizeBytes: Int?
     var createdAt: Date
 
+    var renderURL: URL?          // points to {uuid}_r{width}.png; nil for non-images
+    var renderWidth: Int?        // current render pixel width
+    var sourceImageWidth: Int?   // pixel width of the capped source file
+
     var document: Document?
     var note: Note?
 

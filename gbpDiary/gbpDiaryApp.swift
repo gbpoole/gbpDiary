@@ -40,7 +40,10 @@ struct gbpDiaryApp: App {
         let context = sharedModelContainer.mainContext
         let known: Set<URL>
         do {
-            known = Set(try context.fetch(FetchDescriptor<Attachment>()).map(\.fileURL))
+            let attachments = try context.fetch(FetchDescriptor<Attachment>())
+            var urls = Set(attachments.map(\.fileURL))
+            for att in attachments { if let r = att.renderURL { urls.insert(r) } }
+            known = urls
         } catch { return }
         let dir = AttachmentStorage.attachmentsDirectory
         guard let files = try? FileManager.default.contentsOfDirectory(

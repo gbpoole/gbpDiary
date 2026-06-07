@@ -50,6 +50,8 @@ All persistence is SwiftData. Models live in `gbpDiary/Models/`. The `ModelConta
 
 **`AttachmentStorage`** (`gbpDiary/Models/AttachmentStorage.swift`) is a pure domain helper (no SwiftData) that manages the on-disk location for attachment files. On macOS files are copied to `~/Library/Application Support/Attachments/`; on iOS to the app's `Documents/Attachments/`. When iCloud is enabled, uncomment the ubiquity-container block in `attachmentsDirectory` and run a one-time migration.
 
+For images, `AttachmentStorage` also provides a two-version resize system: `capSource(at:)` caps the stored source at 2048 px wide on import; `renderURL(forSourceURL:width:)` returns a versioned path `{uuid}_r{width}.png` that busts Textual's image cache on resize; `resizedImageData(at:targetWidth:)` does the CoreGraphics resize; `renderSteps(forSourceWidth:)` returns the valid step list `[200, 400, 600, 800, 1000, 1200, 1600, 2048]` clamped to the source width. The orphan sweep in `gbpDiaryApp` collects both `fileURL` and `renderURL` so old render files are cleaned up on relaunch.
+
 **Task is the canonical domain object.** Tasks are identity-stable across all views. They do not "belong" to a day via a stored list — they appear in day sections through date predicate queries on `scheduledAt` and `completedAt`.
 
 ### Day view architecture
@@ -203,6 +205,9 @@ Attachment     (file copied into app container on import via `AttachmentStorage`
   kind          : AttachmentKind
   mimeType      : String?
   fileSizeBytes : Int?
+  renderURL     : URL?         (render file for images: {uuid}_r{width}.png; nil for non-images)
+  renderWidth   : Int?         (current render pixel width used in inline markdown link)
+  sourceImageWidth: Int?       (pixel width of capped source file; used to clamp resize steps)
   document      → Document?   (set when attached to a Document)
   note          → Note?        (set when attached to a Note)
 
@@ -262,7 +267,7 @@ When a meeting `DayEntry` is created, `addMeeting()` automatically creates and l
 - `DiaryTaskRow` — renders a root day-task (Task with dayRecord set) with inline editing, notes sub-area, collapse/expand, and subtask tree.
 - `TaskEditorSheet` — full task editing sheet. Accepts `task: Task?` (nil = create new) and `defaultDate: Date`. New tasks default to unscheduled; notes field has a visible rounded border. When editing an existing task, a "Time Log" section shows all `TaskTimeEntry` items with an "Add Entry…" button opening `LogTimeSheet`.
 - `EntryRowView` — renders a meeting `DayEntry` with inline summary, minutes notes sub-area, and embedded New Tasks subtree. (Note/task DayEntry kinds are no longer rendered.)
-- `DayNoteRow` — renders a single `Note` in the day's Notes section. Shows project chip (`.blue`) and tag chips (`.teal`) above the inline markdown content, with a paperclip button (opens file picker) and pencil `InlineRowEditButton` on the same header row. When the note has attachments, shows a compact attachment strip below the content (icon + filename + eye-preview + delete). Supports drag-to-reorder.
+- `DayNoteRow` — renders a single `Note` in the day's Notes section. Shows project chip (`.blue`) and tag chips (`.teal`) above the inline markdown content, with a paperclip button (opens file picker) and pencil `InlineRowEditButton` on the same header row. When the note has attachments, shows a compact strip below the content: for images, shows filename + current width label + ↓↑ resize arrows (disabled at min/max) + eye + xmark; for other kinds, icon + filename + eye + xmark. Images are rendered inline via Textual's `URLAttachmentLoader`; resizing writes a new `{uuid}_r{width}.png` render file and updates the markdown link so Textual reloads from a cache miss. Context menu includes "Paste Image from Clipboard" (macOS only, shown when clipboard has an image). Supports drag-to-reorder.
 - `NoteEditorSheet` — sheet for editing `Note.project` and `Note.tags` (content is always edited inline). Accepts `note: Note`.
 - `ActivitySection` — top section in `DayPageContent` showing Focus blocks, their Activities, and any Unspecified time entries. "+" opens `FocusBlockEditorSheet`. Total logged time footer shown when non-empty.
 - `FocusBlockRow` — collapsible row for one `FocusBlock`. Shows source icon (folder for project-backed, checkmark for task-backed), duration chip, net unspecified time label, "+" to open `LogTimeSheet`, pencil to edit. Context menu includes delete with alert when activities exist.
