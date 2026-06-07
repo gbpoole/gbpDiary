@@ -203,7 +203,8 @@ Attachment     (file copied into app container on import via `AttachmentStorage`
   kind          : AttachmentKind
   mimeType      : String?
   fileSizeBytes : Int?
-  document      → Document?
+  document      → Document?   (set when attached to a Document)
+  note          → Note?        (set when attached to a Note)
 
 Note
   content   : String         (markdown; edited inline in DayNoteRow)
@@ -211,6 +212,7 @@ Note
   tagsJSON  : String         (JSON-encoded [String]; use computed `tags` property)
   dayRecord → DayRecord?     (set when captured from a day's Notes section)
   project   → Project?       (optional; displayed as blue chip above note content)
+  attachments → [Attachment]  cascade delete ↔ Attachment.note
 ```
 
 Each `@Model` has `@Attribute(.unique) var id: UUID` for stable external identity (used by the import pipeline). SwiftData also assigns its own `persistentModelID`.
@@ -260,7 +262,7 @@ When a meeting `DayEntry` is created, `addMeeting()` automatically creates and l
 - `DiaryTaskRow` — renders a root day-task (Task with dayRecord set) with inline editing, notes sub-area, collapse/expand, and subtask tree.
 - `TaskEditorSheet` — full task editing sheet. Accepts `task: Task?` (nil = create new) and `defaultDate: Date`. New tasks default to unscheduled; notes field has a visible rounded border. When editing an existing task, a "Time Log" section shows all `TaskTimeEntry` items with an "Add Entry…" button opening `LogTimeSheet`.
 - `EntryRowView` — renders a meeting `DayEntry` with inline summary, minutes notes sub-area, and embedded New Tasks subtree. (Note/task DayEntry kinds are no longer rendered.)
-- `DayNoteRow` — renders a single `Note` in the day's Notes section. Shows project chip (`.blue`) and tag chips (`.teal`) above the inline markdown content, with a pencil `InlineRowEditButton` on the same header row. Supports drag-to-reorder.
+- `DayNoteRow` — renders a single `Note` in the day's Notes section. Shows project chip (`.blue`) and tag chips (`.teal`) above the inline markdown content, with a paperclip button (opens file picker) and pencil `InlineRowEditButton` on the same header row. When the note has attachments, shows a compact attachment strip below the content (icon + filename + eye-preview + delete). Supports drag-to-reorder.
 - `NoteEditorSheet` — sheet for editing `Note.project` and `Note.tags` (content is always edited inline). Accepts `note: Note`.
 - `ActivitySection` — top section in `DayPageContent` showing Focus blocks, their Activities, and any Unspecified time entries. "+" opens `FocusBlockEditorSheet`. Total logged time footer shown when non-empty.
 - `FocusBlockRow` — collapsible row for one `FocusBlock`. Shows source icon (folder for project-backed, checkmark for task-backed), duration chip, net unspecified time label, "+" to open `LogTimeSheet`, pencil to edit. Context menu includes delete with alert when activities exist.

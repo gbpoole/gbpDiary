@@ -28,10 +28,26 @@ struct gbpDiaryApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .onAppear { sweepOrphanedAttachments() }
         }
         .modelContainer(sharedModelContainer)
         .commands {
             AppCommands()
+        }
+    }
+
+    private func sweepOrphanedAttachments() {
+        let context = sharedModelContainer.mainContext
+        let known: Set<URL>
+        do {
+            known = Set(try context.fetch(FetchDescriptor<Attachment>()).map(\.fileURL))
+        } catch { return }
+        let dir = AttachmentStorage.attachmentsDirectory
+        guard let files = try? FileManager.default.contentsOfDirectory(
+            at: dir, includingPropertiesForKeys: nil
+        ) else { return }
+        for file in files where !known.contains(file) {
+            try? FileManager.default.removeItem(at: file)
         }
     }
 }

@@ -15,12 +15,14 @@ import SwiftData
 
     var dayRecord: DayRecord?
     var project: Project?
+    @Relationship(deleteRule: .cascade, inverse: \Attachment.note) var attachments: [Attachment]
 
     init(content: String = "", sortOrder: Int = 0, id: UUID = UUID()) {
         self.id = id
         self.content = content
         self.sortOrder = sortOrder
         self.tagsJSON = "[]"
+        self.attachments = []
         let now = Date()
         self.createdAt = now
         self.updatedAt = now

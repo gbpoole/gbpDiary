@@ -16,6 +16,7 @@ enum AttachmentKind: String, Codable {
     var createdAt: Date
 
     var document: Document?
+    var note: Note?
 
     init(fileName: String, fileURL: URL, kind: AttachmentKind, id: UUID = UUID()) {
         self.id = id
