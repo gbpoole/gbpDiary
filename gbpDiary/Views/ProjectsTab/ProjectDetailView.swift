@@ -230,9 +230,10 @@ struct ProjectDetailView: View {
             } else {
                 ForEach(projectNotes) { note in
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(note.content.isEmpty ? "Empty note" : note.content)
+                        let preview = note.blocks.first(where: { $0.kind == .text })?.textContent ?? note.content
+                        Text(preview.isEmpty ? "Empty note" : preview)
                             .lineLimit(3)
-                            .foregroundStyle(note.content.isEmpty ? .tertiary : .primary)
+                            .foregroundStyle(preview.isEmpty ? .tertiary : .primary)
                         if !note.tags.isEmpty {
                             HStack(spacing: 4) {
                                 ForEach(note.tags, id: \.self) { tag in

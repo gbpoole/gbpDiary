@@ -19,7 +19,11 @@ struct DayNoteRow: View {
     @State private var showingFilePicker = false
     @State private var previewURL: URL?
 
-    private var isFocused: Bool { focusedEntryId.wrappedValue == note.id }
+    // True when any block within this note is focused
+    private var isFocused: Bool {
+        guard let id = focusedEntryId.wrappedValue else { return false }
+        return note.blocks.contains { $0.id == id }
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
@@ -70,18 +74,14 @@ struct DayNoteRow: View {
             .padding(.horizontal, 12)
             .padding(.top, 4)
 
-            EntryNotesSubArea(
-                text: $note.content,
-                isFocused: isFocused,
-                focusedEntryId: focusedEntryId,
-                focusId: note.id,
-                placeholder: "Note…",
-                onMoveToPrevious: onMoveToPrevious,
-                onMoveToNext: onMoveToNext
-            )
+            blocksView
 
-            if !note.attachments.isEmpty {
-                attachmentStrip
+            // Non-image attachments (PDF, text, other) stay in the strip
+            let nonImageAtts = note.attachments
+                .filter { $0.kind != .image }
+                .sorted { $0.createdAt < $1.createdAt }
+            if !nonImageAtts.isEmpty {
+                nonImageAttachmentStrip(nonImageAtts)
             }
         }
         .padding(.horizontal)
@@ -101,25 +101,133 @@ struct DayNoteRow: View {
         .quickLookPreview($previewURL)
     }
 
-    @ViewBuilder private var attachmentStrip: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            ForEach(note.attachments.sorted { $0.createdAt < $1.createdAt }) { att in
-                NoteAttachmentRow(
-                    attachment: att,
-                    onPreview: { previewURL = att.renderURL ?? att.fileURL },
-                    onDelete: {
-                        if let r = att.renderURL { AttachmentStorage.delete(at: r) }
-                        AttachmentStorage.delete(at: att.fileURL)
-                        modelContext.delete(att)
-                        note.attachments.removeAll { $0.id == att.id }
-                    },
-                    onStepDown: att.kind == .image ? { stepRenderSize(for: att, by: -1) } : nil,
-                    onStepUp:   att.kind == .image ? { stepRenderSize(for: att, by: +1) } : nil
+    // MARK: - Blocks
+
+    @ViewBuilder private var blocksView: some View {
+        let blocks = note.blocks
+        ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
+            switch block.kind {
+            case .text:
+                EntryNotesSubArea(
+                    text: textBinding(for: index),
+                    isFocused: focusedEntryId.wrappedValue == block.id,
+                    focusedEntryId: focusedEntryId,
+                    focusId: block.id,
+                    placeholder: "Note…",
+                    onMoveToPrevious: moveToPreviousAction(from: index, in: blocks),
+                    onMoveToNext: moveToNextAction(from: index, in: blocks)
                 )
+            case .image:
+                let attId = block.attachmentId
+                let att = note.attachments.first { $0.id == attId }
+                if let att {
+                    NoteImageBlockRow(
+                        note: note,
+                        block: block,
+                        blockIndex: index,
+                        att: att,
+                        onPreview: { previewURL = att.renderURL ?? att.fileURL },
+                        onDelete: { deleteImageBlock(at: index, att: att) },
+                        onStepDown: { stepRenderSize(for: att, by: -1) },
+                        onStepUp: { stepRenderSize(for: att, by: +1) }
+                    )
+                }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.bottom, 4)
+    }
+
+    // MARK: - Text binding
+
+    private func textBinding(for index: Int) -> Binding<String> {
+        Binding(
+            get: { note.blocks.indices.contains(index) ? note.blocks[index].textContent : "" },
+            set: { newValue in
+                guard note.blocks.indices.contains(index) else { return }
+                var blocks = note.blocks
+                blocks[index].textContent = newValue
+                note.blocks = blocks
+                note.updatedAt = Date()
+            }
+        )
+    }
+
+    // MARK: - Block navigation
+
+    private func moveToPreviousAction(from index: Int, in blocks: [NoteBlock]) -> (() -> Void)? {
+        for i in stride(from: index - 1, through: 0, by: -1) {
+            if blocks[i].kind == .text {
+                let id = blocks[i].id
+                return { focusedEntryId.wrappedValue = id }
+            }
+        }
+        return onMoveToPrevious
+    }
+
+    private func moveToNextAction(from index: Int, in blocks: [NoteBlock]) -> (() -> Void)? {
+        for i in (index + 1)..<blocks.count {
+            if blocks[i].kind == .text {
+                let id = blocks[i].id
+                return { focusedEntryId.wrappedValue = id }
+            }
+        }
+        return onMoveToNext
+    }
+
+    // MARK: - Image block management
+
+    // Inserts one or more image attachments at the focused text block, each followed by a new text block.
+    private func insertImageBlocks(_ atts: [Attachment]) {
+        var blocks = note.blocks
+        if blocks.isEmpty { blocks = [.text("")] }
+
+        let insertAfter: Int
+        if let focusedId = focusedEntryId.wrappedValue,
+           let focusedIdx = blocks.firstIndex(where: { $0.id == focusedId }),
+           blocks[focusedIdx].kind == .text {
+            insertAfter = focusedIdx
+        } else {
+            insertAfter = blocks.count - 1
+        }
+
+        var afterIdx = insertAfter
+        var lastTextId: UUID?
+        for att in atts {
+            let imgBlock = NoteBlock.image(att.id)
+            let txtBlock = NoteBlock.text("")
+            blocks.insert(contentsOf: [imgBlock, txtBlock], at: afterIdx + 1)
+            afterIdx += 2
+            lastTextId = txtBlock.id
+        }
+
+        note.blocks = blocks
+        if let id = lastTextId { focusedEntryId.wrappedValue = id }
+    }
+
+    private func deleteImageBlock(at index: Int, att: Attachment) {
+        var blocks = note.blocks
+        guard blocks.indices.contains(index), blocks[index].kind == .image else { return }
+        blocks.remove(at: index)
+
+        // Merge the surrounding text blocks (index−1 and index, post-removal)
+        let prevIdx = index - 1
+        let nextIdx = index
+        if blocks.indices.contains(prevIdx), blocks.indices.contains(nextIdx),
+           blocks[prevIdx].kind == .text, blocks[nextIdx].kind == .text {
+            let combined = [
+                blocks[prevIdx].textContent.trimmingCharacters(in: .newlines),
+                blocks[nextIdx].textContent.trimmingCharacters(in: .newlines)
+            ].filter { !$0.isEmpty }.joined(separator: "\n\n")
+            blocks[prevIdx].textContent = combined
+            blocks.remove(at: nextIdx)
+        }
+
+        note.blocks = blocks
+
+        if let r = att.renderURL { AttachmentStorage.delete(at: r) }
+        AttachmentStorage.delete(at: att.fileURL)
+        modelContext.delete(att)
+        note.attachments.removeAll { $0.id == att.id }
+        note.updatedAt = Date()
     }
 
     // MARK: - File import
@@ -130,6 +238,8 @@ struct DayNoteRow: View {
             "txt", "md", "markdown", "csv", "json", "yaml", "yml",
             "swift", "py", "js", "ts", "rb", "sh", "xml", "html", "htm"
         ]
+        var newImageAtts: [Attachment] = []
+
         for url in urls {
             guard url.startAccessingSecurityScopedResource() else { continue }
             let fileId = UUID()
@@ -152,8 +262,11 @@ struct DayNoteRow: View {
 
             if kind == .image {
                 setupRender(for: att, sourceURL: copiedURL)
+                newImageAtts.append(att)
             }
         }
+
+        if !newImageAtts.isEmpty { insertImageBlocks(newImageAtts) }
         note.updatedAt = Date()
     }
 
@@ -164,9 +277,8 @@ struct DayNoteRow: View {
         let pb = NSPasteboard.general
         let imageExts: Set<String> = ["png", "jpg", "jpeg", "heic", "gif", "tiff", "webp"]
 
-        // Try image file URLs first (Finder copy). Handle inline — not via handleImport — to
-        // avoid the startAccessingSecurityScopedResource dependency on clipboard-provided URLs.
-        var importedFromFileURL = false
+        // Finder-copied file URLs
+        var importedAtts: [Attachment] = []
         let fileURLs = (pb.readObjects(forClasses: [NSURL.self],
                                        options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
         for url in fileURLs where imageExts.contains(url.pathExtension.lowercased()) {
@@ -185,14 +297,15 @@ struct DayNoteRow: View {
             modelContext.insert(att)
             note.attachments.append(att)
             setupRender(for: att, sourceURL: dest)
-            importedFromFileURL = true
+            importedAtts.append(att)
         }
-        if importedFromFileURL {
+        if !importedAtts.isEmpty {
+            insertImageBlocks(importedAtts)
             note.updatedAt = Date()
             return
         }
 
-        // Fall back to raw image data (screenshots, image content copied from browser/apps).
+        // Raw PNG/TIFF data (screenshots, browser copy)
         let pngData: Data?
         if let raw = pb.data(forType: .png) {
             pngData = raw
@@ -218,6 +331,7 @@ struct DayNoteRow: View {
         modelContext.insert(att)
         note.attachments.append(att)
         setupRender(for: att, sourceURL: dest)
+        insertImageBlocks([att])
         note.updatedAt = Date()
     }
     #endif
@@ -245,12 +359,14 @@ struct DayNoteRow: View {
     }
 
     private func suggestedExportFilename() -> String {
-        for rawLine in note.content.split(separator: "\n", omittingEmptySubsequences: true) {
-            let line = String(rawLine)
-                .trimmingCharacters(in: .whitespaces)
-                .replacingOccurrences(of: "^#+\\s+", with: "", options: .regularExpression)
-                .replacingOccurrences(of: "[/:*?\"<>|\\\\]", with: "-", options: .regularExpression)
-            if !line.isEmpty { return "\(String(line.prefix(60))).pdf" }
+        for block in note.blocks where block.kind == .text {
+            for rawLine in block.textContent.split(separator: "\n", omittingEmptySubsequences: true) {
+                let line = String(rawLine)
+                    .trimmingCharacters(in: .whitespaces)
+                    .replacingOccurrences(of: "^#+\\s+", with: "", options: .regularExpression)
+                    .replacingOccurrences(of: "[/:*?\"<>|\\\\]", with: "-", options: .regularExpression)
+                if !line.isEmpty { return "\(String(line.prefix(60))).pdf" }
+            }
         }
         if let date = note.dayRecord?.date {
             return "\(date.formatted(.iso8601.year().month().day()))-note.pdf"
@@ -292,14 +408,135 @@ struct DayNoteRow: View {
         note.updatedAt = Date()
     }
 
+    // MARK: - Non-image attachment strip
+
+    @ViewBuilder private func nonImageAttachmentStrip(_ atts: [Attachment]) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            ForEach(atts) { att in
+                NoteAttachmentRow(
+                    attachment: att,
+                    onPreview: { previewURL = att.fileURL },
+                    onDelete: {
+                        AttachmentStorage.delete(at: att.fileURL)
+                        modelContext.delete(att)
+                        note.attachments.removeAll { $0.id == att.id }
+                        note.updatedAt = Date()
+                    }
+                )
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 4)
+    }
 }
+
+// MARK: - NoteImageBlockRow
+
+private struct NoteImageBlockRow: View {
+    @Bindable var note: Note
+    let block: NoteBlock
+    let blockIndex: Int
+    let att: Attachment
+    let onPreview: () -> Void
+    let onDelete: () -> Void
+    let onStepDown: () -> Void
+    let onStepUp: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            RoundedRectangle(cornerRadius: 2)
+                .fill(Color.accentColor.opacity(0.35))
+                .frame(width: 2)
+                .padding(.vertical, 2)
+            VStack(alignment: .leading, spacing: 6) {
+                imageView
+                controlsBar
+            }
+            .padding(.horizontal, 4)
+            .padding(.vertical, 4)
+        }
+        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    @ViewBuilder private var imageView: some View {
+        #if os(macOS)
+        if let img = NSImage(contentsOf: att.renderURL ?? att.fileURL) {
+            let maxW: CGFloat = 500
+            let scale = min(maxW / img.size.width, 1.0)
+            Image(nsImage: img)
+                .resizable()
+                .scaledToFit()
+                .frame(width: img.size.width * scale)
+                .frame(maxWidth: .infinity, alignment: frameAlignment)
+        }
+        #endif
+    }
+
+    private var frameAlignment: Alignment {
+        switch block.alignment {
+        case .left:   .leading
+        case .center: .center
+        case .right:  .trailing
+        }
+    }
+
+    @ViewBuilder private var controlsBar: some View {
+        HStack(spacing: 6) {
+            // Alignment
+            ForEach(ImageAlignment.allCases, id: \.self) { alignment in
+                Button { setAlignment(alignment) } label: {
+                    Image(systemName: alignment.icon).font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(block.alignment == alignment ? Color.accentColor : Color.secondary.opacity(0.5))
+            }
+
+            // Size controls
+            if let srcWidth = att.sourceImageWidth, let currentWidth = att.renderWidth {
+                Divider().frame(height: 12)
+                let steps = AttachmentStorage.renderSteps(forSourceWidth: srcWidth)
+                let atMin = steps.first == currentWidth
+                let atMax = steps.last == currentWidth
+                Text("\(currentWidth)px").font(.caption2).foregroundStyle(.tertiary)
+                Button { onStepDown() } label: { Image(systemName: "chevron.down").font(.caption2) }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(atMin ? Color.secondary.opacity(0.3) : .secondary)
+                    .disabled(atMin)
+                Button { onStepUp() } label: { Image(systemName: "chevron.up").font(.caption2) }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(atMax ? Color.secondary.opacity(0.3) : .secondary)
+                    .disabled(atMax)
+            }
+
+            Divider().frame(height: 12)
+
+            Button(action: onPreview) {
+                Image(systemName: "eye").font(.caption)
+            }.buttonStyle(.plain).foregroundStyle(.secondary)
+
+            Button(action: onDelete) {
+                Image(systemName: "xmark").font(.caption)
+            }.buttonStyle(.plain).foregroundStyle(.red)
+
+            Spacer()
+        }
+    }
+
+    private func setAlignment(_ alignment: ImageAlignment) {
+        var blocks = note.blocks
+        guard blocks.indices.contains(blockIndex), blocks[blockIndex].kind == .image else { return }
+        blocks[blockIndex].alignment = alignment
+        note.blocks = blocks
+        note.updatedAt = Date()
+    }
+}
+
+// MARK: - NoteAttachmentRow (non-image files only)
 
 private struct NoteAttachmentRow: View {
     let attachment: Attachment
     let onPreview: () -> Void
     let onDelete: () -> Void
-    var onStepDown: (() -> Void)? = nil
-    var onStepUp: (() -> Void)? = nil
 
     private var icon: String {
         switch attachment.kind {
@@ -312,48 +549,15 @@ private struct NoteAttachmentRow: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: icon)
-                .foregroundStyle(.secondary)
-                .font(.caption)
-            Text(attachment.fileName)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .lineLimit(1)
-            if attachment.kind == .image,
-               let srcWidth = attachment.sourceImageWidth,
-               let currentWidth = attachment.renderWidth {
-                let steps = AttachmentStorage.renderSteps(forSourceWidth: srcWidth)
-                let atMin = steps.first == currentWidth
-                let atMax = steps.last == currentWidth
-                Text("\(currentWidth)px")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
-                Button { onStepDown?() } label: {
-                    Image(systemName: "chevron.down").font(.caption2)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(atMin ? Color.secondary.opacity(0.3) : .secondary)
-                .disabled(atMin)
-                Button { onStepUp?() } label: {
-                    Image(systemName: "chevron.up").font(.caption2)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(atMax ? Color.secondary.opacity(0.3) : .secondary)
-                .disabled(atMax)
-            }
+            Image(systemName: icon).foregroundStyle(.secondary).font(.caption)
+            Text(attachment.fileName).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             Spacer()
             Button(action: onPreview) {
-                Image(systemName: "eye")
-                    .font(.caption)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
+                Image(systemName: "eye").font(.caption)
+            }.buttonStyle(.plain).foregroundStyle(.secondary)
             Button(action: onDelete) {
-                Image(systemName: "xmark")
-                    .font(.caption)
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.red)
+                Image(systemName: "xmark").font(.caption)
+            }.buttonStyle(.plain).foregroundStyle(.red)
         }
     }
 }

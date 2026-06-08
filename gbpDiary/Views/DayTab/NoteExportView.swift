@@ -76,20 +76,28 @@ struct NoteExportView: View {
     // MARK: - Content
 
     @ViewBuilder private var contentSection: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            if !note.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                PDFMarkdownView(content: note.content, width: Self.contentWidth)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-            let imageAttachments = note.attachments
-                .filter { $0.kind == .image }
-                .sorted { $0.createdAt < $1.createdAt }
-            ForEach(imageAttachments) { att in
-                if let img = NSImage(contentsOf: att.renderURL ?? att.fileURL) {
-                    let scale = min(Self.contentWidth / img.size.width, 1.0)
-                    PDFImageView(image: img)
-                        .frame(width:  img.size.width  * scale,
-                               height: img.size.height * scale)
+        VStack(alignment: .leading, spacing: 16) {
+            ForEach(note.blocks) { block in
+                switch block.kind {
+                case .text:
+                    if !block.textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        PDFMarkdownView(content: block.textContent, width: Self.contentWidth)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
+                    }
+                case .image:
+                    if let att = note.attachments.first(where: { $0.id == block.attachmentId }),
+                       let img = NSImage(contentsOf: att.renderURL ?? att.fileURL) {
+                        let scale = min(Self.contentWidth / img.size.width, 1.0)
+                        let pdfAlignment: Alignment = switch block.alignment {
+                            case .left:   .leading
+                            case .center: .center
+                            case .right:  .trailing
+                        }
+                        PDFImageView(image: img)
+                            .frame(width:  img.size.width  * scale,
+                                   height: img.size.height * scale)
+                            .frame(maxWidth: .infinity, alignment: pdfAlignment)
+                    }
                 }
             }
         }
@@ -98,11 +106,12 @@ struct NoteExportView: View {
     // MARK: - Helpers
 
     var exportTitle: String {
-        for rawLine in note.content.split(separator: "\n", omittingEmptySubsequences: true) {
-            let line = String(rawLine).trimmingCharacters(in: .whitespaces)
-            guard !line.hasPrefix("![") else { continue }
-            let stripped = line.replacingOccurrences(of: "^#+\\s+", with: "", options: .regularExpression)
-            if !stripped.isEmpty { return String(stripped.prefix(80)) }
+        for block in note.blocks where block.kind == .text {
+            for rawLine in block.textContent.split(separator: "\n", omittingEmptySubsequences: true) {
+                let line = String(rawLine).trimmingCharacters(in: .whitespaces)
+                let stripped = line.replacingOccurrences(of: "^#+\\s+", with: "", options: .regularExpression)
+                if !stripped.isEmpty { return String(stripped.prefix(80)) }
+            }
         }
         if let date { return date.formatted(date: .long, time: .omitted) }
         return "Note"

@@ -200,7 +200,7 @@ struct DayPageContent: View {
         .onAppear {
             migrateOldNotes()
             migrateDayNote()
-            migrateImageLinks()
+            migrateNoteBlocks()
         }
         #if os(macOS)
         .onAppear {
@@ -463,7 +463,7 @@ struct DayPageContent: View {
         )
         note.dayRecord = record
         modelContext.insert(note)
-        pendingFocusId = note.id
+        pendingFocusId = note.blocks.first?.id ?? note.id
     }
 
     private func noteRow(note: Note, index: Int) -> some View {
@@ -471,8 +471,14 @@ struct DayPageContent: View {
         return DayNoteRow(
             note: note,
             focusedEntryId: $focusedEntryId,
-            onMoveToPrevious: index > 0 ? { pendingFocusId = dayNotes[index - 1].id } : nil,
-            onMoveToNext: index < count - 1 ? { pendingFocusId = dayNotes[index + 1].id } : nil,
+            onMoveToPrevious: index > 0 ? {
+                let prev = dayNotes[index - 1]
+                pendingFocusId = prev.blocks.last(where: { $0.kind == .text })?.id ?? prev.id
+            } : nil,
+            onMoveToNext: index < count - 1 ? {
+                let next = dayNotes[index + 1]
+                pendingFocusId = next.blocks.first(where: { $0.kind == .text })?.id ?? next.id
+            } : nil,
             onEdit: { editingNote = note },
             onHeaderButtonTap: {
                 guard let savedId = focusClearMonitor.consumeLastClearedId() else { return }
@@ -480,7 +486,10 @@ struct DayPageContent: View {
             },
             onDelete: {
                 let i = dayNotes.firstIndex(where: { $0.id == note.id })
-                if let i, i > 0 { pendingFocusId = dayNotes[i - 1].id }
+                if let i, i > 0 {
+                    let prev = dayNotes[i - 1]
+                    pendingFocusId = prev.blocks.last(where: { $0.kind == .text })?.id ?? prev.id
+                }
                 modelContext.delete(note)
             }
         )
@@ -515,17 +524,38 @@ struct DayPageContent: View {
         for (i, n) in reordered.enumerated() { n.sortOrder = i }
     }
 
-    private func migrateImageLinks() {
+    // Converts Note.content + image attachments → NoteBlock array on first open.
+    // Also strips any legacy inline image links that may still be in content.
+    private func migrateNoteBlocks() {
         for note in dayRecord?.noteItems ?? [] {
+            // Strip leftover inline image links regardless of block migration state
             let stripped = note.content
                 .replacingOccurrences(
                     of: #"\n?!\[[^\]]*\]\([^)]+\)"#,
-                    with: "",
-                    options: .regularExpression
+                    with: "", options: .regularExpression
                 )
                 .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard stripped != note.content else { continue }
-            note.content = stripped
+
+            // Already has blocks — just clean up legacy inline links if needed
+            if !note.blocks.isEmpty {
+                if stripped != note.content {
+                    note.content = stripped
+                    note.updatedAt = Date()
+                }
+                continue
+            }
+
+            // Build blocks from legacy content + image attachments
+            var blocks: [NoteBlock] = [.text(stripped)]
+            let images = note.attachments
+                .filter { $0.kind == .image }
+                .sorted { $0.createdAt < $1.createdAt }
+            for img in images {
+                blocks.append(.image(img.id))
+                blocks.append(.text(""))
+            }
+            note.blocks = blocks
+            note.content = ""
             note.updatedAt = Date()
         }
     }
@@ -575,11 +605,19 @@ struct DayPageContent: View {
                 modelContext.delete(entry)
                 return true
             }
-        } else if let note = dayNotes.first(where: { $0.id == focusId }) {
+        } else if let note = dayNotes.first(where: { n in
+            n.id == focusId || n.blocks.contains(where: { $0.id == focusId })
+        }) {
             deleteMonitor.action = {
-                guard note.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-                let idx = dayNotes.firstIndex(where: { $0.id == focusId })
-                if let i = idx, i > 0 { pendingFocusId = dayNotes[i - 1].id }
+                let allTextEmpty = note.blocks.filter { $0.kind == .text }
+                    .allSatisfy { $0.textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                let hasImages = note.blocks.contains(where: { $0.kind == .image })
+                guard allTextEmpty && !hasImages else { return false }
+                let idx = dayNotes.firstIndex(where: { $0.id == note.id })
+                if let i = idx, i > 0 {
+                    let prev = dayNotes[i - 1]
+                    pendingFocusId = prev.blocks.last(where: { $0.kind == .text })?.id ?? prev.id
+                }
                 modelContext.delete(note)
                 return true
             }

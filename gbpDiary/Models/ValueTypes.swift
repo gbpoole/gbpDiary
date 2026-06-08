@@ -97,6 +97,45 @@ func jsonDecode<T: Decodable>(_ type: T.Type, _ json: String) -> T? {
     return try? JSONDecoder().decode(type, from: data)
 }
 
+// MARK: - Note block types
+
+enum NoteBlockKind: String, Codable {
+    case text
+    case image
+}
+
+enum ImageAlignment: String, Codable, CaseIterable {
+    case left
+    case center
+    case right
+
+    var icon: String {
+        switch self {
+        case .left:   "text.alignleft"
+        case .center: "text.aligncenter"
+        case .right:  "text.alignright"
+        }
+    }
+}
+
+struct NoteBlock: Codable, Identifiable {
+    var id: UUID = UUID()
+    var kind: NoteBlockKind
+    var textContent: String = ""
+    var attachmentId: UUID?
+    var alignment: ImageAlignment = .center
+
+    static func text(_ content: String = "") -> NoteBlock {
+        NoteBlock(kind: .text, textContent: content)
+    }
+
+    static func image(_ attachmentId: UUID, alignment: ImageAlignment = .center) -> NoteBlock {
+        NoteBlock(kind: .image, attachmentId: attachmentId, alignment: alignment)
+    }
+}
+
+// MARK: - Import provenance
+
 struct SourceContext: Codable, Equatable {
     var externalSourceId: String?
     var sourceRecordId: String?
