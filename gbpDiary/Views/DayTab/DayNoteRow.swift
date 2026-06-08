@@ -9,6 +9,7 @@ struct DayNoteRow: View {
     var onMoveToPrevious: (() -> Void)? = nil
     var onMoveToNext: (() -> Void)? = nil
     var onEdit: (() -> Void)? = nil
+    var onHeaderButtonTap: (() -> Void)? = nil
     var onDelete: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
@@ -27,14 +28,31 @@ struct DayNoteRow: View {
                     Chip(label: tag, color: .teal)
                 }
                 Spacer(minLength: 0)
-                Button { showingFilePicker = true } label: {
+                Button {
+                    onHeaderButtonTap?()
+                    showingFilePicker = true
+                } label: {
                     Image(systemName: "paperclip")
                         .foregroundStyle(.tertiary)
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
+                #if os(macOS)
+                Button {
+                    onHeaderButtonTap?()
+                    pasteImageFromClipboard()
+                } label: {
+                    Image(systemName: "clipboard")
+                        .foregroundStyle(.tertiary)
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                #endif
                 if let onEdit {
-                    InlineRowEditButton(action: onEdit)
+                    InlineRowEditButton(action: {
+                        onHeaderButtonTap?()
+                        onEdit()
+                    })
                 }
             }
             .padding(.horizontal, 12)
@@ -58,9 +76,7 @@ struct DayNoteRow: View {
         .contextMenu {
             Button("Edit…") { onEdit?() }
             #if os(macOS)
-            if clipboardHasImage {
-                Button("Paste Image from Clipboard") { pasteImageFromClipboard() }
-            }
+            Button("Paste Image from Clipboard") { pasteImageFromClipboard() }
             #endif
             Divider()
             Button("Delete", role: .destructive) { onDelete?() }
@@ -134,12 +150,40 @@ struct DayNoteRow: View {
     // MARK: - Clipboard paste
 
     #if os(macOS)
-    private var clipboardHasImage: Bool {
-        NSPasteboard.general.canReadObject(forClasses: [NSImage.self], options: nil)
-    }
-
     private func pasteImageFromClipboard() {
         let pb = NSPasteboard.general
+        let imageExts: Set<String> = ["png", "jpg", "jpeg", "heic", "gif", "tiff", "webp"]
+
+        // Try image file URLs first (Finder copy). Handle inline — not via handleImport — to
+        // avoid the startAccessingSecurityScopedResource dependency on clipboard-provided URLs.
+        var importedFromFileURL = false
+        let fileURLs = (pb.readObjects(forClasses: [NSURL.self],
+                                       options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        for url in fileURLs where imageExts.contains(url.pathExtension.lowercased()) {
+            let accessed = url.startAccessingSecurityScopedResource()
+            let ext = url.pathExtension.isEmpty ? "png" : url.pathExtension
+            let fileId = UUID()
+            let dest = AttachmentStorage.attachmentsDirectory
+                .appendingPathComponent(fileId.uuidString)
+                .appendingPathExtension(ext)
+            let copied = (try? FileManager.default.copyItem(at: url, to: dest)) != nil
+            if accessed { url.stopAccessingSecurityScopedResource() }
+            guard copied else { continue }
+            let att = Attachment(fileName: url.lastPathComponent, fileURL: dest, kind: .image)
+            att.fileSizeBytes = (try? dest.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+            att.note = note
+            modelContext.insert(att)
+            note.attachments.append(att)
+            setupRender(for: att, sourceURL: dest)
+            appendMarkdownLink(for: att)
+            importedFromFileURL = true
+        }
+        if importedFromFileURL {
+            note.updatedAt = Date()
+            return
+        }
+
+        // Fall back to raw image data (screenshots, image content copied from browser/apps).
         let pngData: Data?
         if let raw = pb.data(forType: .png) {
             pngData = raw

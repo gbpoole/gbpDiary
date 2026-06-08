@@ -46,16 +46,26 @@ private final class EscapeKeyMonitor: @unchecked Sendable {
 }
 
 // Monitors leftMouseDown and calls action when the click lands outside an NSTextView.
+// Saves the focused ID before clearing so button actions can restore it after mouseUp.
 private final class FocusClearMonitor: @unchecked Sendable {
     private var monitor: Any?
     var action: (() -> Void)?
+    var captureId: (() -> UUID?)?
+    private(set) var lastClearedId: UUID? = nil
+
+    func consumeLastClearedId() -> UUID? {
+        defer { lastClearedId = nil }
+        return lastClearedId
+    }
 
     func start() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
-            guard let action = self?.action,
+            guard let self,
+                  let action = self.action,
                   let hit = NSApp.keyWindow?.contentView?.hitTest(event.locationInWindow),
                   !(hit is NSTextView) else { return event }
+            self.lastClearedId = self.captureId?()
             MainActor.assumeIsolated(action)
             return event
         }
@@ -194,6 +204,7 @@ struct DayPageContent: View {
         #if os(macOS)
         .onAppear {
             deleteMonitor.start()
+            focusClearMonitor.captureId = { focusedEntryId }
             focusClearMonitor.action = { if focusedEntryId != nil { focusedEntryId = nil } }
             focusClearMonitor.start()
             escapeMonitor.action = {
@@ -462,6 +473,10 @@ struct DayPageContent: View {
             onMoveToPrevious: index > 0 ? { pendingFocusId = dayNotes[index - 1].id } : nil,
             onMoveToNext: index < count - 1 ? { pendingFocusId = dayNotes[index + 1].id } : nil,
             onEdit: { editingNote = note },
+            onHeaderButtonTap: {
+                guard let savedId = focusClearMonitor.consumeLastClearedId() else { return }
+                focusedEntryId = savedId
+            },
             onDelete: {
                 let i = dayNotes.firstIndex(where: { $0.id == note.id })
                 if let i, i > 0 { pendingFocusId = dayNotes[i - 1].id }
