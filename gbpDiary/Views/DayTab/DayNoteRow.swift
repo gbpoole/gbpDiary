@@ -18,6 +18,7 @@ struct DayNoteRow: View {
     @Environment(\.modelContext) private var modelContext
     @State private var showingFilePicker = false
     @State private var previewURL: URL?
+    @State private var blocksDropTargetIndex: Int?
 
     // True when any block within this note is focused
     private var isFocused: Bool {
@@ -107,41 +108,92 @@ struct DayNoteRow: View {
         let blocks = note.blocks
         VStack(spacing: 0) {
             ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
-                let isFirst = index == 0
-                let isLast  = index == blocks.count - 1
-                switch block.kind {
-                case .text:
-                    EntryNotesSubArea(
-                        text: textBinding(for: index),
-                        isFocused: focusedEntryId.wrappedValue == block.id,
-                        focusedEntryId: focusedEntryId,
-                        focusId: block.id,
-                        placeholder: "Note…",
-                        onMoveToPrevious: moveToPreviousAction(from: index, in: blocks),
-                        onMoveToNext: moveToNextAction(from: index, in: blocks),
-                        topRounded: isFirst,
-                        bottomRounded: isLast
-                    )
-                case .image:
-                    let attId = block.attachmentId
-                    let att = note.attachments.first { $0.id == attId }
-                    if let att {
-                        NoteImageBlockRow(
-                            note: note,
-                            block: block,
-                            blockIndex: index,
-                            att: att,
-                            onPreview: { previewURL = att.renderURL ?? att.fileURL },
-                            onDelete: { deleteImageBlock(at: index, att: att) },
-                            onStepDown: { stepRenderSize(for: att, by: -1) },
-                            onStepUp: { stepRenderSize(for: att, by: +1) },
-                            topRounded: isFirst,
-                            bottomRounded: isLast
-                        )
+                singleBlockView(block: block, index: index, in: blocks)
+                    .draggable(block.id.uuidString)
+                    // Overlay two half-height drop zones (top = insert before, bottom = insert after).
+                    // Overlays don't affect layout, so no gaps are introduced.
+                    .overlay {
+                        VStack(spacing: 0) {
+                            Color.clear
+                                .dropDestination(for: String.self) { items, _ in
+                                    guard let s = items.first else { return false }
+                                    reorderBlock(draggedIdString: s, belowIndex: index - 1)
+                                    return true
+                                } isTargeted: { targeted in
+                                    blocksDropTargetIndex = targeted ? (index - 1) : nil
+                                }
+                            Color.clear
+                                .dropDestination(for: String.self) { items, _ in
+                                    guard let s = items.first else { return false }
+                                    reorderBlock(draggedIdString: s, belowIndex: index)
+                                    return true
+                                } isTargeted: { targeted in
+                                    blocksDropTargetIndex = targeted ? index : nil
+                                }
+                        }
                     }
-                }
+                    .overlay(alignment: .top) {
+                        if blocksDropTargetIndex == index - 1 {
+                            Color.accentColor.frame(height: 2)
+                        }
+                    }
+                    .overlay(alignment: .bottom) {
+                        if blocksDropTargetIndex == index {
+                            Color.accentColor.frame(height: 2)
+                        }
+                    }
             }
         }
+    }
+
+    @ViewBuilder
+    private func singleBlockView(block: NoteBlock, index: Int, in blocks: [NoteBlock]) -> some View {
+        let isFirst = index == 0
+        let isLast  = index == blocks.count - 1
+        switch block.kind {
+        case .text:
+            EntryNotesSubArea(
+                text: textBinding(for: index),
+                isFocused: focusedEntryId.wrappedValue == block.id,
+                focusedEntryId: focusedEntryId,
+                focusId: block.id,
+                placeholder: "Note…",
+                onMoveToPrevious: moveToPreviousAction(from: index, in: blocks),
+                onMoveToNext: moveToNextAction(from: index, in: blocks),
+                topRounded: isFirst,
+                bottomRounded: isLast
+            )
+        case .image:
+            let attId = block.attachmentId
+            let att = note.attachments.first { $0.id == attId }
+            if let att {
+                NoteImageBlockRow(
+                    note: note,
+                    block: block,
+                    blockIndex: index,
+                    att: att,
+                    onPreview: { previewURL = att.renderURL ?? att.fileURL },
+                    onDelete: { deleteImageBlock(at: index, att: att) },
+                    onStepDown: { stepRenderSize(for: att, by: -1) },
+                    onStepUp: { stepRenderSize(for: att, by: +1) },
+                    topRounded: isFirst,
+                    bottomRounded: isLast
+                )
+            }
+        }
+    }
+
+    private func reorderBlock(draggedIdString: String, belowIndex: Int) {
+        guard let id = UUID(uuidString: draggedIdString),
+              let fromIdx = note.blocks.firstIndex(where: { $0.id == id }) else { return }
+        let targetInsert = belowIndex + 1
+        var reordered = note.blocks
+        let block = reordered.remove(at: fromIdx)
+        var adjusted = fromIdx < targetInsert ? targetInsert - 1 : targetInsert
+        adjusted = max(0, min(adjusted, reordered.count))
+        reordered.insert(block, at: adjusted)
+        note.blocks = reordered
+        note.updatedAt = Date()
     }
 
     // MARK: - Text binding

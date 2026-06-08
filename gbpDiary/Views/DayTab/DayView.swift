@@ -104,6 +104,7 @@ struct DayPageContent: View {
     @State private var collapsedTaskIds: Set<UUID> = []
     @State private var collapsedMeetingIds: Set<UUID> = []
     @State private var notesDropTargetIndex: Int?
+    @State private var pendingFocusNoteId: UUID?
 
     @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allTimeEntries: [TaskTimeEntry]
 
@@ -463,7 +464,7 @@ struct DayPageContent: View {
         )
         note.dayRecord = record
         modelContext.insert(note)
-        pendingFocusId = note.blocks.first?.id ?? note.id
+        pendingFocusNoteId = note.id
     }
 
     private func noteRow(note: Note, index: Int) -> some View {
@@ -493,6 +494,11 @@ struct DayPageContent: View {
                 modelContext.delete(note)
             }
         )
+        .onAppear {
+            guard pendingFocusNoteId == note.id else { return }
+            pendingFocusNoteId = nil
+            pendingFocusId = note.blocks.first(where: { $0.kind == .text })?.id
+        }
     }
 
     private func notesDropZone(belowIndex: Int) -> some View {
