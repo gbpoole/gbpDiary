@@ -105,32 +105,40 @@ struct DayNoteRow: View {
 
     @ViewBuilder private var blocksView: some View {
         let blocks = note.blocks
-        ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
-            switch block.kind {
-            case .text:
-                EntryNotesSubArea(
-                    text: textBinding(for: index),
-                    isFocused: focusedEntryId.wrappedValue == block.id,
-                    focusedEntryId: focusedEntryId,
-                    focusId: block.id,
-                    placeholder: "Note…",
-                    onMoveToPrevious: moveToPreviousAction(from: index, in: blocks),
-                    onMoveToNext: moveToNextAction(from: index, in: blocks)
-                )
-            case .image:
-                let attId = block.attachmentId
-                let att = note.attachments.first { $0.id == attId }
-                if let att {
-                    NoteImageBlockRow(
-                        note: note,
-                        block: block,
-                        blockIndex: index,
-                        att: att,
-                        onPreview: { previewURL = att.renderURL ?? att.fileURL },
-                        onDelete: { deleteImageBlock(at: index, att: att) },
-                        onStepDown: { stepRenderSize(for: att, by: -1) },
-                        onStepUp: { stepRenderSize(for: att, by: +1) }
+        VStack(spacing: 0) {
+            ForEach(Array(blocks.enumerated()), id: \.element.id) { index, block in
+                let isFirst = index == 0
+                let isLast  = index == blocks.count - 1
+                switch block.kind {
+                case .text:
+                    EntryNotesSubArea(
+                        text: textBinding(for: index),
+                        isFocused: focusedEntryId.wrappedValue == block.id,
+                        focusedEntryId: focusedEntryId,
+                        focusId: block.id,
+                        placeholder: "Note…",
+                        onMoveToPrevious: moveToPreviousAction(from: index, in: blocks),
+                        onMoveToNext: moveToNextAction(from: index, in: blocks),
+                        topRounded: isFirst,
+                        bottomRounded: isLast
                     )
+                case .image:
+                    let attId = block.attachmentId
+                    let att = note.attachments.first { $0.id == attId }
+                    if let att {
+                        NoteImageBlockRow(
+                            note: note,
+                            block: block,
+                            blockIndex: index,
+                            att: att,
+                            onPreview: { previewURL = att.renderURL ?? att.fileURL },
+                            onDelete: { deleteImageBlock(at: index, att: att) },
+                            onStepDown: { stepRenderSize(for: att, by: -1) },
+                            onStepUp: { stepRenderSize(for: att, by: +1) },
+                            topRounded: isFirst,
+                            bottomRounded: isLast
+                        )
+                    }
                 }
             }
         }
@@ -441,13 +449,16 @@ private struct NoteImageBlockRow: View {
     let onDelete: () -> Void
     let onStepDown: () -> Void
     let onStepUp: () -> Void
+    var topRounded: Bool = true
+    var bottomRounded: Bool = true
 
     var body: some View {
         HStack(spacing: 0) {
             RoundedRectangle(cornerRadius: 2)
                 .fill(Color.accentColor.opacity(0.35))
                 .frame(width: 2)
-                .padding(.vertical, 2)
+                .padding(.top, topRounded ? 2 : 0)
+                .padding(.bottom, bottomRounded ? 2 : 0)
             VStack(alignment: .leading, spacing: 6) {
                 imageView
                 controlsBar
@@ -455,7 +466,15 @@ private struct NoteImageBlockRow: View {
             .padding(.horizontal, 4)
             .padding(.vertical, 4)
         }
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+        .background(
+            Color.secondary.opacity(0.06),
+            in: UnevenRoundedRectangle(
+                topLeadingRadius:    topRounded    ? 6 : 0,
+                bottomLeadingRadius: bottomRounded ? 6 : 0,
+                bottomTrailingRadius: bottomRounded ? 6 : 0,
+                topTrailingRadius:   topRounded    ? 6 : 0
+            )
+        )
     }
 
     @ViewBuilder private var imageView: some View {

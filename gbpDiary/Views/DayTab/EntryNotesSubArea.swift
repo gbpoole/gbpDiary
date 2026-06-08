@@ -17,6 +17,8 @@ struct EntryNotesSubArea: View {
     let placeholder: String
     var onMoveToPrevious: (() -> Void)? = nil
     var onMoveToNext: (() -> Void)? = nil
+    var topRounded: Bool = true
+    var bottomRounded: Bool = true
 
     @Environment(\.openURL) private var openURL
     @State private var linkFlags = LinkTapFlags()
@@ -50,7 +52,8 @@ struct EntryNotesSubArea: View {
             RoundedRectangle(cornerRadius: 2)
                 .fill(Color.accentColor.opacity(0.35))
                 .frame(width: 2)
-                .padding(.vertical, 2)
+                .padding(.top, topRounded ? 2 : 0)
+                .padding(.bottom, bottomRounded ? 2 : 0)
 
             ZStack(alignment: .topLeading) {
                 if !isFocused {
@@ -114,6 +117,14 @@ struct EntryNotesSubArea: View {
             .padding(.horizontal, 4)
             .padding(.vertical, 4)
         }
-        .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
+        .background(
+            Color.secondary.opacity(0.06),
+            in: UnevenRoundedRectangle(
+                topLeadingRadius:    topRounded    ? 6 : 0,
+                bottomLeadingRadius: bottomRounded ? 6 : 0,
+                bottomTrailingRadius: bottomRounded ? 6 : 0,
+                topTrailingRadius:   topRounded    ? 6 : 0
+            )
+        )
     }
 }
