@@ -2,6 +2,9 @@ import SwiftUI
 import SwiftData
 import QuickLook
 import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+#endif
 
 struct DayNoteRow: View {
     @Bindable var note: Note
@@ -43,6 +46,15 @@ struct DayNoteRow: View {
                     pasteImageFromClipboard()
                 } label: {
                     Image(systemName: "clipboard")
+                        .foregroundStyle(.tertiary)
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                Button {
+                    onHeaderButtonTap?()
+                    exportAsPDF()
+                } label: {
+                    Image(systemName: "square.and.arrow.down")
                         .foregroundStyle(.tertiary)
                         .font(.caption)
                 }
@@ -96,7 +108,6 @@ struct DayNoteRow: View {
                     attachment: att,
                     onPreview: { previewURL = att.renderURL ?? att.fileURL },
                     onDelete: {
-                        removeMarkdownLink(for: att)
                         if let r = att.renderURL { AttachmentStorage.delete(at: r) }
                         AttachmentStorage.delete(at: att.fileURL)
                         modelContext.delete(att)
@@ -141,7 +152,6 @@ struct DayNoteRow: View {
 
             if kind == .image {
                 setupRender(for: att, sourceURL: copiedURL)
-                appendMarkdownLink(for: att)
             }
         }
         note.updatedAt = Date()
@@ -175,7 +185,6 @@ struct DayNoteRow: View {
             modelContext.insert(att)
             note.attachments.append(att)
             setupRender(for: att, sourceURL: dest)
-            appendMarkdownLink(for: att)
             importedFromFileURL = true
         }
         if importedFromFileURL {
@@ -209,8 +218,44 @@ struct DayNoteRow: View {
         modelContext.insert(att)
         note.attachments.append(att)
         setupRender(for: att, sourceURL: dest)
-        appendMarkdownLink(for: att)
         note.updatedAt = Date()
+    }
+    #endif
+
+    // MARK: - PDF export
+
+    #if os(macOS)
+    private func exportAsPDF() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.pdf]
+        panel.nameFieldStringValue = suggestedExportFilename()
+        panel.message = "Export note as PDF"
+        panel.prompt = "Export"
+
+        panel.begin { [note] response in
+            guard response == .OK, let url = panel.url else { return }
+            let exportView = NoteExportView(note: note, date: note.dayRecord?.date)
+            let hosting = NSHostingView(rootView: exportView)
+            hosting.frame = .zero
+            let size = hosting.fittingSize
+            hosting.frame = CGRect(origin: .zero, size: size)
+            let data = hosting.dataWithPDF(inside: hosting.bounds)
+            try? data.write(to: url)
+        }
+    }
+
+    private func suggestedExportFilename() -> String {
+        for rawLine in note.content.split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = String(rawLine)
+                .trimmingCharacters(in: .whitespaces)
+                .replacingOccurrences(of: "^#+\\s+", with: "", options: .regularExpression)
+                .replacingOccurrences(of: "[/:*?\"<>|\\\\]", with: "-", options: .regularExpression)
+            if !line.isEmpty { return "\(String(line.prefix(60))).pdf" }
+        }
+        if let date = note.dayRecord?.date {
+            return "\(date.formatted(.iso8601.year().month().day()))-note.pdf"
+        }
+        return "note.pdf"
     }
     #endif
 
@@ -241,35 +286,12 @@ struct DayNoteRow: View {
         guard let data = AttachmentStorage.resizedImageData(at: att.fileURL, targetWidth: newWidth) else { return }
         let newRenderURL = AttachmentStorage.renderURL(forSourceURL: att.fileURL, width: newWidth)
         try? data.write(to: newRenderURL)
-        if let oldRenderURL = att.renderURL {
-            removeMarkdownLink(forURL: oldRenderURL, fileName: att.fileName)
-            AttachmentStorage.delete(at: oldRenderURL)
-        }
+        if let oldRenderURL = att.renderURL { AttachmentStorage.delete(at: oldRenderURL) }
         att.renderURL = newRenderURL
         att.renderWidth = newWidth
-        appendMarkdownLink(for: att)
         note.updatedAt = Date()
     }
 
-    // MARK: - Markdown link helpers
-
-    private func appendMarkdownLink(for att: Attachment) {
-        let url = att.renderURL ?? att.fileURL
-        let link = "![\(att.fileName)](\(url.absoluteString))"
-        note.content = note.content.isEmpty ? link : note.content + "\n" + link
-    }
-
-    private func removeMarkdownLink(forURL url: URL, fileName: String) {
-        let link = "![\(fileName)](\(url.absoluteString))"
-        note.content = note.content
-            .replacingOccurrences(of: "\n" + link, with: "")
-            .replacingOccurrences(of: link + "\n", with: "")
-            .replacingOccurrences(of: link, with: "")
-    }
-
-    private func removeMarkdownLink(for att: Attachment) {
-        removeMarkdownLink(forURL: att.renderURL ?? att.fileURL, fileName: att.fileName)
-    }
 }
 
 private struct NoteAttachmentRow: View {

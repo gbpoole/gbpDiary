@@ -200,6 +200,7 @@ struct DayPageContent: View {
         .onAppear {
             migrateOldNotes()
             migrateDayNote()
+            migrateImageLinks()
         }
         #if os(macOS)
         .onAppear {
@@ -512,6 +513,21 @@ struct DayPageContent: View {
         adjusted = max(0, min(adjusted, reordered.count))
         reordered.insert(note, at: adjusted)
         for (i, n) in reordered.enumerated() { n.sortOrder = i }
+    }
+
+    private func migrateImageLinks() {
+        for note in dayRecord?.noteItems ?? [] {
+            let stripped = note.content
+                .replacingOccurrences(
+                    of: #"\n?!\[[^\]]*\]\([^)]+\)"#,
+                    with: "",
+                    options: .regularExpression
+                )
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard stripped != note.content else { continue }
+            note.content = stripped
+            note.updatedAt = Date()
+        }
     }
 
     private func migrateDayNote() {
