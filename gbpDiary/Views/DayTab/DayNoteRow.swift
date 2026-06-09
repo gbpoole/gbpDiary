@@ -172,7 +172,7 @@ struct DayNoteRow: View {
                     block: block,
                     blockIndex: index,
                     att: att,
-                    onPreview: { previewURL = att.renderURL ?? att.fileURL },
+                    onPreview: { previewURL = att.fileURL },
                     onDelete: { deleteImageBlock(at: index, att: att) },
                     onStepDown: { stepRenderSize(for: att, by: -1) },
                     onStepUp: { stepRenderSize(for: att, by: +1) },
@@ -532,12 +532,11 @@ private struct NoteImageBlockRow: View {
     @ViewBuilder private var imageView: some View {
         #if os(macOS)
         if let img = NSImage(contentsOf: att.renderURL ?? att.fileURL) {
-            let maxW: CGFloat = 500
-            let scale = min(maxW / img.size.width, 1.0)
+            let displayW = CGFloat(att.renderWidth ?? Int(img.size.width))
             Image(nsImage: img)
                 .resizable()
                 .scaledToFit()
-                .frame(width: img.size.width * scale)
+                .frame(maxWidth: displayW)
                 .frame(maxWidth: .infinity, alignment: frameAlignment)
         }
         #endif

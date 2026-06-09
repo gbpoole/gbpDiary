@@ -86,16 +86,19 @@ struct NoteExportView: View {
                     }
                 case .image:
                     if let att = note.attachments.first(where: { $0.id == block.attachmentId }),
-                       let img = NSImage(contentsOf: att.renderURL ?? att.fileURL) {
-                        let scale = min(Self.contentWidth / img.size.width, 1.0)
+                       let img = NSImage(contentsOf: att.fileURL) {
+                        // Use source image for maximum PDF quality.
+                        // Display width matches the UI: renderWidth capped at content width.
+                        let displayW = min(CGFloat(att.renderWidth ?? Int(img.size.width)),
+                                          Self.contentWidth)
+                        let scale = displayW / img.size.width
                         let pdfAlignment: Alignment = switch block.alignment {
                             case .left:   .leading
                             case .center: .center
                             case .right:  .trailing
                         }
                         PDFImageView(image: img)
-                            .frame(width:  img.size.width  * scale,
-                                   height: img.size.height * scale)
+                            .frame(width: displayW, height: img.size.height * scale)
                             .frame(maxWidth: .infinity, alignment: pdfAlignment)
                     }
                 }
