@@ -1,11 +1,11 @@
 import SwiftUI
 import Textual
 
-// Tracks whether a link tap just occurred so the simultaneous edit-mode gesture can be suppressed.
-// Stored as a class so mutations in the openURL closure are visible immediately to the
-// simultaneously-firing TapGesture closure (value-type @State would queue a re-render, not
-// propagate synchronously across two closures in the same event cycle).
-private final class LinkTapFlags {
+// Tracks tap-related flags that must be visible immediately across closures in the same event
+// cycle. Stored as a class so mutations are visible without waiting for a SwiftUI @State render
+// cycle — @State changes are batched and may not be committed until after a gesture closure
+// has already read the value.
+private final class TapFlags {
     var didTapLink = false
 }
 
@@ -17,35 +17,15 @@ struct EntryNotesSubArea: View {
     let placeholder: String
     var onMoveToPrevious: (() -> Void)? = nil
     var onMoveToNext: (() -> Void)? = nil
+    var onSingleTap: (() -> Void)? = nil
+    var wasSelectedBeforeTap: (() -> Bool)? = nil
+    var isSelected: Bool = false
     var topRounded: Bool = true
     var bottomRounded: Bool = true
 
     @Environment(\.openURL) private var openURL
-    @State private var linkFlags = LinkTapFlags()
+    @State private var tapFlags = TapFlags()
     @State private var tapRequestCount = 0
-
-#if os(macOS)
-    private var cursorIsOnFirstVisualLine: Bool {
-        guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
-              let lm = tv.layoutManager, lm.numberOfGlyphs > 0 else { return true }
-        let pos = min(tv.selectedRange().location, tv.string.utf16.count)
-        let glyph = min(lm.glyphIndexForCharacter(at: pos), lm.numberOfGlyphs - 1)
-        let curY = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
-        let topY = lm.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil).minY
-        return curY <= topY + 1
-    }
-
-    private var cursorIsOnLastVisualLine: Bool {
-        guard let tv = NSApp.keyWindow?.firstResponder as? NSTextView,
-              let lm = tv.layoutManager, lm.numberOfGlyphs > 0 else { return true }
-        let sel = tv.selectedRange()
-        let pos = min(sel.location + sel.length, tv.string.utf16.count)
-        let glyph = min(lm.glyphIndexForCharacter(at: pos), lm.numberOfGlyphs - 1)
-        let curY = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
-        let botY = lm.lineFragmentRect(forGlyphAt: lm.numberOfGlyphs - 1, effectiveRange: nil).minY
-        return curY >= botY - 1
-    }
-#endif
 
     var body: some View {
         HStack(spacing: 0) {
@@ -56,7 +36,12 @@ struct EntryNotesSubArea: View {
                 .padding(.bottom, bottomRounded ? 2 : 0)
 
             ZStack(alignment: .topLeading) {
-                if !isFocused {
+                // Show rendered markdown only when neither selected nor focused.
+                // When selected the NSTextView is shown instead (see below) so that
+                // the user's second click lands on the actual editing view — AppKit's
+                // mouseDown then places the cursor at the click position natively,
+                // with no coordinate-space translation needed between renderers.
+                if !isFocused && !isSelected {
                     if text.isEmpty {
                         Text(placeholder)
                             .foregroundStyle(.tertiary)
@@ -74,13 +59,33 @@ struct EntryNotesSubArea: View {
                             .padding(.leading, 6)
                             .padding(.vertical, 6)
                             .environment(\.openURL, OpenURLAction { url in
-                                linkFlags.didTapLink = true
+                                tapFlags.didTapLink = true
                                 openURL(url)
                                 return .handled
                             })
                     }
                 }
 
+                #if os(macOS)
+                // NoteTextEditor wraps NSTextView directly.
+                // .focused() must be kept so SwiftUI registers a claimant for focusId;
+                // without it, setting focusedEntryId.wrappedValue = focusId is
+                // immediately reset by SwiftUI because no view owns that focus value.
+                // Visible and hit-testable when isSelected so FocusClearMonitor's guard
+                // (!(hit is NSTextView)) fails and AppKit routes the click to this view,
+                // letting mouseDown place the cursor at the exact click position.
+                NoteTextEditor(
+                    text: $text,
+                    onMoveToPrevious: onMoveToPrevious,
+                    onMoveToNext: onMoveToNext
+                )
+                .focused(focusedEntryId, equals: focusId)
+                .padding(.leading, 4)
+                .frame(minHeight: (isFocused || isSelected) ? 44 : 0,
+                       maxHeight: (isFocused || isSelected) ? .infinity : 0)
+                .allowsHitTesting(isFocused || isSelected)
+                .opacity(isFocused || isSelected ? 1 : 0)
+                #else
                 TextEditor(text: $text)
                     .font(.body)
                     .scrollContentBackground(.hidden)
@@ -90,27 +95,34 @@ struct EntryNotesSubArea: View {
                     .padding(.leading, 4)
                     .onKeyPress(.upArrow, phases: .down) { _ in
                         guard let move = onMoveToPrevious else { return .ignored }
-                        #if os(macOS)
-                        guard cursorIsOnFirstVisualLine else { return .ignored }
-                        #endif
                         move(); return .handled
                     }
                     .onKeyPress(.downArrow, phases: .down) { _ in
                         guard let move = onMoveToNext else { return .ignored }
-                        #if os(macOS)
-                        guard cursorIsOnLastVisualLine else { return .ignored }
-                        #endif
                         move(); return .handled
                     }
                     .allowsHitTesting(isFocused)
                     .opacity(isFocused ? 1 : 0)
+                #endif
             }
             .contentShape(Rectangle())
             .simultaneousGesture(TapGesture().onEnded { tapRequestCount += 1 })
             .onChange(of: tapRequestCount) {
-                if linkFlags.didTapLink {
-                    linkFlags.didTapLink = false
+                if tapFlags.didTapLink {
+                    tapFlags.didTapLink = false
+                } else if isFocused {
+                    // Already editing — cursor already placed by AppKit or user
+                    ()
+                } else if wasSelectedBeforeTap?() == true {
+                    // Click landed on the 2px border strip (outside NSTextView) while selected.
+                    // FocusClearMonitor fired (hit was not NSTextView) so we enter edit mode
+                    // manually; cursor goes to end as a fallback.
+                    focusedEntryId.wrappedValue = focusId
+                } else if let tap = onSingleTap {
+                    // First click → select the block
+                    tap()
                 } else {
+                    // No selection model (non-note contexts) → focus immediately
                     focusedEntryId.wrappedValue = focusId
                 }
             }
@@ -126,5 +138,117 @@ struct EntryNotesSubArea: View {
                 topTrailingRadius:   topRounded    ? 6 : 0
             )
         )
+        .overlay {
+            if isSelected && !isFocused {
+                UnevenRoundedRectangle(
+                    topLeadingRadius:    topRounded    ? 6 : 0,
+                    bottomLeadingRadius: bottomRounded ? 6 : 0,
+                    bottomTrailingRadius: bottomRounded ? 6 : 0,
+                    topTrailingRadius:   topRounded    ? 6 : 0
+                )
+                .stroke(Color.accentColor, lineWidth: 2)
+            }
+        }
     }
 }
+
+// MARK: - macOS custom text editor
+
+#if os(macOS)
+
+// NSViewRepresentable wrapping NSTextView.
+// Handles bidirectional text sync and up/down navigation.
+// Focus is driven by SwiftUI via the .focused() modifier applied at the call site.
+// Cursor placement when entering edit mode from the selected state is handled natively
+// by AppKit's mouseDown(with:) — this view is visible and hit-testable when isSelected,
+// so the click reaches it directly and characterIndex(for:) runs on the correct layout.
+private struct NoteTextEditor: NSViewRepresentable {
+    @Binding var text: String
+    var onMoveToPrevious: (() -> Void)? = nil
+    var onMoveToNext: (() -> Void)? = nil
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSTextView {
+        let tv = NSTextView()
+        tv.delegate = context.coordinator
+        tv.isEditable = true
+        tv.isSelectable = true
+        tv.isRichText = false
+        tv.drawsBackground = false
+        tv.allowsUndo = true
+        tv.isVerticallyResizable = true
+        tv.isHorizontallyResizable = false
+        tv.autoresizingMask = [.width]
+        tv.textContainer?.widthTracksTextView = true
+        tv.textContainer?.lineFragmentPadding = 0
+        tv.textContainerInset = .zero
+        tv.font = .preferredFont(forTextStyle: .body)
+        context.coordinator.textView = tv
+        return tv
+    }
+
+    func updateNSView(_ tv: NSTextView, context: Context) {
+        if tv.string != text { tv.string = text }
+        context.coordinator.parent = self
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView tv: NSTextView, context: Context) -> CGSize? {
+        guard let container = tv.textContainer, let manager = tv.layoutManager else { return nil }
+        let width = proposal.width ?? 300
+        let saved = container.containerSize
+        container.containerSize = CGSize(width: width, height: .greatestFiniteMagnitude)
+        manager.ensureLayout(for: container)
+        let height = max(manager.usedRect(for: container).height, 44)
+        container.containerSize = saved
+        return CGSize(width: width, height: height)
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: NoteTextEditor
+        weak var textView: NSTextView?
+
+        init(_ parent: NoteTextEditor) { self.parent = parent }
+
+        func textDidChange(_ notification: Notification) {
+            guard let tv = textView, parent.text != tv.string else { return }
+            parent.text = tv.string
+        }
+
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            switch commandSelector {
+            case #selector(NSTextView.moveUp(_:)):
+                if let move = parent.onMoveToPrevious, isOnFirstVisualLine(textView) {
+                    move(); return true
+                }
+            case #selector(NSTextView.moveDown(_:)):
+                if let move = parent.onMoveToNext, isOnLastVisualLine(textView) {
+                    move(); return true
+                }
+            default: break
+            }
+            return false
+        }
+
+        private func isOnFirstVisualLine(_ tv: NSTextView) -> Bool {
+            guard let lm = tv.layoutManager, lm.numberOfGlyphs > 0 else { return true }
+            let pos = min(tv.selectedRange().location, tv.string.utf16.count)
+            let glyph = min(lm.glyphIndexForCharacter(at: pos), lm.numberOfGlyphs - 1)
+            let curY = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
+            let topY = lm.lineFragmentRect(forGlyphAt: 0, effectiveRange: nil).minY
+            return curY <= topY + 1
+        }
+
+        private func isOnLastVisualLine(_ tv: NSTextView) -> Bool {
+            guard let lm = tv.layoutManager, lm.numberOfGlyphs > 0 else { return true }
+            let sel = tv.selectedRange()
+            let pos = min(sel.location + sel.length, tv.string.utf16.count)
+            let glyph = min(lm.glyphIndexForCharacter(at: pos), lm.numberOfGlyphs - 1)
+            let curY = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY
+            let botY = lm.lineFragmentRect(forGlyphAt: lm.numberOfGlyphs - 1, effectiveRange: nil).minY
+            return curY >= botY - 1
+        }
+    }
+}
+
+#endif

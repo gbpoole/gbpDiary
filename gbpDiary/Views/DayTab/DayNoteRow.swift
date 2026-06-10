@@ -9,6 +9,8 @@ import AppKit
 struct DayNoteRow: View {
     @Bindable var note: Note
     let focusedEntryId: FocusState<UUID?>.Binding
+    var selectedBlockId: Binding<UUID?>
+    var consumeLastClearedSelectedBlockId: (() -> UUID?)? = nil
     var onMoveToPrevious: (() -> Void)? = nil
     var onMoveToNext: (() -> Void)? = nil
     var onEdit: (() -> Void)? = nil
@@ -152,14 +154,23 @@ struct DayNoteRow: View {
         let isLast  = index == blocks.count - 1
         switch block.kind {
         case .text:
+            let blockId = block.id
             EntryNotesSubArea(
                 text: textBinding(for: index),
-                isFocused: focusedEntryId.wrappedValue == block.id,
+                isFocused: focusedEntryId.wrappedValue == blockId,
                 focusedEntryId: focusedEntryId,
-                focusId: block.id,
+                focusId: blockId,
                 placeholder: "Note…",
                 onMoveToPrevious: moveToPreviousAction(from: index, in: blocks),
                 onMoveToNext: moveToNextAction(from: index, in: blocks),
+                onSingleTap: {
+                    focusedEntryId.wrappedValue = nil
+                    selectedBlockId.wrappedValue = blockId
+                },
+                wasSelectedBeforeTap: {
+                    consumeLastClearedSelectedBlockId?() == blockId
+                },
+                isSelected: selectedBlockId.wrappedValue == blockId,
                 topRounded: isFirst,
                 bottomRounded: isLast
             )
@@ -167,11 +178,17 @@ struct DayNoteRow: View {
             let attId = block.attachmentId
             let att = note.attachments.first { $0.id == attId }
             if let att {
+                let blockId = block.id
                 NoteImageBlockRow(
                     note: note,
                     block: block,
                     blockIndex: index,
                     att: att,
+                    isSelected: selectedBlockId.wrappedValue == blockId,
+                    onSelect: {
+                        focusedEntryId.wrappedValue = nil
+                        selectedBlockId.wrappedValue = blockId
+                    },
                     onPreview: { previewURL = att.fileURL },
                     onDelete: { deleteImageBlock(at: index, att: att) },
                     onStepDown: { stepRenderSize(for: att, by: -1) },
@@ -266,6 +283,7 @@ struct DayNoteRow: View {
     private func deleteImageBlock(at index: Int, att: Attachment) {
         var blocks = note.blocks
         guard blocks.indices.contains(index), blocks[index].kind == .image else { return }
+        if selectedBlockId.wrappedValue == blocks[index].id { selectedBlockId.wrappedValue = nil }
         blocks.remove(at: index)
 
         // Merge the surrounding text blocks (index−1 and index, post-removal)
@@ -497,6 +515,8 @@ private struct NoteImageBlockRow: View {
     let block: NoteBlock
     let blockIndex: Int
     let att: Attachment
+    var isSelected: Bool = false
+    var onSelect: () -> Void = {}
     let onPreview: () -> Void
     let onDelete: () -> Void
     let onStepDown: () -> Void
@@ -518,6 +538,8 @@ private struct NoteImageBlockRow: View {
             .padding(.horizontal, 4)
             .padding(.vertical, 4)
         }
+        .contentShape(Rectangle())
+        .onTapGesture { onSelect() }
         .background(
             Color.secondary.opacity(0.06),
             in: UnevenRoundedRectangle(
@@ -527,6 +549,17 @@ private struct NoteImageBlockRow: View {
                 topTrailingRadius:   topRounded    ? 6 : 0
             )
         )
+        .overlay {
+            if isSelected {
+                UnevenRoundedRectangle(
+                    topLeadingRadius:    topRounded    ? 6 : 0,
+                    bottomLeadingRadius: bottomRounded ? 6 : 0,
+                    bottomTrailingRadius: bottomRounded ? 6 : 0,
+                    topTrailingRadius:   topRounded    ? 6 : 0
+                )
+                .stroke(Color.accentColor, lineWidth: 2)
+            }
+        }
     }
 
     @ViewBuilder private var imageView: some View {
