@@ -9,6 +9,8 @@ private final class TapFlags {
     var didTapLink = false
 }
 
+enum CursorPlacement { case start, end }
+
 struct EntryNotesSubArea: View {
     @Binding var text: String
     let isFocused: Bool
@@ -22,6 +24,8 @@ struct EntryNotesSubArea: View {
     var isSelected: Bool = false
     var topRounded: Bool = true
     var bottomRounded: Bool = true
+    var cursorPlacement: CursorPlacement? = nil
+    var onCursorPlacementConsumed: (() -> Void)? = nil
 
     @Environment(\.openURL) private var openURL
     @State private var tapFlags = TapFlags()
@@ -77,7 +81,9 @@ struct EntryNotesSubArea: View {
                 NoteTextEditor(
                     text: $text,
                     onMoveToPrevious: onMoveToPrevious,
-                    onMoveToNext: onMoveToNext
+                    onMoveToNext: onMoveToNext,
+                    cursorPlacement: cursorPlacement,
+                    onCursorPlacementConsumed: onCursorPlacementConsumed
                 )
                 .focused(focusedEntryId, equals: focusId)
                 .padding(.leading, 4)
@@ -156,8 +162,32 @@ struct EntryNotesSubArea: View {
 
 #if os(macOS)
 
+// NSTextView subclass that restores cursor position when gaining focus.
+// `pendingPlacement` is set by `updateNSView` before focus transfers;
+// `savedRange` is updated on every selection change via the delegate.
+private final class ManagedTextView: NSTextView {
+    var pendingPlacement: CursorPlacement? = nil
+    var savedRange: NSRange? = nil
+
+    override func becomeFirstResponder() -> Bool {
+        let ok = super.becomeFirstResponder()
+        if ok {
+            if let p = pendingPlacement {
+                switch p {
+                case .start: setSelectedRange(NSRange(location: 0, length: 0))
+                case .end:   setSelectedRange(NSRange(location: string.utf16.count, length: 0))
+                }
+                pendingPlacement = nil
+            } else if let r = savedRange, r.location + r.length <= string.utf16.count {
+                setSelectedRange(r)
+            }
+        }
+        return ok
+    }
+}
+
 // NSViewRepresentable wrapping NSTextView.
-// Handles bidirectional text sync and up/down navigation.
+// Handles bidirectional text sync, up/down navigation, and cursor save/restore.
 // Focus is driven by SwiftUI via the .focused() modifier applied at the call site.
 // Cursor placement when entering edit mode from the selected state is handled natively
 // by AppKit's mouseDown(with:) — this view is visible and hit-testable when isSelected,
@@ -166,11 +196,13 @@ private struct NoteTextEditor: NSViewRepresentable {
     @Binding var text: String
     var onMoveToPrevious: (() -> Void)? = nil
     var onMoveToNext: (() -> Void)? = nil
+    var cursorPlacement: CursorPlacement? = nil
+    var onCursorPlacementConsumed: (() -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    func makeNSView(context: Context) -> NSTextView {
-        let tv = NSTextView()
+    func makeNSView(context: Context) -> ManagedTextView {
+        let tv = ManagedTextView()
         tv.delegate = context.coordinator
         tv.isEditable = true
         tv.isSelectable = true
@@ -188,12 +220,16 @@ private struct NoteTextEditor: NSViewRepresentable {
         return tv
     }
 
-    func updateNSView(_ tv: NSTextView, context: Context) {
+    func updateNSView(_ tv: ManagedTextView, context: Context) {
         if tv.string != text { tv.string = text }
+        if let placement = cursorPlacement {
+            tv.pendingPlacement = placement
+            onCursorPlacementConsumed?()
+        }
         context.coordinator.parent = self
     }
 
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView tv: NSTextView, context: Context) -> CGSize? {
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView tv: ManagedTextView, context: Context) -> CGSize? {
         guard let container = tv.textContainer, let manager = tv.layoutManager else { return nil }
         let width = proposal.width ?? 300
         let saved = container.containerSize
@@ -206,13 +242,18 @@ private struct NoteTextEditor: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: NoteTextEditor
-        weak var textView: NSTextView?
+        weak var textView: ManagedTextView?
 
         init(_ parent: NoteTextEditor) { self.parent = parent }
 
         func textDidChange(_ notification: Notification) {
             guard let tv = textView, parent.text != tv.string else { return }
             parent.text = tv.string
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let tv = textView else { return }
+            tv.savedRange = tv.selectedRange()
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {

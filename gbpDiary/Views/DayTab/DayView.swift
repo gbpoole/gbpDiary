@@ -67,6 +67,41 @@ private final class ReturnKeyMonitor: @unchecked Sendable {
     }
 }
 
+// Intercepts ↑/↓ and Shift-↑/↓ when no NSTextView has focus, to move or reorder
+// the selected block.
+private final class ShiftArrowMonitor: @unchecked Sendable {
+    private var monitor: Any?
+    var actionUp: (() -> Bool)?        // Shift-↑: swap with block above
+    var actionDown: (() -> Bool)?      // Shift-↓: swap with block below
+    var actionPlainUp: (() -> Bool)?   // ↑: move highlight to block above
+    var actionPlainDown: (() -> Bool)? // ↓: move highlight to block below
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if NSApp.keyWindow?.firstResponder is NSTextView { return event }
+            let isShift = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.shift)
+            if event.keyCode == 126 {  // ↑
+                let handled = MainActor.assumeIsolated {
+                    isShift ? (self?.actionUp?() ?? false) : (self?.actionPlainUp?() ?? false)
+                }
+                return handled ? nil : event
+            }
+            if event.keyCode == 125 {  // ↓
+                let handled = MainActor.assumeIsolated {
+                    isShift ? (self?.actionDown?() ?? false) : (self?.actionPlainDown?() ?? false)
+                }
+                return handled ? nil : event
+            }
+            return event
+        }
+    }
+
+    func stop() {
+        if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
+    }
+}
+
 // Monitors leftMouseDown and calls action when the click lands outside an NSTextView.
 // Saves the focused ID (and selected block ID) before clearing so button actions can
 // restore focus after mouseUp, and tap handlers can detect a second click on a selection.
@@ -150,6 +185,7 @@ struct DayPageContent: View {
     @State private var returnMonitor = ReturnKeyMonitor()
     @State private var focusClearMonitor = FocusClearMonitor()
     @State private var escapeMonitor = EscapeKeyMonitor()
+    @State private var shiftArrowMonitor = ShiftArrowMonitor()
     #endif
 
     private var dayStart: Date { DayTaskFiltering.dayBounds(for: date).dayStart }
@@ -249,18 +285,25 @@ struct DayPageContent: View {
             }
             focusClearMonitor.start()
             escapeMonitor.action = {
-                guard focusedEntryId != nil || selectedBlockId != nil else { return false }
-                focusedEntryId = nil
-                selectedBlockId = nil
-                return true
+                if let focused = focusedEntryId {
+                    focusedEntryId = nil
+                    selectedBlockId = focused  // keep block ring visible
+                    return true
+                } else if selectedBlockId != nil {
+                    selectedBlockId = nil
+                    return true
+                }
+                return false
             }
             escapeMonitor.start()
+            shiftArrowMonitor.start()
         }
         .onDisappear {
             deleteMonitor.stop()
             returnMonitor.stop()
             focusClearMonitor.stop()
             escapeMonitor.stop()
+            shiftArrowMonitor.stop()
         }
         .onChange(of: focusedEntryId) { _, newId in
             if let newId { selectedBlockId = newId }
@@ -269,6 +312,7 @@ struct DayPageContent: View {
         .onChange(of: selectedBlockId) { _, newId in
             updateDeleteAction(for: focusedEntryId)
             updateReturnAction(for: newId)
+            updateShiftArrowActions(for: newId)
         }
         .alert("Delete Block?", isPresented: Binding(
             get: { pendingBlockDeletion != nil },
@@ -533,11 +577,17 @@ struct DayPageContent: View {
             },
             onMoveToPrevious: index > 0 ? {
                 let prev = dayNotes[index - 1]
-                pendingFocusId = prev.blocks.last(where: { $0.kind == .text })?.id ?? prev.id
+                if let last = prev.blocks.last {
+                    if last.kind == .image { selectedBlockId = last.id }
+                    else { pendingFocusId = last.id }
+                }
             } : nil,
             onMoveToNext: index < count - 1 ? {
                 let next = dayNotes[index + 1]
-                pendingFocusId = next.blocks.first(where: { $0.kind == .text })?.id ?? next.id
+                if let first = next.blocks.first {
+                    if first.kind == .image { selectedBlockId = first.id }
+                    else { pendingFocusId = first.id }
+                }
             } : nil,
             onEdit: { editingNote = note },
             onHeaderButtonTap: {
@@ -769,21 +819,93 @@ struct DayPageContent: View {
     private func updateReturnAction(for selId: UUID?) {
         guard let selId else { returnMonitor.action = nil; return }
         for note in dayNotes {
-            if let idx = note.blocks.firstIndex(where: { $0.id == selId }),
-               note.blocks[idx].kind == .image {
-                returnMonitor.action = {
-                    var blocks = note.blocks
-                    let newBlock = NoteBlock.text("")
-                    blocks.insert(newBlock, at: idx + 1)
-                    note.blocks = blocks
-                    note.updatedAt = Date()
-                    pendingFocusId = newBlock.id
-                    return true
+            if let idx = note.blocks.firstIndex(where: { $0.id == selId }) {
+                switch note.blocks[idx].kind {
+                case .image:
+                    returnMonitor.action = {
+                        var blocks = note.blocks
+                        let newBlock = NoteBlock.text("")
+                        blocks.insert(newBlock, at: idx + 1)
+                        note.blocks = blocks
+                        note.updatedAt = Date()
+                        pendingFocusId = newBlock.id
+                        return true
+                    }
+                case .text:
+                    returnMonitor.action = {
+                        pendingFocusId = selId
+                        return true
+                    }
                 }
                 return
             }
         }
         returnMonitor.action = nil
+    }
+
+    private func updateShiftArrowActions(for selId: UUID?) {
+        guard let selId else {
+            shiftArrowMonitor.actionUp = nil
+            shiftArrowMonitor.actionDown = nil
+            shiftArrowMonitor.actionPlainUp = nil
+            shiftArrowMonitor.actionPlainDown = nil
+            return
+        }
+        for (noteIdx, note) in dayNotes.enumerated() {
+            if note.blocks.contains(where: { $0.id == selId }) {
+                // Shift-↑/↓: swap with adjacent block (index looked up dynamically).
+                shiftArrowMonitor.actionUp = {
+                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }),
+                          idx > 0 else { return false }
+                    var blocks = note.blocks
+                    blocks.swapAt(idx, idx - 1)
+                    note.blocks = blocks
+                    note.updatedAt = Date()
+                    return true
+                }
+                shiftArrowMonitor.actionDown = {
+                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }),
+                          idx < note.blocks.count - 1 else { return false }
+                    var blocks = note.blocks
+                    blocks.swapAt(idx, idx + 1)
+                    note.blocks = blocks
+                    note.updatedAt = Date()
+                    return true
+                }
+                // Plain ↑/↓: move highlight to adjacent block, crossing note boundaries.
+                shiftArrowMonitor.actionPlainUp = {
+                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }) else { return false }
+                    if idx > 0 {
+                        selectedBlockId = note.blocks[idx - 1].id
+                        return true
+                    }
+                    // Cross into previous note's last block.
+                    if noteIdx > 0, let last = dayNotes[noteIdx - 1].blocks.last {
+                        selectedBlockId = last.id
+                        return true
+                    }
+                    return false
+                }
+                shiftArrowMonitor.actionPlainDown = {
+                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }) else { return false }
+                    if idx < note.blocks.count - 1 {
+                        selectedBlockId = note.blocks[idx + 1].id
+                        return true
+                    }
+                    // Cross into next note's first block.
+                    if noteIdx < dayNotes.count - 1, let first = dayNotes[noteIdx + 1].blocks.first {
+                        selectedBlockId = first.id
+                        return true
+                    }
+                    return false
+                }
+                return
+            }
+        }
+        shiftArrowMonitor.actionUp = nil
+        shiftArrowMonitor.actionDown = nil
+        shiftArrowMonitor.actionPlainUp = nil
+        shiftArrowMonitor.actionPlainDown = nil
     }
     #endif
 }

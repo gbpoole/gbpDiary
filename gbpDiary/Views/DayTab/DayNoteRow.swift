@@ -21,6 +21,7 @@ struct DayNoteRow: View {
     @State private var showingFilePicker = false
     @State private var previewURL: URL?
     @State private var blocksDropTargetIndex: Int?
+    @State private var pendingCursorPlacements: [UUID: CursorPlacement] = [:]
 
     // True when any block within this note is focused
     private var isFocused: Bool {
@@ -172,7 +173,9 @@ struct DayNoteRow: View {
                 },
                 isSelected: selectedBlockId.wrappedValue == blockId,
                 topRounded: isFirst,
-                bottomRounded: isLast
+                bottomRounded: isLast,
+                cursorPlacement: pendingCursorPlacements[blockId],
+                onCursorPlacementConsumed: { pendingCursorPlacements[blockId] = nil }
             )
         case .image:
             let attId = block.attachmentId
@@ -232,9 +235,18 @@ struct DayNoteRow: View {
 
     private func moveToPreviousAction(from index: Int, in blocks: [NoteBlock]) -> (() -> Void)? {
         for i in stride(from: index - 1, through: 0, by: -1) {
-            if blocks[i].kind == .text {
-                let id = blocks[i].id
-                return { focusedEntryId.wrappedValue = id }
+            let id = blocks[i].id
+            switch blocks[i].kind {
+            case .image:
+                return {
+                    focusedEntryId.wrappedValue = nil
+                    selectedBlockId.wrappedValue = id
+                }
+            case .text:
+                return {
+                    pendingCursorPlacements[id] = .end
+                    focusedEntryId.wrappedValue = id
+                }
             }
         }
         return onMoveToPrevious
@@ -242,9 +254,18 @@ struct DayNoteRow: View {
 
     private func moveToNextAction(from index: Int, in blocks: [NoteBlock]) -> (() -> Void)? {
         for i in (index + 1)..<blocks.count {
-            if blocks[i].kind == .text {
-                let id = blocks[i].id
-                return { focusedEntryId.wrappedValue = id }
+            let id = blocks[i].id
+            switch blocks[i].kind {
+            case .image:
+                return {
+                    focusedEntryId.wrappedValue = nil
+                    selectedBlockId.wrappedValue = id
+                }
+            case .text:
+                return {
+                    pendingCursorPlacements[id] = .start
+                    focusedEntryId.wrappedValue = id
+                }
             }
         }
         return onMoveToNext
