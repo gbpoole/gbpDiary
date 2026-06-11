@@ -760,7 +760,12 @@ struct DayPageContent: View {
                     case .text:
                         let blockId = note.blocks[idx].id
                         deleteMonitor.action = {
-                            pendingBlockDeletion = makeDeleteTextBlockClosure(note: note, blockId: blockId)
+                            let content = note.blocks.first(where: { $0.id == blockId })?.textContent ?? ""
+                            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                makeDeleteTextBlockClosure(note: note, blockId: blockId)()
+                            } else {
+                                pendingBlockDeletion = makeDeleteTextBlockClosure(note: note, blockId: blockId)
+                            }
                             return true
                         }
                     }
@@ -793,7 +798,7 @@ struct DayPageContent: View {
                 guard note.blocks.first(where: { $0.id == blockId })?
                     .textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
                 else { return false }
-                pendingBlockDeletion = makeDeleteTextBlockClosure(note: note, blockId: blockId)
+                makeDeleteTextBlockClosure(note: note, blockId: blockId)()
                 return true
             }
         } else {

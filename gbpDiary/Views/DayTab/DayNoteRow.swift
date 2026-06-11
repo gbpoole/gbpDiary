@@ -313,10 +313,9 @@ struct DayNoteRow: View {
 
     // MARK: - Image block management
 
-    // Inserts one or more image attachments at the focused text block, each followed by a new text block.
+    // Inserts one or more image attachments at the focused text block.
     private func insertImageBlocks(_ atts: [Attachment]) {
         var blocks = note.blocks
-        if blocks.isEmpty { blocks = [.text("")] }
 
         let insertAfter: Int
         if let focusedId = focusedEntryId.wrappedValue,
@@ -328,17 +327,12 @@ struct DayNoteRow: View {
         }
 
         var afterIdx = insertAfter
-        var lastTextId: UUID?
         for att in atts {
-            let imgBlock = NoteBlock.image(att.id)
-            let txtBlock = NoteBlock.text("")
-            blocks.insert(contentsOf: [imgBlock, txtBlock], at: afterIdx + 1)
-            afterIdx += 2
-            lastTextId = txtBlock.id
+            blocks.insert(NoteBlock.image(att.id), at: afterIdx + 1)
+            afterIdx += 1
         }
 
         note.blocks = blocks
-        if let id = lastTextId { focusedEntryId.wrappedValue = id }
     }
 
     private func deleteImageBlock(at index: Int, att: Attachment) {
@@ -555,7 +549,9 @@ struct DayNoteRow: View {
               let srcWidth = firstAtt.sourceImageWidth,
               let currentWidth = firstAtt.renderWidth else { return }
         let canonicalSteps = AttachmentStorage.renderSteps(forSourceWidth: srcWidth)
-        guard let stepIdx = canonicalSteps.firstIndex(of: currentWidth) else { return }
+        let stepIdx = canonicalSteps.firstIndex(of: currentWidth)
+            ?? canonicalSteps.indices.min(by: { abs(canonicalSteps[$0] - currentWidth) < abs(canonicalSteps[$1] - currentWidth) })
+            ?? 0
         let newStepIdx = stepIdx + delta
         guard canonicalSteps.indices.contains(newStepIdx) else { return }
         let targetWidth = canonicalSteps[newStepIdx]
@@ -824,6 +820,7 @@ private struct NoteImageGroupRow: View {
                    let att = note.attachments.first(where: { $0.id == attId }) {
                     imageCell(block: block, att: att, pos: pos, canonicalWidth: canonicalWidth)
                         .draggable(block.id.uuidString)
+                        .onTapGesture { onSelect(block.id) }
                 }
             }
         }
@@ -936,7 +933,6 @@ private struct NoteImageGroupRow: View {
                     }
                 }
                 .contentShape(Rectangle())
-                .onTapGesture { onSelect(block.id) }
         }
         #endif
     }
@@ -953,8 +949,8 @@ private struct NoteImageGroupRow: View {
             if let att = canonicalAtt, let srcWidth = att.sourceImageWidth, let currentWidth = att.renderWidth {
                 Divider().frame(height: 12)
                 let steps = AttachmentStorage.renderSteps(forSourceWidth: srcWidth)
-                let atMin = steps.first == currentWidth
-                let atMax = steps.last == currentWidth
+                let atMin = currentWidth <= (steps.first ?? 0)
+                let atMax = currentWidth >= (steps.last ?? 0)
                 Text("\(currentWidth)px").font(.caption2).foregroundStyle(.tertiary)
                 Button { onStepSize(-1) } label: { Image(systemName: "chevron.down").font(.caption2) }
                     .buttonStyle(.plain)
