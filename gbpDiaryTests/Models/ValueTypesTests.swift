@@ -38,7 +38,7 @@ struct ValueTypesTests {
 
     // MARK: - NoteBlock.computeGroups
 
-    @Test func noteBlock_computeGroups_groupsConsecutiveImagesWithSourceIndices() {
+    @Test func noteBlock_computeGroups_eachImageIsOwnGroup() {
         let textA = NoteBlock.text("A")
         let imageA = NoteBlock.image(UUID())
         let imageB = NoteBlock.image(UUID())
@@ -47,42 +47,34 @@ struct ValueTypesTests {
 
         let groups = NoteBlock.computeGroups(from: [textA, imageA, imageB, textB, imageC])
 
-        #expect(groups.count == 4)
+        // Each block is its own group — consecutive images are no longer merged.
+        #expect(groups.count == 5)
 
-        guard groups.count == 4 else { return }
+        guard groups.count == 5 else { return }
 
         if case .text(let block, let index) = groups[0].content {
-            #expect(block.id == textA.id)
-            #expect(index == 0)
-            #expect(groups[0].firstBlockIndex == 0)
-            #expect(groups[0].lastBlockIndex == 0)
-        } else {
-            Issue.record("Expected first group to be text")
-        }
+            #expect(block.id == textA.id); #expect(index == 0)
+        } else { Issue.record("groups[0] expected text") }
 
         if case .images(let blocks, let indices) = groups[1].content {
-            #expect(blocks.map { $0.id } == [imageA.id, imageB.id])
-            #expect(indices == [1, 2])
-            #expect(groups[1].id == imageA.id)
-            #expect(groups[1].firstBlockIndex == 1)
-            #expect(groups[1].lastBlockIndex == 2)
-        } else {
-            Issue.record("Expected second group to be consecutive images")
-        }
+            #expect(blocks.map { $0.id } == [imageA.id])
+            #expect(indices == [1])
+            #expect(groups[1].firstBlockIndex == 1); #expect(groups[1].lastBlockIndex == 1)
+        } else { Issue.record("groups[1] expected single-image group") }
 
-        if case .text(let block, let index) = groups[2].content {
-            #expect(block.id == textB.id)
-            #expect(index == 3)
-        } else {
-            Issue.record("Expected third group to be text")
-        }
+        if case .images(let blocks, let indices) = groups[2].content {
+            #expect(blocks.map { $0.id } == [imageB.id])
+            #expect(indices == [2])
+            #expect(groups[2].firstBlockIndex == 2); #expect(groups[2].lastBlockIndex == 2)
+        } else { Issue.record("groups[2] expected single-image group") }
 
-        if case .images(let blocks, let indices) = groups[3].content {
+        if case .text(let block, let index) = groups[3].content {
+            #expect(block.id == textB.id); #expect(index == 3)
+        } else { Issue.record("groups[3] expected text") }
+
+        if case .images(let blocks, let indices) = groups[4].content {
             #expect(blocks.map { $0.id } == [imageC.id])
             #expect(indices == [4])
-            #expect(groups[3].id == imageC.id)
-        } else {
-            Issue.record("Expected fourth group to be a single image")
-        }
+        } else { Issue.record("groups[4] expected single-image group") }
     }
 }

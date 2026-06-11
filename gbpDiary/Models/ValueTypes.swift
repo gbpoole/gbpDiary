@@ -160,24 +160,11 @@ extension NoteBlock {
     }
 
     static func computeGroups(from blocks: [NoteBlock]) -> [BlockGroup] {
-        var result: [BlockGroup] = []
-        var i = 0
-        while i < blocks.count {
-            if blocks[i].kind == .image {
-                var imgBlocks: [NoteBlock] = []
-                var imgIndices: [Int] = []
-                while i < blocks.count && blocks[i].kind == .image {
-                    imgBlocks.append(blocks[i])
-                    imgIndices.append(i)
-                    i += 1
-                }
-                result.append(BlockGroup(id: imgBlocks[0].id, content: .images(imgBlocks, imgIndices)))
-            } else {
-                result.append(BlockGroup(id: blocks[i].id, content: .text(blocks[i], i)))
-                i += 1
-            }
+        blocks.enumerated().map { i, block in
+            block.kind == .image
+                ? BlockGroup(id: block.id, content: .images([block], [i]))
+                : BlockGroup(id: block.id, content: .text(block, i))
         }
-        return result
     }
 }
 

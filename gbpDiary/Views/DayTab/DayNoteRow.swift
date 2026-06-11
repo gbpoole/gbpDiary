@@ -117,12 +117,12 @@ struct DayNoteRow: View {
                 let firstIdx = group.firstBlockIndex
                 let lastIdx  = group.lastBlockIndex
                 groupContentView(group: group, isFirst: isFirst, isLast: isLast, allBlocks: blocks)
-                    // Text blocks get half-height outer drop zones (top = insert before, bottom = insert after).
-                    // Image groups skip these outer zones — their inner per-image drop zones handle all drops
-                    // (including before/after the group via the leftmost/rightmost half zones).
                     .overlay {
-                        if case .text = group.content {
-                            VStack(spacing: 0) {
+                        VStack(spacing: 0) {
+                            // Top half: text groups get an insert-before zone.
+                            // Image groups pass events through (.allowsHitTesting false) so
+                            // inner per-image zones remain reachable for within-group reordering.
+                            if case .text = group.content {
                                 Color.clear
                                     .dropDestination(for: String.self) { items, _ in
                                         guard let s = items.first else { return false }
@@ -131,6 +131,18 @@ struct DayNoteRow: View {
                                     } isTargeted: { targeted in
                                         blocksDropTargetIndex = targeted ? (firstIdx - 1) : nil
                                     }
+                            } else {
+                                Color.clear.allowsHitTesting(false)
+                            }
+                            // Bottom half: text groups and the last image group get an
+                            // insert-after zone using Color.clear (not Rectangle+contentShape)
+                            // so SwiftUI tap gestures are not absorbed by the overlay.
+                            // Color.clear works here because the overlay sits on top of visible
+                            // group content, making the backing NSView hit-testable for drops.
+                            // Non-last image groups pass through so inner per-image zones handle drops.
+                            if case .images = group.content, !isLast {
+                                Color.clear.allowsHitTesting(false)
+                            } else {
                                 Color.clear
                                     .dropDestination(for: String.self) { items, _ in
                                         guard let s = items.first else { return false }
@@ -153,6 +165,24 @@ struct DayNoteRow: View {
                         }
                     }
             }
+            // Trailing zone: a catch-all below all groups. Uses Rectangle+contentShape
+            // rather than Color.clear so macOS registers it as a hit-testable drop target.
+            Rectangle()
+                .fill(Color.clear)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+                .dropDestination(for: String.self) { items, _ in
+                    guard let s = items.first else { return false }
+                    reorderBlock(draggedIdString: s, belowIndex: blocks.count - 1)
+                    return true
+                } isTargeted: { targeted in
+                    blocksDropTargetIndex = targeted ? blocks.count : nil
+                }
+                .overlay(alignment: .top) {
+                    if blocksDropTargetIndex == blocks.count {
+                        Color.accentColor.frame(height: 2)
+                    }
+                }
         }
     }
 
