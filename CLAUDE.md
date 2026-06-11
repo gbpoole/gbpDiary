@@ -386,6 +386,7 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | `DaySlot.defaultDuration`: allDay=1.0d (7.6h), morning=0.5d (3.8h), afternoon=0.5d (3.8h) | Focus block scheduling | `gbpDiaryTests/Models/ValueTypesTests.swift` | `daySlot_defaultDuration_allDay_isOneDay`, `daySlot_defaultDuration_morning_isHalfDay`, `daySlot_defaultDuration_afternoon_isHalfDay` |
 | `notesId(for:)` is its own inverse: `notesId(notesId(x)) == x`; always produces a UUID distinct from the input | Inline notes focus management | `gbpDiaryTests/Models/DayEntryContentTests.swift` | `notesId_isOwnInverse`, `notesId_differFromSourceId` |
 | `Task.clearFollowUp()` clears `followUpAt` and reverts `.followUpPending` → `.completed`; no-op on other statuses | Task state transitions | `gbpDiaryTests/Models/TaskStateTransitionTests.swift` | `clearFollowUp_revertsToCompleted`, `clearFollowUp_noOpWhenNotFollowUpPending` |
+| Consecutive `NoteBlock.kind == .image` blocks form one implicit render/export group while text blocks remain standalone; groups retain original block indices | Note block rendering/export | `gbpDiaryTests/Models/ValueTypesTests.swift` | `noteBlock_computeGroups_groupsConsecutiveImagesWithSourceIndices` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 

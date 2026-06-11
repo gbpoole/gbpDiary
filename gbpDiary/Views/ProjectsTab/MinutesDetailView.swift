@@ -225,6 +225,7 @@ struct MinutesEditorSheet: View {
 
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6
+    var rowAlignment: HorizontalAlignment = .leading
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let rows = computeRows(proposal: proposal, subviews: subviews)
@@ -237,7 +238,14 @@ struct FlowLayout: Layout {
         let rows = computeRows(proposal: proposal, subviews: subviews)
         var y = bounds.minY
         for row in rows {
-            var x = bounds.minX
+            let rowWidth = row.reduce(CGFloat(0)) { $0 + $1.sizeThatFits(.unspecified).width }
+                + CGFloat(max(0, row.count - 1)) * spacing
+            let startX: CGFloat = switch rowAlignment {
+                case .center:   bounds.minX + (bounds.width - rowWidth) / 2
+                case .trailing: bounds.maxX - rowWidth
+                default:        bounds.minX
+            }
+            var x = startX
             let rowHeight = row.map { $0.sizeThatFits(.unspecified).height }.max() ?? 0
             for view in row {
                 let size = view.sizeThatFits(.unspecified)

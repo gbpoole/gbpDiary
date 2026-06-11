@@ -76,31 +76,39 @@ struct NoteExportView: View {
     // MARK: - Content
 
     @ViewBuilder private var contentSection: some View {
+        let groups = NoteBlock.computeGroups(from: note.blocks)
         VStack(alignment: .leading, spacing: 16) {
-            ForEach(note.blocks) { block in
-                switch block.kind {
-                case .text:
+            ForEach(groups) { group in
+                switch group.content {
+                case .text(let block, _):
                     if !block.textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         PDFMarkdownView(content: block.textContent, width: Self.contentWidth)
                             .frame(maxWidth: .infinity, alignment: .topLeading)
                     }
-                case .image:
-                    if let att = note.attachments.first(where: { $0.id == block.attachmentId }),
-                       let img = NSImage(contentsOf: att.fileURL) {
-                        // Use source image for maximum PDF quality.
-                        // Display width matches the UI: renderWidth capped at content width.
-                        let displayW = min(CGFloat(att.renderWidth ?? Int(img.size.width)),
-                                          Self.contentWidth)
-                        let scale = displayW / img.size.width
-                        let pdfAlignment: Alignment = switch block.alignment {
-                            case .left:   .leading
-                            case .center: .center
-                            case .right:  .trailing
-                        }
-                        PDFImageView(image: img)
-                            .frame(width: displayW, height: img.size.height * scale)
-                            .frame(maxWidth: .infinity, alignment: pdfAlignment)
+                case .images(let imgBlocks, _):
+                    // Canonical width = first image's renderWidth so all images in the group
+                    // are framed identically. Render file (renderURL) is loaded in preference
+                    // to the source file so DPI is always 72 and img.size.width == renderWidth.
+                    let canonicalRenderW: CGFloat = imgBlocks.compactMap { block in
+                        note.attachments.first { $0.id == block.attachmentId }?.renderWidth
+                    }.first.map(CGFloat.init) ?? Self.contentWidth
+                    let groupAlignment: Alignment = switch imgBlocks.first?.alignment {
+                        case .left:  .leading
+                        case .right: .trailing
+                        default:     .center
                     }
+                    FlowLayout(spacing: 8) {
+                        ForEach(imgBlocks) { block in
+                            if let att = note.attachments.first(where: { $0.id == block.attachmentId }),
+                               let img = NSImage(contentsOf: att.renderURL ?? att.fileURL) {
+                                let displayW = min(canonicalRenderW, Self.contentWidth)
+                                let scale = displayW / img.size.width
+                                PDFImageView(image: img)
+                                    .frame(width: displayW, height: img.size.height * scale)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: groupAlignment)
                 }
             }
         }

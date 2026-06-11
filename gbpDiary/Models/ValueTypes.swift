@@ -134,6 +134,53 @@ struct NoteBlock: Codable, Identifiable {
     }
 }
 
+extension NoteBlock {
+    // Consecutive .image blocks form an implicit group. This helper computes groups
+    // for rendering so image groups can be displayed as a single wrapped row.
+    struct BlockGroup: Identifiable {
+        enum Content {
+            case text(NoteBlock, Int)             // (block, noteBlocksIndex)
+            case images([NoteBlock], [Int])       // (blocks, noteBlocksIndices)
+        }
+        var id: UUID
+        var content: Content
+
+        var firstBlockIndex: Int {
+            switch content {
+            case .text(_, let i): return i
+            case .images(_, let idxs): return idxs.first ?? 0
+            }
+        }
+        var lastBlockIndex: Int {
+            switch content {
+            case .text(_, let i): return i
+            case .images(_, let idxs): return idxs.last ?? 0
+            }
+        }
+    }
+
+    static func computeGroups(from blocks: [NoteBlock]) -> [BlockGroup] {
+        var result: [BlockGroup] = []
+        var i = 0
+        while i < blocks.count {
+            if blocks[i].kind == .image {
+                var imgBlocks: [NoteBlock] = []
+                var imgIndices: [Int] = []
+                while i < blocks.count && blocks[i].kind == .image {
+                    imgBlocks.append(blocks[i])
+                    imgIndices.append(i)
+                    i += 1
+                }
+                result.append(BlockGroup(id: imgBlocks[0].id, content: .images(imgBlocks, imgIndices)))
+            } else {
+                result.append(BlockGroup(id: blocks[i].id, content: .text(blocks[i], i)))
+                i += 1
+            }
+        }
+        return result
+    }
+}
+
 // MARK: - Import provenance
 
 struct SourceContext: Codable, Equatable {

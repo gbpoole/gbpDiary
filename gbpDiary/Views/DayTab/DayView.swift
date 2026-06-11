@@ -67,33 +67,48 @@ private final class ReturnKeyMonitor: @unchecked Sendable {
     }
 }
 
-// Intercepts ↑/↓ and Shift-↑/↓ when no NSTextView has focus, to move or reorder
-// the selected block.
+// Intercepts ↑/↓/←/→ and their Shift variants when no NSTextView has focus,
+// to move or reorder the selected block.
 private final class ShiftArrowMonitor: @unchecked Sendable {
     private var monitor: Any?
-    var actionUp: (() -> Bool)?        // Shift-↑: swap with block above
-    var actionDown: (() -> Bool)?      // Shift-↓: swap with block below
-    var actionPlainUp: (() -> Bool)?   // ↑: move highlight to block above
-    var actionPlainDown: (() -> Bool)? // ↓: move highlight to block below
+    var actionUp: (() -> Bool)?         // Shift-↑: swap with block above
+    var actionDown: (() -> Bool)?       // Shift-↓: swap with block below
+    var actionLeft: (() -> Bool)?       // Shift-←: swap with block to left
+    var actionRight: (() -> Bool)?      // Shift-→: swap with block to right
+    var actionPlainUp: (() -> Bool)?    // ↑: move highlight to block above
+    var actionPlainDown: (() -> Bool)?  // ↓: move highlight to block below
+    var actionPlainLeft: (() -> Bool)?  // ←: move highlight to block to left
+    var actionPlainRight: (() -> Bool)? // →: move highlight to block to right
 
     func start() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             if NSApp.keyWindow?.firstResponder is NSTextView { return event }
             let isShift = event.modifierFlags.intersection(.deviceIndependentFlagsMask).contains(.shift)
-            if event.keyCode == 126 {  // ↑
+            switch event.keyCode {
+            case 126:  // ↑
                 let handled = MainActor.assumeIsolated {
                     isShift ? (self?.actionUp?() ?? false) : (self?.actionPlainUp?() ?? false)
                 }
                 return handled ? nil : event
-            }
-            if event.keyCode == 125 {  // ↓
+            case 125:  // ↓
                 let handled = MainActor.assumeIsolated {
                     isShift ? (self?.actionDown?() ?? false) : (self?.actionPlainDown?() ?? false)
                 }
                 return handled ? nil : event
+            case 123:  // ←
+                let handled = MainActor.assumeIsolated {
+                    isShift ? (self?.actionLeft?() ?? false) : (self?.actionPlainLeft?() ?? false)
+                }
+                return handled ? nil : event
+            case 124:  // →
+                let handled = MainActor.assumeIsolated {
+                    isShift ? (self?.actionRight?() ?? false) : (self?.actionPlainRight?() ?? false)
+                }
+                return handled ? nil : event
+            default:
+                return event
             }
-            return event
         }
     }
 
@@ -845,67 +860,70 @@ struct DayPageContent: View {
 
     private func updateShiftArrowActions(for selId: UUID?) {
         guard let selId else {
-            shiftArrowMonitor.actionUp = nil
-            shiftArrowMonitor.actionDown = nil
-            shiftArrowMonitor.actionPlainUp = nil
-            shiftArrowMonitor.actionPlainDown = nil
+            shiftArrowMonitor.actionUp    = nil; shiftArrowMonitor.actionDown  = nil
+            shiftArrowMonitor.actionLeft  = nil; shiftArrowMonitor.actionRight = nil
+            shiftArrowMonitor.actionPlainUp    = nil; shiftArrowMonitor.actionPlainDown  = nil
+            shiftArrowMonitor.actionPlainLeft  = nil; shiftArrowMonitor.actionPlainRight = nil
             return
         }
         for (noteIdx, note) in dayNotes.enumerated() {
             if note.blocks.contains(where: { $0.id == selId }) {
-                // Shift-↑/↓: swap with adjacent block (index looked up dynamically).
+                // Shift-↑/↓: swap with any adjacent block (reorder within or between groups).
                 shiftArrowMonitor.actionUp = {
                     guard let idx = note.blocks.firstIndex(where: { $0.id == selId }),
                           idx > 0 else { return false }
-                    var blocks = note.blocks
-                    blocks.swapAt(idx, idx - 1)
-                    note.blocks = blocks
-                    note.updatedAt = Date()
-                    return true
+                    var blocks = note.blocks; blocks.swapAt(idx, idx - 1)
+                    note.blocks = blocks; note.updatedAt = Date(); return true
                 }
                 shiftArrowMonitor.actionDown = {
                     guard let idx = note.blocks.firstIndex(where: { $0.id == selId }),
                           idx < note.blocks.count - 1 else { return false }
-                    var blocks = note.blocks
-                    blocks.swapAt(idx, idx + 1)
-                    note.blocks = blocks
-                    note.updatedAt = Date()
-                    return true
+                    var blocks = note.blocks; blocks.swapAt(idx, idx + 1)
+                    note.blocks = blocks; note.updatedAt = Date(); return true
                 }
-                // Plain ↑/↓: move highlight to adjacent block, crossing note boundaries.
+                // Shift-←/→: swap only within an image group (adjacent block must also be an image).
+                shiftArrowMonitor.actionLeft = {
+                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }),
+                          idx > 0,
+                          note.blocks[idx - 1].kind == .image else { return false }
+                    var blocks = note.blocks; blocks.swapAt(idx, idx - 1)
+                    note.blocks = blocks; note.updatedAt = Date(); return true
+                }
+                shiftArrowMonitor.actionRight = {
+                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }),
+                          idx < note.blocks.count - 1,
+                          note.blocks[idx + 1].kind == .image else { return false }
+                    var blocks = note.blocks; blocks.swapAt(idx, idx + 1)
+                    note.blocks = blocks; note.updatedAt = Date(); return true
+                }
+
+                // Plain arrows: move highlight to adjacent block, crossing note boundaries.
                 shiftArrowMonitor.actionPlainUp = {
                     guard let idx = note.blocks.firstIndex(where: { $0.id == selId }) else { return false }
-                    if idx > 0 {
-                        selectedBlockId = note.blocks[idx - 1].id
-                        return true
-                    }
-                    // Cross into previous note's last block.
+                    if idx > 0 { selectedBlockId = note.blocks[idx - 1].id; return true }
                     if noteIdx > 0, let last = dayNotes[noteIdx - 1].blocks.last {
-                        selectedBlockId = last.id
-                        return true
+                        selectedBlockId = last.id; return true
                     }
                     return false
                 }
+                shiftArrowMonitor.actionPlainLeft = shiftArrowMonitor.actionPlainUp
+
                 shiftArrowMonitor.actionPlainDown = {
                     guard let idx = note.blocks.firstIndex(where: { $0.id == selId }) else { return false }
-                    if idx < note.blocks.count - 1 {
-                        selectedBlockId = note.blocks[idx + 1].id
-                        return true
-                    }
-                    // Cross into next note's first block.
+                    if idx < note.blocks.count - 1 { selectedBlockId = note.blocks[idx + 1].id; return true }
                     if noteIdx < dayNotes.count - 1, let first = dayNotes[noteIdx + 1].blocks.first {
-                        selectedBlockId = first.id
-                        return true
+                        selectedBlockId = first.id; return true
                     }
                     return false
                 }
+                shiftArrowMonitor.actionPlainRight = shiftArrowMonitor.actionPlainDown
                 return
             }
         }
-        shiftArrowMonitor.actionUp = nil
-        shiftArrowMonitor.actionDown = nil
-        shiftArrowMonitor.actionPlainUp = nil
-        shiftArrowMonitor.actionPlainDown = nil
+        shiftArrowMonitor.actionUp    = nil; shiftArrowMonitor.actionDown  = nil
+        shiftArrowMonitor.actionLeft  = nil; shiftArrowMonitor.actionRight = nil
+        shiftArrowMonitor.actionPlainUp    = nil; shiftArrowMonitor.actionPlainDown  = nil
+        shiftArrowMonitor.actionPlainLeft  = nil; shiftArrowMonitor.actionPlainRight = nil
     }
     #endif
 }
