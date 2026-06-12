@@ -33,10 +33,10 @@ struct DayNoteRow: View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 4) {
                 if let project = note.project {
-                    Chip(label: project.name, color: .blue)
+                    Chip(label: project.name, color: AppTheme.project)
                 }
                 ForEach(note.tags, id: \.self) { tag in
-                    Chip(label: tag, color: .teal)
+                    Chip(label: tag, color: AppTheme.tag)
                 }
                 Spacer(minLength: 0)
                 Button {
@@ -44,7 +44,7 @@ struct DayNoteRow: View {
                     showingFilePicker = true
                 } label: {
                     Image(systemName: "paperclip")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(AppTheme.mutedText)
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
@@ -54,7 +54,7 @@ struct DayNoteRow: View {
                     pasteImageFromClipboard()
                 } label: {
                     Image(systemName: "clipboard")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(AppTheme.mutedText)
                         .font(.caption)
                 }
                 .buttonStyle(.plain)
@@ -63,7 +63,7 @@ struct DayNoteRow: View {
                     exportAsPDF()
                 } label: {
                     Image(systemName: "square.and.arrow.down")
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(AppTheme.mutedText)
                         .font(.caption)
                 }
                 .buttonStyle(.plain)

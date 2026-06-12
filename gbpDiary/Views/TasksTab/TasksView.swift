@@ -41,6 +41,7 @@ struct TasksView: View {
             Divider()
             taskTable
         }
+        .background(AppTheme.background)
         .sheet(item: $editingTask) { task in
             TaskEditorSheet(task: task, defaultDate: Date())
         }
@@ -56,7 +57,8 @@ struct TasksView: View {
             TableColumn("Summary") { task in
                 Text(task.summary)
                     .lineLimit(1)
-                    .foregroundStyle(pendingStatusIds.contains(task.id) ? Color.secondary : Color.primary)
+                    .font(AppTheme.bodyFont(size: 13))
+                    .foregroundStyle(pendingStatusIds.contains(task.id) ? AppTheme.mutedText : AppTheme.text)
                     .onTapGesture { editingTask = task }
             }
             TableColumn("Status") { task in
@@ -68,27 +70,29 @@ struct TasksView: View {
             .width(110)
             TableColumn("Project") { task in
                 Text(task.project?.name ?? "")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.project)
                     .lineLimit(1)
             }
             TableColumn("Assignee") { task in
                 Text(task.assignee?.name ?? "")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.person)
                     .lineLimit(1)
             }
             TableColumn("Scheduled") { task in
                 if let s = task.scheduledAt {
                     Text(s, format: .dateTime.month(.abbreviated).day().year())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppTheme.mutedText)
                 }
             }
             .width(100)
             TableColumn("Created") { task in
                 Text(task.createdAt, format: .dateTime.month(.abbreviated).day().year())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
             }
             .width(100)
         }
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
         .animation(.easeInOut(duration: 0.25), value: filteredTasks.map(\.id))
     }
     #else
@@ -127,7 +131,7 @@ struct TaskStatusIcon: View {
                 .font(.system(size: 13))
             Text(statusLabel)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppTheme.mutedText)
         }
     }
 
@@ -143,11 +147,11 @@ struct TaskStatusIcon: View {
 
     private var iconColor: Color {
         switch status {
-        case .todo:            return .secondary
-        case .started:         return .blue
-        case .completed:       return .green
-        case .cancelled:       return .secondary
-        case .followUpPending: return .orange
+        case .todo:            return AppTheme.mutedText
+        case .started:         return AppTheme.started
+        case .completed:       return AppTheme.completed
+        case .cancelled:       return AppTheme.mutedText
+        case .followUpPending: return AppTheme.followUp
         }
     }
 

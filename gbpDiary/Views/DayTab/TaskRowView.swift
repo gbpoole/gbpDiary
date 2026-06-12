@@ -31,6 +31,7 @@ struct TaskRowView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 5)
+        .font(AppTheme.bodyFont(size: 13))
         .contentShape(Rectangle())
         .contextMenu { contextMenuItems }
         .sheet(isPresented: $showingFollowUpPicker) {
@@ -67,11 +68,11 @@ struct TaskRowView: View {
 
     private var statusColor: Color {
         switch task.status {
-        case .todo:            .secondary
-        case .started:         .blue
-        case .completed:       .green
-        case .cancelled:       .secondary
-        case .followUpPending: .orange
+        case .todo:            AppTheme.mutedText
+        case .started:         AppTheme.started
+        case .completed:       AppTheme.completed
+        case .cancelled:       AppTheme.mutedText
+        case .followUpPending: AppTheme.followUp
         }
     }
 
@@ -95,7 +96,7 @@ struct TaskRowView: View {
                 focusBinding: fb,
                 focusId: fid,
                 struckThrough: task.status == .cancelled,
-                foregroundColor: task.status == .cancelled ? .secondary : .primary,
+                foregroundColor: task.status == .cancelled ? AppTheme.mutedText : AppTheme.text,
                 onIndent: onIndent,
                 onOutdent: onOutdent,
                 onMoveToPrevious: onMoveToPrevious,
@@ -105,7 +106,8 @@ struct TaskRowView: View {
             Text(task.summary)
                 .lineLimit(1)
                 .strikethrough(task.status == .cancelled)
-                .foregroundStyle(task.status == .cancelled ? Color.secondary : Color.primary)
+                .italic()
+                .foregroundStyle(task.status == .cancelled ? AppTheme.mutedText : AppTheme.text)
         }
     }
 
@@ -113,16 +115,16 @@ struct TaskRowView: View {
         HStack(alignment: .center, spacing: 6) {
             inlineTitleView
             if let project = task.project {
-                Chip(label: project.name, color: .blue)
+                Chip(label: project.name, color: AppTheme.project)
             }
             if let assignee = task.assignee {
-                Chip(label: assignee.name, color: .purple)
+                Chip(label: assignee.name, color: AppTheme.person)
             }
             if let dur = task.duration {
-                Chip(label: dur.displayString, color: .gray)
+                Chip(label: dur.displayString, color: AppTheme.duration)
             }
             ForEach(task.tags, id: \.self) { tag in
-                Chip(label: tag, color: .teal)
+                Chip(label: tag, color: AppTheme.tag)
             }
             if task.status == .completed && task.followUpAt == nil {
                 Button(action: { showingFollowUpPicker = true }) {
@@ -136,7 +138,7 @@ struct TaskRowView: View {
                 let overdue = fu < Calendar.current.startOfDay(for: Date())
                 Button(action: { showingFollowUpPicker = true }) {
                     Chip(label: "↻ \(fu.formatted(.dateTime.day().month()))",
-                         color: overdue ? .red : .orange)
+                         color: overdue ? AppTheme.destructive : AppTheme.followUp)
                 }
                 .buttonStyle(.plain)
             }
@@ -251,11 +253,13 @@ struct Chip: View {
 
     var body: some View {
         Text(label)
-            .font(.caption2)
-            .padding(.horizontal, 5)
-            .padding(.vertical, 2)
-            .background(color.opacity(0.15))
+            .font(AppTheme.interfaceFont(size: 10.5, weight: .regular))
+            .lineLimit(1)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(AppTheme.chipBackground(color))
             .foregroundStyle(color)
+            .overlay(Capsule().stroke(color.opacity(0.85), lineWidth: 1))
             .clipShape(Capsule())
     }
 }

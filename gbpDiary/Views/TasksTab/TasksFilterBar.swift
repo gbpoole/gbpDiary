@@ -23,12 +23,15 @@ struct TasksFilterBar: View {
             if hasActiveFilter {
                 Button("Clear") { clearFilters() }
                     .buttonStyle(.borderless)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.accent)
             }
             Spacer()
         }
+        .font(AppTheme.interfaceFont(size: 12))
+        .foregroundStyle(AppTheme.mutedText)
         .padding(.horizontal)
         .padding(.vertical, 8)
+        .background(AppTheme.sidebarBackground)
     }
 
     private var hasActiveFilter: Bool {

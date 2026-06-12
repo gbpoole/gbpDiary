@@ -21,12 +21,14 @@ struct DiaryView: View {
         if mode == .day {
             NavigationSplitView {
                 DayTaskSidebar(date: currentDate, dayRecord: dayRecord, allTasks: allTasks)
+                    .background(AppTheme.sidebarBackground)
             } detail: {
                 VStack(spacing: 0) {
                     diaryBar
                     Divider()
                     DayView(date: currentDate, dayRecord: dayRecord, allTasks: allTasks)
                 }
+                .background(AppTheme.background)
             }
         } else {
             VStack(spacing: 0) {
@@ -34,6 +36,7 @@ struct DiaryView: View {
                 Divider()
                 WeekView(weekOf: currentDate)
             }
+            .background(AppTheme.background)
         }
     }
 
@@ -47,7 +50,8 @@ struct DiaryView: View {
                 .disabled(isCurrentPeriod)
 
             Text(dateLabel)
-                .font(.headline)
+                .font(AppTheme.interfaceFont(size: 15, weight: .semibold))
+                .foregroundStyle(AppTheme.text)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.leading, 4)
 
@@ -61,6 +65,7 @@ struct DiaryView: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 8)
+        .background(AppTheme.sidebarBackground)
     }
 
     private var isCurrentPeriod: Bool {

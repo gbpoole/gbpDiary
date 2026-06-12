@@ -72,9 +72,9 @@ struct FocusBlockRow: View {
         Button {
             isCollapsed.toggle()
         } label: {
-            Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(.secondary)
+                Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(AppTheme.mutedText)
         }
         .buttonStyle(.plain)
         .contentShape(Rectangle())
@@ -85,10 +85,10 @@ struct FocusBlockRow: View {
         Group {
             if block.task != nil {
                 Image(systemName: "checkmark.circle")
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(AppTheme.started)
             } else {
                 Image(systemName: "folder")
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(AppTheme.project)
             }
         }
         .font(.system(size: 14))
@@ -97,12 +97,12 @@ struct FocusBlockRow: View {
 
     private var durationChips: some View {
         HStack(spacing: 4) {
-            Chip(label: block.slot.displayName, color: .gray)
+            Chip(label: block.slot.displayName, color: AppTheme.duration)
             if netHours > 0 && !blockActivities.isEmpty {
                 let netDur = Duration(value: netHours, unit: .h)
                 Text("\(netDur.displayString) unspecified")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
             }
         }
     }
@@ -111,9 +111,9 @@ struct FocusBlockRow: View {
         Button {
             showingLogTime = true
         } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(.secondary)
+                Image(systemName: "plus")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AppTheme.accent)
         }
         .buttonStyle(.plain)
         .help("Log activity in this focus block")
@@ -150,21 +150,21 @@ private struct MeetingActivityRow: View {
             HStack(alignment: .center, spacing: 6) {
                 Image(systemName: "calendar")
                     .font(.system(size: 12))
-                    .foregroundStyle(.blue)
+                    .foregroundStyle(AppTheme.project)
                     .frame(width: 18)
                     .padding(.leading, 2)
                 Text(minutes.summary ?? "Meeting")
                     .font(.subheadline)
-                    .foregroundStyle(.primary)
+                    .foregroundStyle(AppTheme.text)
                 Spacer(minLength: 0)
-                Chip(label: minutes.meetingAt.formatted(date: .omitted, time: .shortened), color: .blue)
+                Chip(label: minutes.meetingAt.formatted(date: .omitted, time: .shortened), color: AppTheme.project)
                 if let d = minutes.duration {
-                    Chip(label: d.displayString, color: .gray)
+                    Chip(label: d.displayString, color: AppTheme.duration)
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.03))
+            .background(AppTheme.cardRaised.opacity(0.45))
             .clipShape(RoundedRectangle(cornerRadius: 5))
             .padding(.trailing)
         }
@@ -192,28 +192,28 @@ private struct ActivityEntryRow: View {
                 if let task = entry.task {
                     Text(task.summary)
                         .font(.subheadline)
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(AppTheme.text)
                 } else {
                     Text("Unlinked activity")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppTheme.mutedText)
                 }
 
                 if let comment = entry.comment, !comment.isEmpty {
                     Text(comment)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppTheme.mutedText)
                         .lineLimit(1)
                 }
 
                 Spacer(minLength: 0)
 
-                Chip(label: entry.duration.displayString, color: .gray)
+                Chip(label: entry.duration.displayString, color: AppTheme.duration)
                 InlineRowEditButton { showingEdit = true }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.03))
+            .background(AppTheme.cardRaised.opacity(0.45))
             .clipShape(RoundedRectangle(cornerRadius: 5))
             .padding(.trailing)
             .sheet(isPresented: $showingEdit) {

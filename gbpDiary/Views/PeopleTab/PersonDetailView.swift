@@ -82,7 +82,7 @@ struct PersonDetailView: View {
                     } else {
                         FlowLayout(spacing: 6) {
                             ForEach(allProjects) { p in
-                                Chip(label: p.name, color: .blue)
+                                Chip(label: p.name, color: AppTheme.project)
                             }
                         }
                     }
@@ -116,7 +116,7 @@ struct PersonDetailView: View {
             if !person.tags.isEmpty {
                 FlowLayout(spacing: 6) {
                     ForEach(person.tags, id: \.self) { tag in
-                        Chip(label: tag, color: .teal)
+                        Chip(label: tag, color: AppTheme.tag)
                     }
                 }
             }

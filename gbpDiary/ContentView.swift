@@ -30,6 +30,7 @@ struct ContentView: View {
             case .timesheet:     TimesheetView()
             }
         }
+        .kanagawaAppBackground()
         .toolbar {
             #if os(macOS)
             ToolbarItem(placement: .principal) {

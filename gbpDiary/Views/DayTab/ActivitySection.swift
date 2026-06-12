@@ -112,7 +112,7 @@ private struct UnspecifiedActivityRow: View {
             HStack(alignment: .center, spacing: 6) {
                 Image(systemName: "circle.dotted")
                     .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
                     .frame(width: 18)
                     .padding(.leading, 2)
 
@@ -122,22 +122,22 @@ private struct UnspecifiedActivityRow: View {
                 } else {
                     Text("Unlinked entry")
                         .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppTheme.mutedText)
                 }
 
                 Spacer(minLength: 0)
-                Chip(label: entry.duration.displayString, color: .gray)
+                Chip(label: entry.duration.displayString, color: AppTheme.duration)
 
                 if let comment = entry.comment, !comment.isEmpty {
                     Text(comment)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppTheme.mutedText)
                         .lineLimit(1)
                 }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(Color.secondary.opacity(0.03))
+            .background(AppTheme.cardRaised.opacity(0.45))
             .clipShape(RoundedRectangle(cornerRadius: 5))
             .padding(.trailing)
             .contextMenu {

@@ -7,12 +7,12 @@ struct CompletedTaskRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "checkmark.circle.fill")
-                .foregroundStyle(.green)
+                .foregroundStyle(AppTheme.completed)
                 .font(.system(size: 15))
 
             Text(task.summary)
                 .strikethrough()
-                .foregroundStyle(.secondary)
+                .foregroundStyle(AppTheme.mutedText)
                 .lineLimit(1)
 
             Spacer(minLength: 0)
@@ -20,7 +20,7 @@ struct CompletedTaskRow: View {
             if let at = task.completedAt {
                 Text(at, format: .dateTime.hour().minute())
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(AppTheme.Kanagawa.overlay1)
             }
         }
         .padding(.horizontal)

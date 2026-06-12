@@ -169,7 +169,7 @@ struct TaskEditorSheet: View {
                         Text(entry.date, format: .dateTime.month(.abbreviated).day())
                             .font(.callout)
                             .foregroundStyle(.secondary)
-                        Chip(label: entry.duration.displayString, color: .gray)
+                        Chip(label: entry.duration.displayString, color: AppTheme.duration)
                         if let c = entry.comment {
                             Text(c)
                                 .font(.callout)
@@ -198,7 +198,7 @@ struct TaskEditorSheet: View {
                 Text("Time Log")
                 if let logged = t.loggedDuration {
                     Spacer()
-                    Chip(label: logged.displayString, color: .gray)
+                    Chip(label: logged.displayString, color: AppTheme.duration)
                 }
             }
         }

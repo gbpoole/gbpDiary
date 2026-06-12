@@ -88,7 +88,7 @@ struct TagDetailSheet: View {
                         GroupBox("Projects (\(entry.projects.count))") {
                             FlowLayout(spacing: 6) {
                                 ForEach(entry.projects) { project in
-                                    Chip(label: project.name, color: .blue)
+                                    Chip(label: project.name, color: AppTheme.project)
                                 }
                             }
                         }
@@ -97,7 +97,7 @@ struct TagDetailSheet: View {
                         GroupBox("People (\(entry.people.count))") {
                             FlowLayout(spacing: 6) {
                                 ForEach(entry.people) { person in
-                                    Chip(label: person.name, color: .purple)
+                                    Chip(label: person.name, color: AppTheme.person)
                                 }
                             }
                         }

@@ -103,7 +103,9 @@ struct DayPageContent: View {
                 notesSection
                 if showTaskSections { sidebarSections }
             }
+            .padding(.vertical, 8)
         }
+        .background(AppTheme.background)
         .sheet(isPresented: $showingAddTask) {
             TaskEditorSheet(task: nil, defaultDate: date) { newTask in
                 let record = findOrCreateDayRecord()

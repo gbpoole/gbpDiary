@@ -7,14 +7,16 @@ struct DaySectionHeader: View {
     var body: some View {
         HStack {
             Text(title)
-                .font(.subheadline.bold())
-                .foregroundStyle(.secondary)
+                .font(AppTheme.interfaceFont(size: 12, weight: .semibold))
+                .tracking(0.8)
+                .textCase(.uppercase)
+                .foregroundStyle(AppTheme.mutedText)
             Spacer()
             if let onAdd {
                 Button(action: onAdd) {
                     Image(systemName: "plus")
                         .font(.caption.bold())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppTheme.accent)
                 }
                 .buttonStyle(.plain)
             }
@@ -22,5 +24,6 @@ struct DaySectionHeader: View {
         .padding(.horizontal)
         .padding(.top, 16)
         .padding(.bottom, 4)
+        .background(AppTheme.background)
     }
 }

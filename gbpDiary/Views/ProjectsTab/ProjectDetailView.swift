@@ -88,10 +88,10 @@ struct ProjectDetailView: View {
             }
             HStack(spacing: 6) {
                 if let stream = project.stream {
-                    Chip(label: stream, color: .gray)
+                    Chip(label: stream, color: AppTheme.duration)
                 }
                 ForEach(project.tags, id: \.self) { tag in
-                    Chip(label: tag, color: .teal)
+                    Chip(label: tag, color: AppTheme.tag)
                 }
             }
         }
@@ -107,7 +107,7 @@ struct ProjectDetailView: View {
                 }) { person in
                     Chip(
                         label: person.id == project.devLead?.id ? "\(person.name) · Lead" : person.name,
-                        color: person.id == project.devLead?.id ? .orange : .purple
+                        color: person.id == project.devLead?.id ? AppTheme.followUp : AppTheme.person
                     )
                 }
             }
@@ -124,7 +124,7 @@ struct ProjectDetailView: View {
                 }) { person in
                     Chip(
                         label: person.id == project.sciLead?.id ? "\(person.name) · Lead" : person.name,
-                        color: person.id == project.sciLead?.id ? .orange : .purple
+                        color: person.id == project.sciLead?.id ? AppTheme.followUp : AppTheme.person
                     )
                 }
             }
@@ -237,7 +237,7 @@ struct ProjectDetailView: View {
                         if !note.tags.isEmpty {
                             HStack(spacing: 4) {
                                 ForEach(note.tags, id: \.self) { tag in
-                                    Chip(label: tag, color: .teal)
+                                    Chip(label: tag, color: AppTheme.tag)
                                 }
                             }
                         }
