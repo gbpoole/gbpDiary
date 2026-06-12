@@ -117,12 +117,12 @@ struct DayNoteRow: View {
                 let firstIdx = group.firstBlockIndex
                 let lastIdx  = group.lastBlockIndex
                 groupContentView(group: group, isFirst: isFirst, isLast: isLast, allBlocks: blocks)
+                    // Only text groups get outer half-height drop zones (standalone placement).
+                    // Image groups have no outer overlay so all events pass through to the
+                    // inner per-image drop zones, which handle merge-into-group drops.
                     .overlay {
-                        VStack(spacing: 0) {
-                            // Top half: text groups get an insert-before zone.
-                            // Image groups pass events through (.allowsHitTesting false) so
-                            // inner per-image zones remain reachable for within-group reordering.
-                            if case .text = group.content {
+                        if case .text = group.content {
+                            VStack(spacing: 0) {
                                 Color.clear
                                     .dropDestination(for: String.self) { items, _ in
                                         guard let s = items.first else { return false }
@@ -131,18 +131,6 @@ struct DayNoteRow: View {
                                     } isTargeted: { targeted in
                                         blocksDropTargetIndex = targeted ? (firstIdx - 1) : nil
                                     }
-                            } else {
-                                Color.clear.allowsHitTesting(false)
-                            }
-                            // Bottom half: text groups and the last image group get an
-                            // insert-after zone using Color.clear (not Rectangle+contentShape)
-                            // so SwiftUI tap gestures are not absorbed by the overlay.
-                            // Color.clear works here because the overlay sits on top of visible
-                            // group content, making the backing NSView hit-testable for drops.
-                            // Non-last image groups pass through so inner per-image zones handle drops.
-                            if case .images = group.content, !isLast {
-                                Color.clear.allowsHitTesting(false)
-                            } else {
                                 Color.clear
                                     .dropDestination(for: String.self) { items, _ in
                                         guard let s = items.first else { return false }
@@ -165,8 +153,8 @@ struct DayNoteRow: View {
                         }
                     }
             }
-            // Trailing zone: a catch-all below all groups. Uses Rectangle+contentShape
-            // rather than Color.clear so macOS registers it as a hit-testable drop target.
+            // Trailing zone: standalone placement below all groups. Uses Rectangle+contentShape
+            // so macOS registers it as a hit-testable drop target (Color.clear is not).
             Rectangle()
                 .fill(Color.clear)
                 .frame(maxWidth: .infinity, minHeight: 44)
@@ -235,22 +223,111 @@ struct DayNoteRow: View {
                 onDelete: { idx, att in deleteImageBlock(at: idx, att: att) },
                 onStepSize: { delta in stepGroupSize(forGroupWithIndices: indices, by: delta) },
                 onSetAlignment: { alignment in setGroupAlignment(alignment, forGroupWithIndices: indices) },
-                onDropIntoGroup: { s, belowIdx in reorderBlock(draggedIdString: s, belowIndex: belowIdx) }
+                onDropIntoGroup: { s, belowIdx, targetId in mergeBlock(draggedIdString: s, belowIndex: belowIdx, targetBlockId: targetId) }
             )
             .opacity(anySelected ? 1 : 1)  // keep view stable
         }
     }
 
+    // Reorder a block to a new position WITHOUT changing group membership.
+    // Image blocks placed via outer/trailing zones become standalone (groupId cleared).
     private func reorderBlock(draggedIdString: String, belowIndex: Int) {
+        if draggedIdString.hasPrefix("group:"),
+           let gid = UUID(uuidString: String(draggedIdString.dropFirst(6))) {
+            reorderGroupBlocks(groupId: gid, belowIndex: belowIndex); return
+        }
         guard let id = UUID(uuidString: draggedIdString),
               let fromIdx = note.blocks.firstIndex(where: { $0.id == id }) else { return }
         let targetInsert = belowIndex + 1
         var reordered = note.blocks
-        let block = reordered.remove(at: fromIdx)
+        var block = reordered.remove(at: fromIdx)
+        if block.kind == .image { block.groupId = nil }
         var adjusted = fromIdx < targetInsert ? targetInsert - 1 : targetInsert
         adjusted = max(0, min(adjusted, reordered.count))
         reordered.insert(block, at: adjusted)
+        NoteBlock.cleanupGroupIds(in: &reordered)
         note.blocks = reordered
+        harmonizeGroupSizes()
+        note.updatedAt = Date()
+    }
+
+    // Move an entire image group to a new position, keeping the blocks grouped.
+    private func reorderGroupBlocks(groupId: UUID, belowIndex: Int) {
+        let draggedIndices = note.blocks.indices.filter { note.blocks[$0].groupId == groupId }
+        guard !draggedIndices.isEmpty else { return }
+        let draggedBlocks = draggedIndices.map { note.blocks[$0] }
+        var blocks = note.blocks
+        for idx in draggedIndices.reversed() { blocks.remove(at: idx) }
+        let removedBefore = draggedIndices.filter { $0 <= belowIndex }.count
+        let insertAt = max(0, min(belowIndex + 1 - removedBefore, blocks.count))
+        for (i, b) in draggedBlocks.enumerated() { blocks.insert(b, at: insertAt + i) }
+        NoteBlock.cleanupGroupIds(in: &blocks)
+        note.blocks = blocks
+        harmonizeGroupSizes()
+        note.updatedAt = Date()
+    }
+
+    // Reorder a block AND merge it into the group containing targetBlockId.
+    // When a text block is dragged into an image zone, falls back to plain reorder.
+    private func mergeBlock(draggedIdString: String, belowIndex: Int, targetBlockId: UUID) {
+        if draggedIdString.hasPrefix("group:"),
+           let gid = UUID(uuidString: String(draggedIdString.dropFirst(6))) {
+            mergeGroupBlocks(groupId: gid, belowIndex: belowIndex, targetBlockId: targetBlockId); return
+        }
+        guard let id = UUID(uuidString: draggedIdString),
+              let fromIdx = note.blocks.firstIndex(where: { $0.id == id }) else { return }
+        guard note.blocks[fromIdx].kind == .image else {
+            reorderBlock(draggedIdString: draggedIdString, belowIndex: belowIndex)
+            return
+        }
+        var blocks = note.blocks
+        let existingGroupId = blocks.first(where: { $0.id == targetBlockId })?.groupId
+        let sharedGroupId: UUID
+        if let gid = existingGroupId {
+            sharedGroupId = gid
+        } else {
+            sharedGroupId = UUID()
+            if let tIdx = blocks.firstIndex(where: { $0.id == targetBlockId }) {
+                blocks[tIdx].groupId = sharedGroupId
+            }
+        }
+        let targetInsert = belowIndex + 1
+        var draggedBlock = blocks.remove(at: fromIdx)
+        draggedBlock.groupId = sharedGroupId
+        var adjusted = fromIdx < targetInsert ? targetInsert - 1 : targetInsert
+        adjusted = max(0, min(adjusted, blocks.count))
+        blocks.insert(draggedBlock, at: adjusted)
+        NoteBlock.cleanupGroupIds(in: &blocks)
+        note.blocks = blocks
+        harmonizeGroupSizes()
+        note.updatedAt = Date()
+    }
+
+    // Move an entire image group into the group containing targetBlockId.
+    private func mergeGroupBlocks(groupId: UUID, belowIndex: Int, targetBlockId: UUID) {
+        let draggedIndices = note.blocks.indices.filter { note.blocks[$0].groupId == groupId }
+        guard !draggedIndices.isEmpty else { return }
+        var blocks = note.blocks
+        let existingGroupId = blocks.first(where: { $0.id == targetBlockId })?.groupId
+        let sharedGroupId: UUID
+        if let gid = existingGroupId {
+            sharedGroupId = gid
+        } else {
+            sharedGroupId = UUID()
+            if let tIdx = blocks.firstIndex(where: { $0.id == targetBlockId }) {
+                blocks[tIdx].groupId = sharedGroupId
+            }
+        }
+        let draggedBlocks = draggedIndices.map { blocks[$0] }
+        for idx in draggedIndices.reversed() { blocks.remove(at: idx) }
+        let removedBefore = draggedIndices.filter { $0 <= belowIndex }.count
+        let insertAt = max(0, min(belowIndex + 1 - removedBefore, blocks.count))
+        for (i, var b) in draggedBlocks.enumerated() {
+            b.groupId = sharedGroupId
+            blocks.insert(b, at: insertAt + i)
+        }
+        NoteBlock.cleanupGroupIds(in: &blocks)
+        note.blocks = blocks
         harmonizeGroupSizes()
         note.updatedAt = Date()
     }
@@ -777,7 +854,7 @@ private struct NoteImageGroupRow: View {
     var onDelete: (Int, Attachment) -> Void = { _, _ in }
     var onStepSize: (Int) -> Void = { _ in }
     var onSetAlignment: (ImageAlignment) -> Void = { _ in }
-    var onDropIntoGroup: (String, Int) -> Void = { _, _ in }
+    var onDropIntoGroup: (String, Int, UUID) -> Void = { _, _, _ in }
 
     @State private var insertTargetIndex: Int? = nil
 
@@ -794,12 +871,19 @@ private struct NoteImageGroupRow: View {
     }
 
     var body: some View {
+        // Apply group drag to the whole row for multi-image groups.
+        // Individual image cells inside imageFlow have their own .draggable() which takes
+        // child priority, so dragging directly from an image still moves just that image.
+        if let gid = blocks.first?.groupId {
+            rowContent.draggable("group:\(gid.uuidString)")
+        } else {
+            rowContent
+        }
+    }
+
+    private var rowContent: some View {
         HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(Color.accentColor.opacity(0.35))
-                .frame(width: 2)
-                .padding(.top, topRounded ? 2 : 0)
-                .padding(.bottom, bottomRounded ? 2 : 0)
+            groupDragBar
             VStack(alignment: .leading, spacing: 6) {
                 imageFlow
                 controlsBar
@@ -837,6 +921,14 @@ private struct NoteImageGroupRow: View {
         }
     }
 
+    @ViewBuilder private var groupDragBar: some View {
+        RoundedRectangle(cornerRadius: 2)
+            .fill(Color.accentColor.opacity(0.35))
+            .frame(width: 2)
+            .padding(.top, topRounded ? 2 : 0)
+            .padding(.bottom, bottomRounded ? 2 : 0)
+    }
+
     @ViewBuilder private var imageFlow: some View {
         let rowAlign: HorizontalAlignment = switch groupAlignment {
             case .left:   .leading
@@ -860,11 +952,12 @@ private struct NoteImageGroupRow: View {
         // or any empty area in a center-aligned row).  Per-image overlay zones have
         // higher z-order and win when the cursor lands directly on an image.
         .background {
+            let anchorId = blocks.first?.id ?? UUID()
             HStack(spacing: 0) {
                 Color.clear
                     .dropDestination(for: String.self) { items, _ in
                         guard let s = items.first else { return false }
-                        onDropIntoGroup(s, indices[0] - 1)
+                        onDropIntoGroup(s, indices[0] - 1, anchorId)
                         insertTargetIndex = nil
                         return true
                     } isTargeted: { targeted in
@@ -874,7 +967,7 @@ private struct NoteImageGroupRow: View {
                 Color.clear
                     .dropDestination(for: String.self) { items, _ in
                         guard let s = items.first, let lastIdx = indices.last else { return false }
-                        onDropIntoGroup(s, lastIdx)
+                        onDropIntoGroup(s, lastIdx, anchorId)
                         insertTargetIndex = nil
                         return true
                     } isTargeted: { targeted in
@@ -937,13 +1030,13 @@ private struct NoteImageGroupRow: View {
                     }
                     .padding(4)
                 }
-                // Left and right half drop zones for within-group reordering
+                // Left and right half drop zones: merge dragged image into this group.
                 .overlay {
                     HStack(spacing: 0) {
                         Color.clear
                             .dropDestination(for: String.self) { items, _ in
                                 guard let s = items.first else { return false }
-                                onDropIntoGroup(s, indices[pos] - 1)
+                                onDropIntoGroup(s, indices[pos] - 1, block.id)
                                 insertTargetIndex = nil
                                 return true
                             } isTargeted: { targeted in
@@ -953,7 +1046,7 @@ private struct NoteImageGroupRow: View {
                         Color.clear
                             .dropDestination(for: String.self) { items, _ in
                                 guard let s = items.first else { return false }
-                                onDropIntoGroup(s, indices[pos])
+                                onDropIntoGroup(s, indices[pos], block.id)
                                 insertTargetIndex = nil
                                 return true
                             } isTargeted: { targeted in

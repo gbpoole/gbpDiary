@@ -844,6 +844,15 @@ struct DayPageContent: View {
                 case .image:
                     returnMonitor.action = {
                         var blocks = note.blocks
+                        // Split the group at this image: subsequent same-gid images get a new gid
+                        // so deleting the inserted text block later won't reform the original group.
+                        if let gid = blocks[idx].groupId {
+                            let newGid = UUID()
+                            for i in (idx + 1)..<blocks.count where blocks[i].groupId == gid {
+                                blocks[i].groupId = newGid
+                            }
+                            NoteBlock.cleanupGroupIds(in: &blocks)
+                        }
                         let newBlock = NoteBlock.text("")
                         blocks.insert(newBlock, at: idx + 1)
                         note.blocks = blocks
@@ -873,55 +882,69 @@ struct DayPageContent: View {
         }
         for (noteIdx, note) in dayNotes.enumerated() {
             if note.blocks.contains(where: { $0.id == selId }) {
-                // Shift-↑/↓: swap with any adjacent block (reorder within or between groups).
                 shiftArrowMonitor.actionUp = {
-                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }),
-                          idx > 0 else { return false }
-                    var blocks = note.blocks; blocks.swapAt(idx, idx - 1)
-                    note.blocks = blocks; note.updatedAt = Date(); return true
+                    guard let updated = NoteBlock.shiftUp(blocks: note.blocks, selId: selId) else { return false }
+                    note.blocks = updated; note.updatedAt = Date(); return true
                 }
                 shiftArrowMonitor.actionDown = {
-                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }),
-                          idx < note.blocks.count - 1 else { return false }
-                    var blocks = note.blocks; blocks.swapAt(idx, idx + 1)
-                    note.blocks = blocks; note.updatedAt = Date(); return true
+                    guard let updated = NoteBlock.shiftDown(blocks: note.blocks, selId: selId) else { return false }
+                    note.blocks = updated; note.updatedAt = Date(); return true
                 }
-                // Shift-←/→: swap only within an image group (adjacent block must also be an image).
                 shiftArrowMonitor.actionLeft = {
-                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }),
-                          idx > 0,
-                          note.blocks[idx - 1].kind == .image else { return false }
-                    var blocks = note.blocks; blocks.swapAt(idx, idx - 1)
-                    note.blocks = blocks; note.updatedAt = Date(); return true
+                    guard let updated = NoteBlock.shiftLeft(blocks: note.blocks, selId: selId) else { return false }
+                    note.blocks = updated; note.updatedAt = Date(); return true
                 }
                 shiftArrowMonitor.actionRight = {
-                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }),
-                          idx < note.blocks.count - 1,
-                          note.blocks[idx + 1].kind == .image else { return false }
-                    var blocks = note.blocks; blocks.swapAt(idx, idx + 1)
-                    note.blocks = blocks; note.updatedAt = Date(); return true
+                    guard let updated = NoteBlock.shiftRight(blocks: note.blocks, selId: selId) else { return false }
+                    note.blocks = updated; note.updatedAt = Date(); return true
                 }
 
-                // Plain arrows: move highlight to adjacent block, crossing note boundaries.
+                // Plain ↑/↓: move highlight between visual rows (groups count as one row).
                 shiftArrowMonitor.actionPlainUp = {
                     guard let idx = note.blocks.firstIndex(where: { $0.id == selId }) else { return false }
-                    if idx > 0 { selectedBlockId = note.blocks[idx - 1].id; return true }
+                    let blocks = note.blocks
+                    var prevIdx = idx - 1
+                    if let gid = blocks[idx].groupId {
+                        var groupStart = idx
+                        while groupStart > 0 && blocks[groupStart - 1].groupId == gid { groupStart -= 1 }
+                        prevIdx = groupStart - 1
+                    }
+                    if prevIdx >= 0 { selectedBlockId = blocks[prevIdx].id; return true }
                     if noteIdx > 0, let last = dayNotes[noteIdx - 1].blocks.last {
                         selectedBlockId = last.id; return true
                     }
                     return false
                 }
-                shiftArrowMonitor.actionPlainLeft = shiftArrowMonitor.actionPlainUp
-
                 shiftArrowMonitor.actionPlainDown = {
                     guard let idx = note.blocks.firstIndex(where: { $0.id == selId }) else { return false }
-                    if idx < note.blocks.count - 1 { selectedBlockId = note.blocks[idx + 1].id; return true }
+                    let blocks = note.blocks
+                    var nextIdx = idx + 1
+                    if let gid = blocks[idx].groupId {
+                        var groupEnd = idx
+                        while groupEnd < blocks.count - 1 && blocks[groupEnd + 1].groupId == gid { groupEnd += 1 }
+                        nextIdx = groupEnd + 1
+                    }
+                    if nextIdx < blocks.count { selectedBlockId = blocks[nextIdx].id; return true }
                     if noteIdx < dayNotes.count - 1, let first = dayNotes[noteIdx + 1].blocks.first {
                         selectedBlockId = first.id; return true
                     }
                     return false
                 }
-                shiftArrowMonitor.actionPlainRight = shiftArrowMonitor.actionPlainDown
+                // Plain ←/→: move highlight within the same image group only.
+                shiftArrowMonitor.actionPlainLeft = {
+                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }),
+                          idx > 0,
+                          let gid = note.blocks[idx].groupId,
+                          note.blocks[idx - 1].groupId == gid else { return false }
+                    selectedBlockId = note.blocks[idx - 1].id; return true
+                }
+                shiftArrowMonitor.actionPlainRight = {
+                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }),
+                          idx < note.blocks.count - 1,
+                          let gid = note.blocks[idx].groupId,
+                          note.blocks[idx + 1].groupId == gid else { return false }
+                    selectedBlockId = note.blocks[idx + 1].id; return true
+                }
                 return
             }
         }
