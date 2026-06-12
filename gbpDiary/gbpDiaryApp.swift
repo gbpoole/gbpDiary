@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import Darwin
 
 #if os(macOS)
 import AppKit
@@ -30,6 +31,13 @@ struct gbpDiaryApp: App {
             fatalError("Could not create ModelContainer: \(error)")
         }
     }()
+
+    init() {
+        guard let request = ObsidianImportLaunchRequest(arguments: ProcessInfo.processInfo.arguments),
+              request.exitAfterImport else { return }
+        let succeeded = Self.runBundleImport(request, in: sharedModelContainer)
+        exit(succeeded ? 0 : 1)
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -68,18 +76,26 @@ struct gbpDiaryApp: App {
         didRunBundleImport = true
         let args = ProcessInfo.processInfo.arguments
         guard let request = ObsidianImportLaunchRequest(arguments: args) else { return }
-        let url = URL(fileURLWithPath: request.bundlePath)
-        do {
-            let report = try ObsidianBundleImporter(context: sharedModelContainer.mainContext)
-                .importBundle(from: url)
-            print("Obsidian import completed: \(report)")
-        } catch {
-            print("Obsidian import failed: \(error)")
-        }
+        _ = Self.runBundleImport(request, in: sharedModelContainer)
         if request.exitAfterImport {
             #if os(macOS)
             NSApp.terminate(nil)
             #endif
+        }
+    }
+
+    private static func runBundleImport(_ request: ObsidianImportLaunchRequest, in container: ModelContainer) -> Bool {
+        let url = URL(fileURLWithPath: request.bundlePath)
+        do {
+            let report = try ObsidianBundleImporter(context: container.mainContext)
+                .importBundle(from: url)
+            print("Obsidian import completed: \(report)")
+            fflush(stdout)
+            return true
+        } catch {
+            print("Obsidian import failed: \(error)")
+            fflush(stdout)
+            return false
         }
     }
 }
