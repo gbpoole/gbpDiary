@@ -221,7 +221,7 @@ struct DayNoteRow: View {
                 },
                 onPreview: { url in previewURL = url },
                 onDelete: { idx, att in deleteImageBlock(at: idx, att: att) },
-                onStepSize: { delta in stepGroupSize(forGroupWithIndices: indices, by: delta) },
+                onSetSize: { width in setGroupSize(width, forGroupWithIndices: indices) },
                 onSetAlignment: { alignment in setGroupAlignment(alignment, forGroupWithIndices: indices) },
                 onDropIntoGroup: { s, belowIdx, targetId in mergeBlock(draggedIdString: s, belowIndex: belowIdx, targetBlockId: targetId) }
             )
@@ -629,34 +629,18 @@ struct DayNoteRow: View {
         att.renderWidth = initialWidth
     }
 
-    private func stepGroupSize(forGroupWithIndices indices: [Int], by delta: Int) {
-        guard let firstIdx = indices.first,
-              note.blocks.indices.contains(firstIdx),
-              let firstAttId = note.blocks[firstIdx].attachmentId,
-              let firstAtt = note.attachments.first(where: { $0.id == firstAttId }),
-              let srcWidth = firstAtt.sourceImageWidth,
-              let currentWidth = firstAtt.renderWidth else { return }
-        let canonicalSteps = AttachmentStorage.renderSteps(forSourceWidth: srcWidth)
-        let stepIdx = canonicalSteps.firstIndex(of: currentWidth)
-            ?? canonicalSteps.indices.min(by: { abs(canonicalSteps[$0] - currentWidth) < abs(canonicalSteps[$1] - currentWidth) })
-            ?? 0
-        let newStepIdx = stepIdx + delta
-        guard canonicalSteps.indices.contains(newStepIdx) else { return }
-        let targetWidth = canonicalSteps[newStepIdx]
+    private func setGroupSize(_ targetWidth: Int, forGroupWithIndices indices: [Int]) {
         for blockIdx in indices {
             guard note.blocks.indices.contains(blockIdx),
                   let attId = note.blocks[blockIdx].attachmentId,
                   let att = note.attachments.first(where: { $0.id == attId }),
-                  att.kind == .image,
-                  let attSrc = att.sourceImageWidth else { continue }
-            let attSteps = AttachmentStorage.renderSteps(forSourceWidth: attSrc)
-            let newWidth = attSteps.filter { $0 <= targetWidth }.last ?? attSteps[0]
-            guard let data = AttachmentStorage.resizedImageData(at: att.fileURL, targetWidth: newWidth) else { continue }
-            let newURL = AttachmentStorage.renderURL(forSourceURL: att.fileURL, width: newWidth)
+                  att.kind == .image else { continue }
+            guard let data = AttachmentStorage.resizedImageData(at: att.fileURL, targetWidth: targetWidth) else { continue }
+            let newURL = AttachmentStorage.renderURL(forSourceURL: att.fileURL, width: targetWidth)
             try? data.write(to: newURL)
             if let old = att.renderURL { AttachmentStorage.delete(at: old) }
             att.renderURL = newURL
-            att.renderWidth = newWidth
+            att.renderWidth = targetWidth
         }
         note.updatedAt = Date()
     }
@@ -707,7 +691,7 @@ private struct NoteImageGroupRow: View {
     var onSelect: (UUID) -> Void = { _ in }
     var onPreview: (URL) -> Void = { _ in }
     var onDelete: (Int, Attachment) -> Void = { _, _ in }
-    var onStepSize: (Int) -> Void = { _ in }
+    var onSetSize: (Int) -> Void = { _ in }
     var onSetAlignment: (ImageAlignment) -> Void = { _ in }
     var onDropIntoGroup: (String, Int, UUID) -> Void = { _, _, _ in }
 
@@ -927,17 +911,15 @@ private struct NoteImageGroupRow: View {
             if let att = canonicalAtt, let srcWidth = att.sourceImageWidth, let currentWidth = att.renderWidth {
                 Divider().frame(height: 12)
                 let steps = AttachmentStorage.renderSteps(forSourceWidth: srcWidth)
-                let atMin = currentWidth <= (steps.first ?? 0)
-                let atMax = currentWidth >= (steps.last ?? 0)
-                Text("\(currentWidth)px").font(.caption2).foregroundStyle(.tertiary)
-                Button { onStepSize(-1) } label: { Image(systemName: "chevron.down").font(.caption2) }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(atMin ? Color.secondary.opacity(0.3) : .secondary)
-                    .disabled(atMin)
-                Button { onStepSize(1) } label: { Image(systemName: "chevron.up").font(.caption2) }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(atMax ? Color.secondary.opacity(0.3) : .secondary)
-                    .disabled(atMax)
+                Picker("", selection: Binding(get: { currentWidth }, set: { onSetSize($0) })) {
+                    ForEach(steps, id: \.self) { step in
+                        Text("\(step)px").tag(step)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .font(.caption2)
+                .fixedSize()
             }
             Spacer()
         }
