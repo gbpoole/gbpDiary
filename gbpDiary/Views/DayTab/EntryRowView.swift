@@ -9,8 +9,6 @@ struct EntryRowView: View {
     var onDeleteEmpty: (() -> Void)? = nil
     var isCollapsed: Bool = false
     var onToggleCollapse: (() -> Void)? = nil
-    var isNotesFocused: Bool = false
-    var onMoveToNextFromNotes: (() -> Void)? = nil
     var onDropDiaryEntry: ((String) -> Bool)? = nil
     var onDropOntoEntry: ((String) -> Bool)? = nil
     var onRemoveFromMeeting: ((Task) -> Void)? = nil
@@ -47,17 +45,14 @@ struct EntryRowView: View {
     // MARK: - Meeting
 
     private var meetingRow: some View {
-        let notesText = entry.minutes?.minutesContent ?? ""
-        let showNotes = (!notesText.isEmpty || isEntryFocused || isNotesFocused) && !isCollapsed
+        let showNotes = entry.minutes?.note != nil && !isCollapsed
         let rootTasks = !isCollapsed
             ? (entry.minutes?.newTasks ?? []).filter { $0.parent == nil }.sorted { $0.sortOrder < $1.sortOrder }
             : []
         let hasTasks = !rootTasks.isEmpty
-        let nextForSummary: (() -> Void)? = showNotes
-            ? { focusedEntryId.wrappedValue = entry.notesAreaFocusId }
-            : hasTasks
-                ? { if let first = rootTasks.first { focusedEntryId.wrappedValue = first.id } else { onMoveToNext?() } }
-                : onMoveToNext
+        let nextForSummary: (() -> Void)? = hasTasks
+            ? { if let first = rootTasks.first { focusedEntryId.wrappedValue = first.id } else { onMoveToNext?() } }
+            : onMoveToNext
         let summaryBinding = Binding<String>(
             get: { entry.inlineSummary },
             set: { entry.inlineSummary = $0 }
@@ -119,24 +114,11 @@ struct EntryRowView: View {
             .padding(.leading)
             .padding(.vertical, 2)
             .draggable(entry.id.uuidString)
-            if showNotes, let minutes = entry.minutes {
+            if showNotes, let minutes = entry.minutes, let note = minutes.note {
                 HStack(alignment: .top, spacing: 6) {
                     Color.clear.frame(width: 16)
-                    EntryNotesSubArea(
-                        text: Binding(
-                            get: { minutes.minutesContent ?? "" },
-                            set: { minutes.minutesContent = $0.isEmpty ? nil : $0 }
-                        ),
-                        isFocused: isNotesFocused,
-                        focusedEntryId: focusedEntryId,
-                        focusId: entry.notesAreaFocusId,
-                        placeholder: "Add meeting minutes…",
-                        onMoveToPrevious: { focusedEntryId.wrappedValue = entry.id },
-                        onMoveToNext: hasTasks
-                            ? { if let first = rootTasks.first { focusedEntryId.wrappedValue = first.id } else { onMoveToNextFromNotes?() } }
-                            : onMoveToNextFromNotes
-                    )
-                    .padding(.leading, Self.indentStep)
+                    NoteEditingArea(note: note)
+                        .padding(.leading, Self.indentStep)
                 }
                 .padding(.leading)
                 .padding(.trailing)
@@ -170,14 +152,8 @@ struct EntryRowView: View {
                             },
                             onDropExternal: onDropDiaryEntry,
                             onDropExternalOntoTask: onDropExternalOntoMeetingTask,
-                            onNavigatePrev: {
-                                if showNotes {
-                                    focusedEntryId.wrappedValue = entry.notesAreaFocusId
-                                } else {
-                                    focusedEntryId.wrappedValue = entry.id
-                                }
-                            },
-                            onNavigateNext: onMoveToNextFromNotes
+                            onNavigatePrev: { focusedEntryId.wrappedValue = entry.id },
+                            onNavigateNext: onMoveToNext
                         )
                         .padding(.bottom, 4)
                     }
@@ -188,6 +164,14 @@ struct EntryRowView: View {
                 .padding(.trailing)
                 .padding(.bottom, 4)
             }
+        }
+        .onAppear {
+            guard let minutes = entry.minutes, minutes.note == nil else { return }
+            let note = Note(content: minutes.minutesContent ?? "")
+            modelContext.insert(note)
+            minutes.note = note
+            minutes.minutesContent = nil
+            minutes.updatedAt = Date()
         }
     }
 

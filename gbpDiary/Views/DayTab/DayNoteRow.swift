@@ -90,12 +90,16 @@ struct DayNoteRow: View {
         }
         .padding(.horizontal)
         .contextMenu {
-            Button("Edit…") { onEdit?() }
+            if onEdit != nil {
+                Button("Edit…") { onEdit?() }
+            }
             #if os(macOS)
             Button("Paste Image from Clipboard") { pasteImageFromClipboard() }
             #endif
-            Divider()
-            Button("Delete", role: .destructive) { onDelete?() }
+            if onDelete != nil {
+                Divider()
+                Button("Delete", role: .destructive) { onDelete?() }
+            }
         }
         .fileImporter(
             isPresented: $showingFilePicker,
@@ -598,17 +602,24 @@ struct DayNoteRow: View {
     }
 
     private func suggestedExportFilename() -> String {
+        let sanitize: (String) -> String = {
+            $0.replacingOccurrences(of: "[/:*?\"<>|\\\\]", with: "-", options: .regularExpression)
+        }
+        if let summary = note.minutes?.summary, !summary.isEmpty {
+            return "\(String(sanitize(summary).prefix(60))).pdf"
+        }
         for block in note.blocks where block.kind == .text {
             for rawLine in block.textContent.split(separator: "\n", omittingEmptySubsequences: true) {
-                let line = String(rawLine)
-                    .trimmingCharacters(in: .whitespaces)
-                    .replacingOccurrences(of: "^#+\\s+", with: "", options: .regularExpression)
-                    .replacingOccurrences(of: "[/:*?\"<>|\\\\]", with: "-", options: .regularExpression)
+                let line = sanitize(String(rawLine).trimmingCharacters(in: .whitespaces)
+                    .replacingOccurrences(of: "^#+\\s+", with: "", options: .regularExpression))
                 if !line.isEmpty { return "\(String(line.prefix(60))).pdf" }
             }
         }
         if let date = note.dayRecord?.date {
             return "\(date.formatted(.iso8601.year().month().day()))-note.pdf"
+        }
+        if let date = note.minutes?.meetingAt {
+            return "\(date.formatted(.iso8601.year().month().day()))-meeting.pdf"
         }
         return "note.pdf"
     }

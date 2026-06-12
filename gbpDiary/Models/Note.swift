@@ -20,6 +20,7 @@ import SwiftData
 
     var dayRecord: DayRecord?
     var project: Project?
+    var minutes: Minutes?
     @Relationship(deleteRule: .cascade, inverse: \Attachment.note) var attachments: [Attachment]
 
     init(content: String = "", sortOrder: Int = 0, id: UUID = UUID()) {

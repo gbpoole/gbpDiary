@@ -142,48 +142,60 @@ struct ProjectEditorSheet: View {
                 }
 
                 Section("Dev Team") {
-                    ForEach(allPeople) { person in
-                        Toggle(person.name, isOn: Binding(
-                            get: { selectedDevIds.contains(person.id) },
-                            set: { include in
-                                if include {
-                                    selectedDevIds.insert(person.id)
-                                } else {
-                                    selectedDevIds.remove(person.id)
-                                    if devLeadId == person.id { devLeadId = nil }
+                    if allPeople.isEmpty {
+                        Text("No people yet — add them in the People tab.")
+                            .foregroundStyle(.secondary)
+                            .font(.callout)
+                    } else {
+                        ForEach(allPeople) { person in
+                            Toggle(person.name, isOn: Binding(
+                                get: { selectedDevIds.contains(person.id) },
+                                set: { include in
+                                    if include {
+                                        selectedDevIds.insert(person.id)
+                                    } else {
+                                        selectedDevIds.remove(person.id)
+                                        if devLeadId == person.id { devLeadId = nil }
+                                    }
                                 }
-                            }
-                        ))
-                    }
-                    if !selectedDevIds.isEmpty {
-                        Picker("Dev Lead", selection: $devLeadId) {
-                            Text("None").tag(UUID?.none)
-                            ForEach(devMembers) { p in
-                                Text(p.name).tag(p.id as UUID?)
+                            ))
+                        }
+                        if !selectedDevIds.isEmpty {
+                            Picker("Dev Lead", selection: $devLeadId) {
+                                Text("None").tag(UUID?.none)
+                                ForEach(devMembers) { p in
+                                    Text(p.name).tag(p.id as UUID?)
+                                }
                             }
                         }
                     }
                 }
 
                 Section("Sci Team") {
-                    ForEach(allPeople) { person in
-                        Toggle(person.name, isOn: Binding(
-                            get: { selectedSciIds.contains(person.id) },
-                            set: { include in
-                                if include {
-                                    selectedSciIds.insert(person.id)
-                                } else {
-                                    selectedSciIds.remove(person.id)
-                                    if sciLeadId == person.id { sciLeadId = nil }
+                    if allPeople.isEmpty {
+                        Text("No people yet — add them in the People tab.")
+                            .foregroundStyle(.secondary)
+                            .font(.callout)
+                    } else {
+                        ForEach(allPeople) { person in
+                            Toggle(person.name, isOn: Binding(
+                                get: { selectedSciIds.contains(person.id) },
+                                set: { include in
+                                    if include {
+                                        selectedSciIds.insert(person.id)
+                                    } else {
+                                        selectedSciIds.remove(person.id)
+                                        if sciLeadId == person.id { sciLeadId = nil }
+                                    }
                                 }
-                            }
-                        ))
-                    }
-                    if !selectedSciIds.isEmpty {
-                        Picker("Sci Lead", selection: $sciLeadId) {
-                            Text("None").tag(UUID?.none)
-                            ForEach(sciMembers) { p in
-                                Text(p.name).tag(p.id as UUID?)
+                            ))
+                        }
+                        if !selectedSciIds.isEmpty {
+                            Picker("Sci Lead", selection: $sciLeadId) {
+                                Text("None").tag(UUID?.none)
+                                ForEach(sciMembers) { p in
+                                    Text(p.name).tag(p.id as UUID?)
+                                }
                             }
                         }
                     }

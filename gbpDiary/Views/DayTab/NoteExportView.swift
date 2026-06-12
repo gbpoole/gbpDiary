@@ -34,6 +34,48 @@ struct NoteExportView: View {
     // MARK: - Header
 
     @ViewBuilder private var headerSection: some View {
+        if let minutes = note.minutes {
+            meetingHeaderSection(minutes)
+        } else {
+            noteHeaderSection
+        }
+    }
+
+    @ViewBuilder private func meetingHeaderSection(_ minutes: Minutes) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(minutes.summary ?? "Meeting")
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(Color.black)
+
+            // Date · Time · Duration
+            let timeParts: [String] = [
+                minutes.meetingAt.formatted(.dateTime.weekday(.abbreviated).day().month(.wide).year()),
+                minutes.meetingAt.formatted(.dateTime.hour().minute()),
+                minutes.duration.map(\.displayString)
+            ].compactMap { $0 }
+            Text(timeParts.joined(separator: "  ·  "))
+                .font(.system(size: 13))
+                .foregroundStyle(Color.secondary)
+
+            if !minutes.projects.isEmpty {
+                pdfChipRow(label: "Projects", items: minutes.projects.map(\.name), color: Color.blue)
+            }
+
+            if !minutes.attendees.isEmpty {
+                pdfChipRow(label: "Attendees", items: minutes.attendees.map(\.name), color: Color.purple)
+            }
+
+            if !note.tags.isEmpty {
+                pdfChipRow(label: "Tags", items: note.tags, color: Color.teal)
+            }
+
+            Text(timestampLine)
+                .font(.system(size: 10))
+                .foregroundStyle(Color.gray.opacity(0.6))
+        }
+    }
+
+    @ViewBuilder private var noteHeaderSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(exportTitle)
                 .font(.system(size: 22, weight: .bold))
@@ -54,22 +96,33 @@ struct NoteExportView: View {
             }
 
             if !note.tags.isEmpty {
-                HStack(spacing: 6) {
-                    ForEach(note.tags, id: \.self) { tag in
-                        Text(tag)
-                            .font(.system(size: 11, weight: .medium))
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color.teal.opacity(0.12))
-                            .foregroundStyle(Color.teal)
-                            .clipShape(Capsule())
-                    }
-                }
+                pdfChipRow(label: "Tags", items: note.tags, color: Color.teal)
             }
 
             Text(timestampLine)
                 .font(.system(size: 10))
                 .foregroundStyle(Color.gray.opacity(0.6))
+        }
+    }
+
+    @ViewBuilder private func pdfChipRow(label: String, items: [String], color: Color) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text("\(label):")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Color(white: 0.4))
+                .frame(width: 72, alignment: .trailing)
+                .padding(.top, 3)
+            FlowLayout(spacing: 5) {
+                ForEach(items, id: \.self) { item in
+                    Text(item)
+                        .font(.system(size: 11, weight: .medium))
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(color.opacity(0.12))
+                        .foregroundStyle(color)
+                        .clipShape(Capsule())
+                }
+            }
         }
     }
 
@@ -117,6 +170,7 @@ struct NoteExportView: View {
     // MARK: - Helpers
 
     var exportTitle: String {
+        if let summary = note.minutes?.summary, !summary.isEmpty { return summary }
         for block in note.blocks where block.kind == .text {
             for rawLine in block.textContent.split(separator: "\n", omittingEmptySubsequences: true) {
                 let line = String(rawLine).trimmingCharacters(in: .whitespaces)

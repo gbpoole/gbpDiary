@@ -189,6 +189,8 @@ Minutes
   summary   : String?        (one-line summary; editable inline in diary)
   duration  : Duration?      (optional; same h/d/w format as tasks)
   meetingAt : Date           (defaults to nearest quarter-hour when created)
+  minutesContent: String?    (legacy plain-text field; migrated into note.blocks on first open; nil afterward)
+  note      → Note?          (cascade delete; block-based meeting minutes; created on first open via ensureNoteExists()/onAppear migration)
   newTasks  → [Task]     ↔ Task.originMinutes  (nullify on delete)
   projects  → [Project]  ↔ Project.meetings
   attendees → [Person]   ↔ Person.minutesAttended
@@ -219,6 +221,7 @@ Note
   tagsJSON  : String         (JSON-encoded [String]; use computed `tags` property)
   dayRecord → DayRecord?     (set when captured from a day's Notes section)
   project   → Project?       (optional; displayed as blue chip above note content)
+  minutes   → Minutes?       (set when note is the block-based minutes for a meeting; nullify on note delete)
   attachments → [Attachment]  cascade delete ↔ Attachment.note
 ```
 
@@ -269,7 +272,8 @@ When a meeting `DayEntry` is created, `addMeeting()` automatically creates and l
 - `DiaryTaskRow` — renders a root day-task (Task with dayRecord set) with inline editing, notes sub-area, collapse/expand, and subtask tree.
 - `TaskEditorSheet` — full task editing sheet. Accepts `task: Task?` (nil = create new) and `defaultDate: Date`. New tasks default to unscheduled; notes field has a visible rounded border. When editing an existing task, a "Time Log" section shows all `TaskTimeEntry` items with an "Add Entry…" button opening `LogTimeSheet`.
 - `EntryRowView` — renders a meeting `DayEntry` with inline summary, minutes notes sub-area, and embedded New Tasks subtree. (Note/task DayEntry kinds are no longer rendered.)
-- `DayNoteRow` — renders a single `Note` in the day's Notes section. Shows project chip (`.blue`) and tag chips (`.teal`) above the inline markdown content, with a paperclip button (opens file picker) and pencil `InlineRowEditButton` on the same header row. When the note has attachments, shows a compact strip below the content: for images, shows filename + current width label + ↓↑ resize arrows (disabled at min/max) + eye + xmark; for other kinds, icon + filename + eye + xmark. Images are rendered inline via Textual's `URLAttachmentLoader`; resizing writes a new `{uuid}_r{width}.png` render file and updates the markdown link so Textual reloads from a cache miss. Context menu includes "Paste Image from Clipboard" (macOS only, shown when clipboard has an image). Supports drag-to-reorder.
+- `DayNoteRow` — renders a single `Note` in the day's Notes section. Shows project chip (`.blue`) and tag chips (`.teal`) above the inline markdown content, with a paperclip button (opens file picker) and pencil `InlineRowEditButton` on the same header row. When the note has attachments, shows a compact strip below the content: for images, shows filename + current width label + ↓↑ resize arrows (disabled at min/max) + eye + xmark; for other kinds, icon + filename + eye + xmark. Images are rendered inline via Textual's `URLAttachmentLoader`; resizing writes a new `{uuid}_r{width}.png` render file and updates the markdown link so Textual reloads from a cache miss. Context menu includes "Paste Image from Clipboard" (macOS only, shown when clipboard has an image). Supports drag-to-reorder. `onEdit: nil` hides the pencil button; `onDelete: nil` hides the Delete context-menu item.
+- `NoteEditingArea` — self-contained block-based note editor. Wraps `DayNoteRow` with its own `@FocusState`, `selectedBlockId`, and all keyboard monitors (`DeleteKeyMonitor`, `EscapeKeyMonitor`, `ReturnKeyMonitor`, `ShiftArrowMonitor`, `FocusClearMonitor`). Use when editing a single `Note` in a standalone context (e.g. `MinutesDetailView`). Passes `onEdit: nil` and `onDelete: nil` to `DayNoteRow` so those items are hidden. The delete-monitor action guards against `NSTextView` focus for "selected block" cases to prevent interference when embedded inside `DayPageContent` alongside other NoteEditingArea instances.
 - `NoteEditorSheet` — sheet for editing `Note.project` and `Note.tags` (content is always edited inline). Accepts `note: Note`.
 - `ActivitySection` — top section in `DayPageContent` showing Focus blocks, their Activities, and any Unspecified time entries. "+" opens `FocusBlockEditorSheet`. Total logged time footer shown when non-empty.
 - `FocusBlockRow` — collapsible row for one `FocusBlock`. Shows source icon (folder for project-backed, checkmark for task-backed), duration chip, net unspecified time label, "+" to open `LogTimeSheet`, pencil to edit. Context menu includes delete with alert when activities exist.
@@ -288,9 +292,11 @@ When a meeting `DayEntry` is created, `addMeeting()` automatically creates and l
 - `TagsView` — computed table of all unique tags used across `Project.tags` and `Person.tags`. Columns: tag name, project count, people count. Tap a row to open `TagDetailSheet` showing chips for all matching projects and people. No model of its own; derives from `@Query` on `Project` and `Person`.
 - All entity list pages (`ProjectsView`, `PeopleView`, `InstitutionsView`, `MinutesListView`, `DocumentsListView`) use the same `VStack { filterBar + Divider + Table }` pattern as `TasksView`: macOS `Table` with tap-to-open-sheet on the primary column, iOS `List`. Each has a filter bar (project or institution picker where relevant).
 
-### macOS-specific: DeleteKeyMonitor
+### macOS-specific: keyboard monitors
 
-`onKeyPress(.delete)` cannot intercept ⌫ inside a `TextField` because `NSTextField.deleteBackward:` fires inside `interpretKeyEvents:` before SwiftUI's handler runs. `DeleteKeyMonitor` uses `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` to intercept at the event level. It is started/stopped in `.onAppear`/`.onDisappear` of `DayPageContent`. The action closure checks whether the focused entry is empty before deleting — use a kind-aware check (`task.summary`, `minutes.summary`, `note.content`, `entry.text`) not a generic `entry.text` check.
+Five NSEvent monitor classes live in `gbpDiary/Views/DayTab/KeyboardMonitors.swift`: `DeleteKeyMonitor`, `EscapeKeyMonitor`, `ReturnKeyMonitor`, `ShiftArrowMonitor`, `FocusClearMonitor`. All are `final class @unchecked Sendable` with `start()`/`stop()` lifecycle.
+
+`onKeyPress(.delete)` cannot intercept ⌫ inside a `TextField` because `NSTextField.deleteBackward:` fires inside `interpretKeyEvents:` before SwiftUI's handler runs. `DeleteKeyMonitor` uses `NSEvent.addLocalMonitorForEvents(matching: .keyDown)` to intercept at the event level. It is started/stopped in `.onAppear`/`.onDisappear` of `DayPageContent` (for day-level content) and `NoteEditingArea` (for standalone note editing). The action closure checks whether the focused entry is empty before deleting — use a kind-aware check (`task.summary`, `minutes.summary`, `note.content`, `entry.text`) not a generic `entry.text` check. For "selected block (no text focus)" delete actions, always guard with `!(NSApp.keyWindow?.firstResponder is NSTextView)` to prevent interference with other active `NoteEditingArea` instances.
 
 ### macOS SwiftUI quirk: `.alert()` and layout padding
 

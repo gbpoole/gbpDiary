@@ -6,7 +6,10 @@ struct MinutesDetailView: View {
     var asSheet: Bool = false
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
-    @State private var showingEdit = false
+    @Query(sort: \Project.name) private var allProjects: [Project]
+    @Query(sort: \Person.name) private var allPeople: [Person]
+    @State private var durationText = ""
+    @State private var durationError = false
 
     var body: some View {
         if asSheet {
@@ -34,78 +37,108 @@ struct MinutesDetailView: View {
         .navigationTitle(minutes.meetingAt.formatted(.dateTime.day().month(.wide).year()))
         .toolbar {
             if asSheet {
-                ToolbarItem(placement: .confirmationAction) {
+                ToolbarItem(placement: .automatic) {
                     Button("Done") { dismiss() }
                 }
             }
-            ToolbarItem {
-                Button { showingEdit = true } label: { Image(systemName: "pencil") }
-            }
         }
-        .sheet(isPresented: $showingEdit) {
-            MinutesEditorSheet(minutes: minutes, project: nil)
+        .onAppear {
+            ensureNoteExists()
+            durationText = minutes.duration?.displayString ?? ""
         }
+    }
+
+    private func ensureNoteExists() {
+        guard minutes.note == nil else { return }
+        let note = Note(content: minutes.minutesContent ?? "")
+        modelContext.insert(note)
+        minutes.note = note
+        minutes.minutesContent = nil
+        minutes.updatedAt = Date()
     }
 
     private var metadataSection: some View {
         GroupBox("Meeting") {
-            HStack {
-                Label(minutes.meetingAt.formatted(.dateTime.weekday(.wide).day().month(.wide).year().hour().minute()),
-                      systemImage: "calendar")
-                Spacer()
-            }
+            DatePicker("Date & time", selection: $minutes.meetingAt)
             TextField("Summary", text: Binding(
                 get: { minutes.summary ?? "" },
                 set: { minutes.summary = $0.isEmpty ? nil : $0 }
             ))
             .textFieldStyle(.plain)
-            if let dur = minutes.duration {
-                Label(dur.displayString, systemImage: "clock")
-                    .foregroundStyle(.secondary)
+            HStack {
+                TextField("Duration (e.g. 1.5h, 2d)", text: $durationText)
+                    .textFieldStyle(.plain)
+                if durationError {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .foregroundStyle(.red)
+                }
+            }
+            Text("Units: h (hours), d (days ≈7.6h)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .onChange(of: durationText) { _, newVal in
+            let trimmed = newVal.trimmingCharacters(in: .whitespaces)
+            if trimmed.isEmpty {
+                durationError = false
+                minutes.duration = nil
+                minutes.updatedAt = Date()
+            } else if let d = Duration.parse(trimmed) {
+                durationError = false
+                minutes.duration = d
+                minutes.updatedAt = Date()
+            } else {
+                durationError = true
             }
         }
     }
 
     private var attendeesSection: some View {
-        GroupBox("Attendees (\(minutes.attendees.count))") {
-            if minutes.attendees.isEmpty {
-                Text("No attendees recorded.").foregroundStyle(.secondary)
+        GroupBox("Attendees") {
+            if allPeople.isEmpty {
+                Text("No people yet — add them in the People tab.")
+                    .foregroundStyle(.secondary)
             } else {
-                FlowLayout(spacing: 6) {
-                    ForEach(minutes.attendees) { person in
-                        Chip(label: person.name, color: .purple)
-                    }
+                ForEach(allPeople) { p in
+                    Toggle(p.name, isOn: Binding(
+                        get: { minutes.attendees.contains(where: { $0.id == p.id }) },
+                        set: { include in
+                            if include { minutes.attendees.append(p) }
+                            else { minutes.attendees.removeAll { $0.id == p.id } }
+                            minutes.updatedAt = Date()
+                        }
+                    ))
                 }
             }
         }
     }
 
     private var projectsSection: some View {
-        GroupBox("Projects (\(minutes.projects.count))") {
-            if minutes.projects.isEmpty {
-                Text("No linked projects.").foregroundStyle(.secondary)
+        GroupBox("Projects") {
+            if allProjects.isEmpty {
+                Text("No projects yet — add them in the Projects tab.")
+                    .foregroundStyle(.secondary)
             } else {
-                FlowLayout(spacing: 6) {
-                    ForEach(minutes.projects) { project in
-                        Chip(label: project.name, color: .blue)
-                    }
+                ForEach(allProjects) { p in
+                    Toggle(p.name, isOn: Binding(
+                        get: { minutes.projects.contains(where: { $0.id == p.id }) },
+                        set: { include in
+                            if include { minutes.projects.append(p) }
+                            else { minutes.projects.removeAll { $0.id == p.id } }
+                            minutes.updatedAt = Date()
+                        }
+                    ))
                 }
             }
         }
     }
 
     private var notesSection: some View {
-        GroupBox {
-            MarkdownEditorSection(
-                text: Binding(
-                    get: { minutes.minutesContent ?? "" },
-                    set: { minutes.minutesContent = $0.isEmpty ? nil : $0 }
-                ),
-                label: "Notes",
-                placeholder: "No minutes recorded.",
-                minEditorHeight: 120,
-                startEditing: asSheet
-            )
+        GroupBox("Notes") {
+            if let note = minutes.note {
+                NoteEditingArea(note: note)
+                    .padding(.horizontal, -12)
+            }
         }
     }
 
@@ -149,20 +182,32 @@ struct MinutesEditorSheet: View {
                 }
 
                 Section("Projects") {
-                    ForEach(allProjects) { p in
-                        Toggle(p.name, isOn: Binding(
-                            get: { selectedProjects.contains(p.id) },
-                            set: { if $0 { selectedProjects.insert(p.id) } else { selectedProjects.remove(p.id) } }
-                        ))
+                    if allProjects.isEmpty {
+                        Text("No projects yet — add them in the Projects tab.")
+                            .foregroundStyle(.secondary)
+                            .font(.callout)
+                    } else {
+                        ForEach(allProjects) { p in
+                            Toggle(p.name, isOn: Binding(
+                                get: { selectedProjects.contains(p.id) },
+                                set: { if $0 { selectedProjects.insert(p.id) } else { selectedProjects.remove(p.id) } }
+                            ))
+                        }
                     }
                 }
 
                 Section("Attendees") {
-                    ForEach(allPeople) { p in
-                        Toggle(p.name, isOn: Binding(
-                            get: { selectedAttendees.contains(p.id) },
-                            set: { if $0 { selectedAttendees.insert(p.id) } else { selectedAttendees.remove(p.id) } }
-                        ))
+                    if allPeople.isEmpty {
+                        Text("No people yet — add them in the People tab.")
+                            .foregroundStyle(.secondary)
+                            .font(.callout)
+                    } else {
+                        ForEach(allPeople) { p in
+                            Toggle(p.name, isOn: Binding(
+                                get: { selectedAttendees.contains(p.id) },
+                                set: { if $0 { selectedAttendees.insert(p.id) } else { selectedAttendees.remove(p.id) } }
+                            ))
+                        }
                     }
                 }
             }

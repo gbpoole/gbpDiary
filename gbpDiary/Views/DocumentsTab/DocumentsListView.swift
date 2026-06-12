@@ -119,11 +119,17 @@ struct DocumentEditorSheet: View {
                         .lineLimit(3...6)
                 }
                 Section("Projects") {
-                    ForEach(allProjects) { p in
-                        Toggle(p.name, isOn: Binding(
-                            get: { selectedProjectIds.contains(p.id) },
-                            set: { if $0 { selectedProjectIds.insert(p.id) } else { selectedProjectIds.remove(p.id) } }
-                        ))
+                    if allProjects.isEmpty {
+                        Text("No projects yet — add them in the Projects tab.")
+                            .foregroundStyle(.secondary)
+                            .font(.callout)
+                    } else {
+                        ForEach(allProjects) { p in
+                            Toggle(p.name, isOn: Binding(
+                                get: { selectedProjectIds.contains(p.id) },
+                                set: { if $0 { selectedProjectIds.insert(p.id) } else { selectedProjectIds.remove(p.id) } }
+                            ))
+                        }
                     }
                 }
             }

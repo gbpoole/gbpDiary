@@ -19,6 +19,9 @@ import SwiftData
     @Relationship(deleteRule: .nullify, inverse: \Task.originMinutes)
     var newTasks: [Task]
 
+    @Relationship(deleteRule: .cascade, inverse: \Note.minutes)
+    var note: Note? = nil
+
     init(meetingAt: Date, id: UUID = UUID()) {
         self.id = id
         self.meetingAt = meetingAt
