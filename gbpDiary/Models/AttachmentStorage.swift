@@ -50,10 +50,9 @@ enum AttachmentStorage {
     static let sourceMaxWidth = 2048
     static let renderStepWidths = [200, 400, 600, 800, 1000, 1200, 1600, 2048]
 
-    // Returns the subset of renderStepWidths that are ≤ sourceWidth, always at least [renderStepWidths[0]]
+    // Returns all renderStepWidths — upscaling beyond sourceWidth is allowed
     static func renderSteps(forSourceWidth sourceWidth: Int) -> [Int] {
-        let filtered = renderStepWidths.filter { $0 <= sourceWidth }
-        return filtered.isEmpty ? [renderStepWidths[0]] : filtered
+        return renderStepWidths
     }
 
     // Canonical render file URL: {uuid}_r{width}.png in attachmentsDirectory
