@@ -48,6 +48,8 @@ ContentView
 
 All persistence is SwiftData. Models live in `gbpDiary/Models/`. The `ModelContainer` is created in `gbpDiaryApp` and injected via `.modelContainer()`.
 
+**Obsidian import** is staged. `tools/obsidian_import_bundle.py` scans a vault read-only and writes a deterministic JSON import bundle with diagnostics. `ObsidianBundleImporter` imports that bundle into SwiftData in dependency order (institutions, people, projects, day records, notes, minutes, documents, tasks, derived meeting entries). Run the app with `--import-obsidian-bundle /path/to/bundle.json` to import; use `-ui-testing` with that flag for an in-memory validation run, and add `--exit-after-import` for CLI smoke tests that should terminate after the import attempt. Attachment file copying from bundle `attachmentRefs` is not yet implemented; references are preserved in document descriptions.
+
 **`AttachmentStorage`** (`gbpDiary/Models/AttachmentStorage.swift`) is a pure domain helper (no SwiftData) that manages the on-disk location for attachment files. On macOS files are copied to `~/Library/Application Support/Attachments/`; on iOS to the app's `Documents/Attachments/`. When iCloud is enabled, uncomment the ubiquity-container block in `attachmentsDirectory` and run a one-time migration.
 
 For images, `AttachmentStorage` also provides a two-version resize system: `capSource(at:)` caps the stored source at 2048 px wide on import; `renderURL(forSourceURL:width:)` returns a versioned path `{uuid}_r{width}.png` that busts Textual's image cache on resize; `resizedImageData(at:targetWidth:)` does the CoreGraphics resize; `renderSteps(forSourceWidth:)` returns the full step list `[200, 400, 600, 800, 1000, 1200, 1600, 2048]` for any source width — upscaling beyond the original image size is allowed. The orphan sweep in `gbpDiaryApp` collects both `fileURL` and `renderURL` so old render files are cleaned up on relaunch.
@@ -340,7 +342,7 @@ Use `#if os(macOS)` for macOS-specific sizing (`.frame(minWidth:minHeight:)` on 
 
 ## What is not yet built
 
-- **Import pipeline**: bootstrap from Obsidian vault. Pseudocode spec in `/Users/gbpoole/swift_app_handoff_spec.md` section 4.
+- **Import pipeline remaining work**: live attachment file copying from Obsidian document references, a dedicated UI/CLI progress reporter, and versioned migration strategy for importing into older persistent stores. Dry-run bundle generation and SwiftData upsert are implemented.
 - **Tasks dashboard**: tasks grouped by person + project with age/data-quality diagnostics.
 - **iCloud sync**: add `cloudKitContainerIdentifier` to `ModelConfiguration` when ready.
 - **iPhone UI**: Day screen as home with fast capture loop.
@@ -393,6 +395,8 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | `NoteBlock.shiftDown` — mirror of shiftUp with extraction after group and merging below | Shift-arrow image UX | `gbpDiaryTests/Models/ValueTypesTests.swift` | `shiftDown_inGroup_extractsAfterGroup`, `shiftDown_inGroup_lastElement_extractsAfterGroup`, `shiftDown_standaloneWithGroupedBelow_mergesAtStart`, `shiftDown_standaloneWithStandaloneBelow_createsGroup`, `shiftDown_standaloneWithTextBelow_swaps`, `shiftDown_atEnd_returnsNil` |
 | `NoteBlock.cleanupGroupIds` clears `groupId` from images whose group was reduced to a single member; no-op on multi-member groups and nil-groupId images | Note block rendering | `gbpDiaryTests/Models/ValueTypesTests.swift` | `cleanupGroupIds_soleGroupMember_clearsGroupId`, `cleanupGroupIds_multiMemberGroup_preservesGroupId`, `cleanupGroupIds_mixedGroups_onlyClearsLoneMembers`, `cleanupGroupIds_noGroups_noOp` |
 | `NoteBlock.init(from decoder:)` backward-compat: missing `groupId` → nil, missing `alignment` → `.center`, missing `textContent` → `""` | Note persistence | `gbpDiaryTests/Models/ValueTypesTests.swift` | `decoder_withGroupId_roundTrips`, `decoder_withoutGroupId_defaultsToNil`, `decoder_withoutAlignment_defaultsToCenter`, `decoder_withoutTextContent_defaultsToEmpty` |
+| Obsidian import bundle preserves core relationships and task metadata when upserting into SwiftData | Obsidian import | `gbpDiaryTests/Import/ObsidianBundleImporterTests.swift` | `importBundle_createsRelationshipsAndTaskMetadata` |
+| Obsidian import launch arguments require `--import-obsidian-bundle <path>` and support `--exit-after-import` for CLI validation runs | Obsidian import | `gbpDiaryTests/Import/ObsidianBundleImporterTests.swift` | `launchRequest_parsesBundlePathAndExitFlag`, `launchRequest_requiresBundlePath` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 

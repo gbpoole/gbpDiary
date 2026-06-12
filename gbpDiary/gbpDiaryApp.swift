@@ -1,8 +1,14 @@
 import SwiftUI
 import SwiftData
 
+#if os(macOS)
+import AppKit
+#endif
+
 @main
 struct gbpDiaryApp: App {
+    @State private var didRunBundleImport = false
+
     var sharedModelContainer: ModelContainer = {
         let isUITesting = ProcessInfo.processInfo.arguments.contains("-ui-testing")
         let schema = Schema([
@@ -28,7 +34,10 @@ struct gbpDiaryApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
-                .onAppear { sweepOrphanedAttachments() }
+                .onAppear {
+                    sweepOrphanedAttachments()
+                    runBundleImportIfRequested()
+                }
         }
         .modelContainer(sharedModelContainer)
         .commands {
@@ -52,6 +61,38 @@ struct gbpDiaryApp: App {
         for file in files where !known.contains(file) {
             try? FileManager.default.removeItem(at: file)
         }
+    }
+
+    private func runBundleImportIfRequested() {
+        guard !didRunBundleImport else { return }
+        didRunBundleImport = true
+        let args = ProcessInfo.processInfo.arguments
+        guard let request = ObsidianImportLaunchRequest(arguments: args) else { return }
+        let url = URL(fileURLWithPath: request.bundlePath)
+        do {
+            let report = try ObsidianBundleImporter(context: sharedModelContainer.mainContext)
+                .importBundle(from: url)
+            print("Obsidian import completed: \(report)")
+        } catch {
+            print("Obsidian import failed: \(error)")
+        }
+        if request.exitAfterImport {
+            #if os(macOS)
+            NSApp.terminate(nil)
+            #endif
+        }
+    }
+}
+
+struct ObsidianImportLaunchRequest: Equatable {
+    var bundlePath: String
+    var exitAfterImport: Bool
+
+    init?(arguments: [String]) {
+        guard let flagIndex = arguments.firstIndex(of: "--import-obsidian-bundle"),
+              arguments.indices.contains(flagIndex + 1) else { return nil }
+        bundlePath = arguments[flagIndex + 1]
+        exitAfterImport = arguments.contains("--exit-after-import")
     }
 }
 
