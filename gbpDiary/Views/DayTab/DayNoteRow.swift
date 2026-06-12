@@ -225,7 +225,6 @@ struct DayNoteRow: View {
                 onSetAlignment: { alignment in setGroupAlignment(alignment, forGroupWithIndices: indices) },
                 onDropIntoGroup: { s, belowIdx, targetId in mergeBlock(draggedIdString: s, belowIndex: belowIdx, targetBlockId: targetId) }
             )
-            .opacity(anySelected ? 1 : 1)  // keep view stable
         }
     }
 
@@ -630,24 +629,6 @@ struct DayNoteRow: View {
         att.renderWidth = initialWidth
     }
 
-    private func stepRenderSize(for att: Attachment, by delta: Int) {
-        guard att.kind == .image,
-              let srcWidth = att.sourceImageWidth,
-              let currentWidth = att.renderWidth else { return }
-        let steps = AttachmentStorage.renderSteps(forSourceWidth: srcWidth)
-        guard let idx = steps.firstIndex(of: currentWidth) else { return }
-        let newIdx = idx + delta
-        guard steps.indices.contains(newIdx) else { return }
-        let newWidth = steps[newIdx]
-        guard let data = AttachmentStorage.resizedImageData(at: att.fileURL, targetWidth: newWidth) else { return }
-        let newRenderURL = AttachmentStorage.renderURL(forSourceURL: att.fileURL, width: newWidth)
-        try? data.write(to: newRenderURL)
-        if let oldRenderURL = att.renderURL { AttachmentStorage.delete(at: oldRenderURL) }
-        att.renderURL = newRenderURL
-        att.renderWidth = newWidth
-        note.updatedAt = Date()
-    }
-
     private func stepGroupSize(forGroupWithIndices indices: [Int], by delta: Int) {
         guard let firstIdx = indices.first,
               note.blocks.indices.contains(firstIdx),
@@ -709,132 +690,6 @@ struct DayNoteRow: View {
         }
         .padding(.horizontal, 12)
         .padding(.bottom, 4)
-    }
-}
-
-// MARK: - NoteImageBlockRow
-
-private struct NoteImageBlockRow: View {
-    @Bindable var note: Note
-    let block: NoteBlock
-    let blockIndex: Int
-    let att: Attachment
-    var isSelected: Bool = false
-    var onSelect: () -> Void = {}
-    let onPreview: () -> Void
-    let onDelete: () -> Void
-    let onStepDown: () -> Void
-    let onStepUp: () -> Void
-    var topRounded: Bool = true
-    var bottomRounded: Bool = true
-
-    var body: some View {
-        HStack(spacing: 0) {
-            RoundedRectangle(cornerRadius: 2)
-                .fill(Color.accentColor.opacity(0.35))
-                .frame(width: 2)
-                .padding(.top, topRounded ? 2 : 0)
-                .padding(.bottom, bottomRounded ? 2 : 0)
-            VStack(alignment: .leading, spacing: 6) {
-                imageView
-                controlsBar
-            }
-            .padding(.horizontal, 4)
-            .padding(.vertical, 4)
-        }
-        .contentShape(Rectangle())
-        .onTapGesture { onSelect() }
-        .background(
-            Color.secondary.opacity(0.06),
-            in: UnevenRoundedRectangle(
-                topLeadingRadius:    topRounded    ? 6 : 0,
-                bottomLeadingRadius: bottomRounded ? 6 : 0,
-                bottomTrailingRadius: bottomRounded ? 6 : 0,
-                topTrailingRadius:   topRounded    ? 6 : 0
-            )
-        )
-        .overlay {
-            if isSelected {
-                UnevenRoundedRectangle(
-                    topLeadingRadius:    topRounded    ? 6 : 0,
-                    bottomLeadingRadius: bottomRounded ? 6 : 0,
-                    bottomTrailingRadius: bottomRounded ? 6 : 0,
-                    topTrailingRadius:   topRounded    ? 6 : 0
-                )
-                .stroke(Color.accentColor, lineWidth: 2)
-            }
-        }
-    }
-
-    @ViewBuilder private var imageView: some View {
-        #if os(macOS)
-        if let img = NSImage(contentsOf: att.renderURL ?? att.fileURL) {
-            let displayW = CGFloat(att.renderWidth ?? Int(img.size.width))
-            Image(nsImage: img)
-                .resizable()
-                .scaledToFit()
-                .frame(maxWidth: displayW)
-                .frame(maxWidth: .infinity, alignment: frameAlignment)
-        }
-        #endif
-    }
-
-    private var frameAlignment: Alignment {
-        switch block.alignment {
-        case .left:   .leading
-        case .center: .center
-        case .right:  .trailing
-        }
-    }
-
-    @ViewBuilder private var controlsBar: some View {
-        HStack(spacing: 6) {
-            // Alignment
-            ForEach(ImageAlignment.allCases, id: \.self) { alignment in
-                Button { setAlignment(alignment) } label: {
-                    Image(systemName: alignment.icon).font(.caption)
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(block.alignment == alignment ? Color.accentColor : Color.secondary.opacity(0.5))
-            }
-
-            // Size controls
-            if let srcWidth = att.sourceImageWidth, let currentWidth = att.renderWidth {
-                Divider().frame(height: 12)
-                let steps = AttachmentStorage.renderSteps(forSourceWidth: srcWidth)
-                let atMin = steps.first == currentWidth
-                let atMax = steps.last == currentWidth
-                Text("\(currentWidth)px").font(.caption2).foregroundStyle(.tertiary)
-                Button { onStepDown() } label: { Image(systemName: "chevron.down").font(.caption2) }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(atMin ? Color.secondary.opacity(0.3) : .secondary)
-                    .disabled(atMin)
-                Button { onStepUp() } label: { Image(systemName: "chevron.up").font(.caption2) }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(atMax ? Color.secondary.opacity(0.3) : .secondary)
-                    .disabled(atMax)
-            }
-
-            Divider().frame(height: 12)
-
-            Button(action: onPreview) {
-                Image(systemName: "eye").font(.caption)
-            }.buttonStyle(.plain).foregroundStyle(.secondary)
-
-            Button(action: onDelete) {
-                Image(systemName: "xmark").font(.caption)
-            }.buttonStyle(.plain).foregroundStyle(.red)
-
-            Spacer()
-        }
-    }
-
-    private func setAlignment(_ alignment: ImageAlignment) {
-        var blocks = note.blocks
-        guard blocks.indices.contains(blockIndex), blocks[blockIndex].kind == .image else { return }
-        blocks[blockIndex].alignment = alignment
-        note.blocks = blocks
-        note.updatedAt = Date()
     }
 }
 

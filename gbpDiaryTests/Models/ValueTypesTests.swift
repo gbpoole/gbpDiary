@@ -298,4 +298,118 @@ struct ValueTypesTests {
         let img = NoteBlock.image(UUID())
         #expect(NoteBlock.shiftDown(blocks: [img], selId: img.id) == nil)
     }
+
+    // MARK: - NoteBlock.cleanupGroupIds
+
+    @Test func cleanupGroupIds_soleGroupMember_clearsGroupId() {
+        let gid = UUID()
+        var img = NoteBlock.image(UUID()); img.groupId = gid
+        var blocks = [img]
+        NoteBlock.cleanupGroupIds(in: &blocks)
+        #expect(blocks[0].groupId == nil)
+    }
+
+    @Test func cleanupGroupIds_multiMemberGroup_preservesGroupId() {
+        let gid = UUID()
+        var a = NoteBlock.image(UUID()); a.groupId = gid
+        var b = NoteBlock.image(UUID()); b.groupId = gid
+        var blocks = [a, b]
+        NoteBlock.cleanupGroupIds(in: &blocks)
+        #expect(blocks[0].groupId == gid)
+        #expect(blocks[1].groupId == gid)
+    }
+
+    @Test func cleanupGroupIds_mixedGroups_onlyClearsLoneMembers() {
+        let gid1 = UUID(); let gid2 = UUID()
+        var a = NoteBlock.image(UUID()); a.groupId = gid1
+        var b = NoteBlock.image(UUID()); b.groupId = gid1
+        var c = NoteBlock.image(UUID()); c.groupId = gid2
+        var blocks = [a, b, c]
+        NoteBlock.cleanupGroupIds(in: &blocks)
+        #expect(blocks[0].groupId == gid1)
+        #expect(blocks[1].groupId == gid1)
+        #expect(blocks[2].groupId == nil)
+    }
+
+    @Test func cleanupGroupIds_noGroups_noOp() {
+        let text = NoteBlock.text("T")
+        let img  = NoteBlock.image(UUID())
+        var blocks = [text, img]
+        NoteBlock.cleanupGroupIds(in: &blocks)
+        #expect(blocks[0].groupId == nil)
+        #expect(blocks[1].groupId == nil)
+    }
+
+    // MARK: - NoteBlock.computeGroups edge cases
+
+    @Test func computeGroups_emptyArray_returnsEmpty() {
+        #expect(NoteBlock.computeGroups(from: []).isEmpty)
+    }
+
+    @Test func computeGroups_allText_eachIsOwnGroup() {
+        let a = NoteBlock.text("A")
+        let b = NoteBlock.text("B")
+        let groups = NoteBlock.computeGroups(from: [a, b])
+        #expect(groups.count == 2)
+        guard groups.count == 2 else { return }
+        if case .text(let block, let idx) = groups[0].content {
+            #expect(block.id == a.id); #expect(idx == 0)
+        } else { Issue.record("groups[0] expected text") }
+        if case .text(let block, let idx) = groups[1].content {
+            #expect(block.id == b.id); #expect(idx == 1)
+        } else { Issue.record("groups[1] expected text") }
+    }
+
+    @Test func computeGroups_groupIndices_correctForMidArrayGroup() {
+        let gid = UUID()
+        let text = NoteBlock.text("T")
+        var imgA = NoteBlock.image(UUID()); imgA.groupId = gid
+        var imgB = NoteBlock.image(UUID()); imgB.groupId = gid
+
+        let groups = NoteBlock.computeGroups(from: [text, imgA, imgB])
+        #expect(groups.count == 2)
+        guard groups.count == 2 else { return }
+
+        if case .images(_, let indices) = groups[1].content {
+            #expect(indices == [1, 2])
+            #expect(groups[1].firstBlockIndex == 1)
+            #expect(groups[1].lastBlockIndex == 2)
+        } else { Issue.record("groups[1] expected image group") }
+    }
+
+    // MARK: - NoteBlock backward-compat decoder
+
+    @Test func decoder_withGroupId_roundTrips() throws {
+        let gid = UUID()
+        var block = NoteBlock.image(UUID())
+        block.groupId = gid
+        let data = try JSONEncoder().encode(block)
+        let decoded = try JSONDecoder().decode(NoteBlock.self, from: data)
+        #expect(decoded.id == block.id)
+        #expect(decoded.groupId == gid)
+    }
+
+    @Test func decoder_withoutGroupId_defaultsToNil() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","kind":"image","textContent":"","alignment":"center"}
+        """
+        let decoded = try JSONDecoder().decode(NoteBlock.self, from: json.data(using: .utf8)!)
+        #expect(decoded.groupId == nil)
+    }
+
+    @Test func decoder_withoutAlignment_defaultsToCenter() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","kind":"text","textContent":"hello"}
+        """
+        let decoded = try JSONDecoder().decode(NoteBlock.self, from: json.data(using: .utf8)!)
+        #expect(decoded.alignment == .center)
+    }
+
+    @Test func decoder_withoutTextContent_defaultsToEmpty() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","kind":"text"}
+        """
+        let decoded = try JSONDecoder().decode(NoteBlock.self, from: json.data(using: .utf8)!)
+        #expect(decoded.textContent == "")
+    }
 }
