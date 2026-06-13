@@ -146,41 +146,29 @@ struct MinutesDetailView: View {
 
     private var attendeesSection: some View {
         GroupBox("Attendees") {
-            if allPeople.isEmpty {
-                Text("No people yet — add them in the People tab.")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(allPeople) { p in
-                    Toggle(p.name, isOn: Binding(
-                        get: { minutes.attendees.contains(where: { $0.id == p.id }) },
-                        set: { include in
-                            if include { minutes.attendees.append(p) }
-                            else { minutes.attendees.removeAll { $0.id == p.id } }
-                            minutes.updatedAt = Date()
-                        }
-                    ))
-                }
-            }
+            FuzzyPickerField(
+                allItems: allPeople,
+                selected: Binding(
+                    get: { minutes.attendees },
+                    set: { minutes.attendees = $0; minutes.updatedAt = Date() }
+                ),
+                label: \.name,
+                chipColor: AppTheme.person
+            )
         }
     }
 
     private var projectsSection: some View {
         GroupBox("Projects") {
-            if allProjects.isEmpty {
-                Text("No projects yet — add them in the Projects tab.")
-                    .foregroundStyle(.secondary)
-            } else {
-                ForEach(allProjects) { p in
-                    Toggle(p.name, isOn: Binding(
-                        get: { minutes.projects.contains(where: { $0.id == p.id }) },
-                        set: { include in
-                            if include { minutes.projects.append(p) }
-                            else { minutes.projects.removeAll { $0.id == p.id } }
-                            minutes.updatedAt = Date()
-                        }
-                    ))
-                }
-            }
+            FuzzyPickerField(
+                allItems: allProjects,
+                selected: Binding(
+                    get: { minutes.projects },
+                    set: { minutes.projects = $0; minutes.updatedAt = Date() }
+                ),
+                label: \.name,
+                chipColor: AppTheme.project
+            )
         }
     }
 
@@ -209,8 +197,8 @@ struct MinutesEditorSheet: View {
     @State private var summary = ""
     @State private var durationText = ""
     @State private var durationError = false
-    @State private var selectedProjects: Set<Project.ID> = []
-    @State private var selectedAttendees: Set<Person.ID> = []
+    @State private var selectedProjects: [Project] = []
+    @State private var selectedAttendees: [Person] = []
 
     var body: some View {
         NavigationStack {
@@ -250,33 +238,21 @@ struct MinutesEditorSheet: View {
                 }
 
                 Section("Projects") {
-                    if allProjects.isEmpty {
-                        Text("No projects yet — add them in the Projects tab.")
-                            .foregroundStyle(.secondary)
-                            .font(.callout)
-                    } else {
-                        ForEach(allProjects) { p in
-                            Toggle(p.name, isOn: Binding(
-                                get: { selectedProjects.contains(p.id) },
-                                set: { if $0 { selectedProjects.insert(p.id) } else { selectedProjects.remove(p.id) } }
-                            ))
-                        }
-                    }
+                    FuzzyPickerField(
+                        allItems: allProjects,
+                        selected: $selectedProjects,
+                        label: \.name,
+                        chipColor: AppTheme.project
+                    )
                 }
 
                 Section("Attendees") {
-                    if allPeople.isEmpty {
-                        Text("No people yet — add them in the People tab.")
-                            .foregroundStyle(.secondary)
-                            .font(.callout)
-                    } else {
-                        ForEach(allPeople) { p in
-                            Toggle(p.name, isOn: Binding(
-                                get: { selectedAttendees.contains(p.id) },
-                                set: { if $0 { selectedAttendees.insert(p.id) } else { selectedAttendees.remove(p.id) } }
-                            ))
-                        }
-                    }
+                    FuzzyPickerField(
+                        allItems: allPeople,
+                        selected: $selectedAttendees,
+                        label: \.name,
+                        chipColor: AppTheme.person
+                    )
                 }
             }
             .navigationTitle(minutes == nil ? "New Meeting" : "Edit Meeting")
@@ -292,10 +268,10 @@ struct MinutesEditorSheet: View {
                 meetingAt = m.meetingAt
                 summary = m.summary ?? ""
                 durationText = m.duration?.displayString ?? ""
-                selectedProjects = Set(m.projects.map(\.id))
-                selectedAttendees = Set(m.attendees.map(\.id))
+                selectedProjects = m.projects
+                selectedAttendees = m.attendees
             } else if let p = project {
-                selectedProjects = [p.id]
+                selectedProjects = [p]
             }
         }
         #if os(macOS)
@@ -322,8 +298,8 @@ struct MinutesEditorSheet: View {
         m.meetingAt = meetingAt
         m.summary = summary.isEmpty ? nil : summary
         m.duration = parsedDuration
-        m.projects = allProjects.filter { selectedProjects.contains($0.id) }
-        m.attendees = allPeople.filter { selectedAttendees.contains($0.id) }
+        m.projects = selectedProjects
+        m.attendees = selectedAttendees
         m.updatedAt = Date()
         dismiss()
     }

@@ -114,18 +114,18 @@ struct ProjectEditorSheet: View {
     @State private var stream = ""
     @State private var tagsText = ""
     @State private var selectedParent: Project?
-    @State private var selectedDevIds: Set<UUID> = []
+    @State private var selectedDevPeople: [Person] = []
     @State private var devLeadId: UUID? = nil
-    @State private var selectedSciIds: Set<UUID> = []
+    @State private var selectedSciPeople: [Person] = []
     @State private var sciLeadId: UUID? = nil
 
-    private var devMembers: [Person] { allPeople.filter { selectedDevIds.contains($0.id) } }
-    private var sciMembers: [Person] { allPeople.filter { selectedSciIds.contains($0.id) } }
+    private var devMembers: [Person] { selectedDevPeople }
+    private var sciMembers: [Person] { selectedSciPeople }
 
     private var canSave: Bool {
         guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
-        if !selectedDevIds.isEmpty && devLeadId == nil { return false }
-        if !selectedSciIds.isEmpty && sciLeadId == nil { return false }
+        if !selectedDevPeople.isEmpty && devLeadId == nil { return false }
+        if !selectedSciPeople.isEmpty && sciLeadId == nil { return false }
         return true
     }
 
@@ -146,60 +146,48 @@ struct ProjectEditorSheet: View {
                 }
 
                 Section("Dev Team") {
-                    if allPeople.isEmpty {
-                        Text("No people yet — add them in the People tab.")
-                            .foregroundStyle(.secondary)
-                            .font(.callout)
-                    } else {
-                        ForEach(allPeople) { person in
-                            Toggle(person.name, isOn: Binding(
-                                get: { selectedDevIds.contains(person.id) },
-                                set: { include in
-                                    if include {
-                                        selectedDevIds.insert(person.id)
-                                    } else {
-                                        selectedDevIds.remove(person.id)
-                                        if devLeadId == person.id { devLeadId = nil }
-                                    }
-                                }
-                            ))
-                        }
-                        if !selectedDevIds.isEmpty {
-                            Picker("Dev Lead", selection: $devLeadId) {
-                                Text("None").tag(UUID?.none)
-                                ForEach(devMembers) { p in
-                                    Text(p.name).tag(p.id as UUID?)
-                                }
+                    FuzzyPickerField(
+                        allItems: allPeople,
+                        selected: Binding(
+                            get: { selectedDevPeople },
+                            set: { newPeople in
+                                let removed = Set(selectedDevPeople.map(\.id)).subtracting(newPeople.map(\.id))
+                                if let leadId = devLeadId, removed.contains(leadId) { devLeadId = nil }
+                                selectedDevPeople = newPeople
+                            }
+                        ),
+                        label: \.name,
+                        chipColor: AppTheme.person
+                    )
+                    if !selectedDevPeople.isEmpty {
+                        Picker("Dev Lead", selection: $devLeadId) {
+                            Text("None").tag(UUID?.none)
+                            ForEach(devMembers) { p in
+                                Text(p.name).tag(p.id as UUID?)
                             }
                         }
                     }
                 }
 
                 Section("Sci Team") {
-                    if allPeople.isEmpty {
-                        Text("No people yet — add them in the People tab.")
-                            .foregroundStyle(.secondary)
-                            .font(.callout)
-                    } else {
-                        ForEach(allPeople) { person in
-                            Toggle(person.name, isOn: Binding(
-                                get: { selectedSciIds.contains(person.id) },
-                                set: { include in
-                                    if include {
-                                        selectedSciIds.insert(person.id)
-                                    } else {
-                                        selectedSciIds.remove(person.id)
-                                        if sciLeadId == person.id { sciLeadId = nil }
-                                    }
-                                }
-                            ))
-                        }
-                        if !selectedSciIds.isEmpty {
-                            Picker("Sci Lead", selection: $sciLeadId) {
-                                Text("None").tag(UUID?.none)
-                                ForEach(sciMembers) { p in
-                                    Text(p.name).tag(p.id as UUID?)
-                                }
+                    FuzzyPickerField(
+                        allItems: allPeople,
+                        selected: Binding(
+                            get: { selectedSciPeople },
+                            set: { newPeople in
+                                let removed = Set(selectedSciPeople.map(\.id)).subtracting(newPeople.map(\.id))
+                                if let leadId = sciLeadId, removed.contains(leadId) { sciLeadId = nil }
+                                selectedSciPeople = newPeople
+                            }
+                        ),
+                        label: \.name,
+                        chipColor: AppTheme.person
+                    )
+                    if !selectedSciPeople.isEmpty {
+                        Picker("Sci Lead", selection: $sciLeadId) {
+                            Text("None").tag(UUID?.none)
+                            ForEach(sciMembers) { p in
+                                Text(p.name).tag(p.id as UUID?)
                             }
                         }
                     }
@@ -221,9 +209,9 @@ struct ProjectEditorSheet: View {
                 stream = p.stream ?? ""
                 tagsText = p.tags.joined(separator: ", ")
                 selectedParent = p.parent
-                selectedDevIds = Set(p.devTeam.map(\.id))
+                selectedDevPeople = p.devTeam
                 devLeadId = p.devLead?.id
-                selectedSciIds = Set(p.sciTeam.map(\.id))
+                selectedSciPeople = p.sciTeam
                 sciLeadId = p.sciLead?.id
             }
         }
@@ -238,8 +226,8 @@ struct ProjectEditorSheet: View {
         let parsedTags = tagsText.split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
-        let devPeople = allPeople.filter { selectedDevIds.contains($0.id) }
-        let sciPeople = allPeople.filter { selectedSciIds.contains($0.id) }
+        let devPeople = selectedDevPeople
+        let sciPeople = selectedSciPeople
         let devLead = allPeople.first { $0.id == devLeadId }
         let sciLead = allPeople.first { $0.id == sciLeadId }
         if let p = project {

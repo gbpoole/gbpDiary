@@ -108,7 +108,7 @@ struct DocumentEditorSheet: View {
 
     @State private var summary = ""
     @State private var docDescription = ""
-    @State private var selectedProjectIds: Set<UUID> = []
+    @State private var selectedProjects: [Project] = []
 
     var body: some View {
         NavigationStack {
@@ -119,18 +119,12 @@ struct DocumentEditorSheet: View {
                         .lineLimit(3...6)
                 }
                 Section("Projects") {
-                    if allProjects.isEmpty {
-                        Text("No projects yet — add them in the Projects tab.")
-                            .foregroundStyle(.secondary)
-                            .font(.callout)
-                    } else {
-                        ForEach(allProjects) { p in
-                            Toggle(p.name, isOn: Binding(
-                                get: { selectedProjectIds.contains(p.id) },
-                                set: { if $0 { selectedProjectIds.insert(p.id) } else { selectedProjectIds.remove(p.id) } }
-                            ))
-                        }
-                    }
+                    FuzzyPickerField(
+                        allItems: allProjects,
+                        selected: $selectedProjects,
+                        label: \.name,
+                        chipColor: AppTheme.project
+                    )
                 }
             }
             .navigationTitle(document == nil ? "New Document" : "Edit Document")
@@ -145,7 +139,7 @@ struct DocumentEditorSheet: View {
             if let d = document {
                 summary = d.summary ?? ""
                 docDescription = d.documentDescription ?? ""
-                selectedProjectIds = Set(d.projects.map(\.id))
+                selectedProjects = d.projects
             }
         }
         #if os(macOS)
@@ -154,17 +148,16 @@ struct DocumentEditorSheet: View {
     }
 
     private func save() {
-        let linkedProjects = allProjects.filter { selectedProjectIds.contains($0.id) }
         if let d = document {
             d.summary = summary.isEmpty ? nil : summary
             d.documentDescription = docDescription.isEmpty ? nil : docDescription
-            d.projects = linkedProjects
+            d.projects = selectedProjects
             d.updatedAt = Date()
         } else {
             let d = Document()
             d.summary = summary.isEmpty ? nil : summary
             d.documentDescription = docDescription.isEmpty ? nil : docDescription
-            d.projects = linkedProjects
+            d.projects = selectedProjects
             modelContext.insert(d)
         }
         dismiss()
