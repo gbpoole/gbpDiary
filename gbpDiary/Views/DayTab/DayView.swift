@@ -23,10 +23,8 @@ struct DayPageContent: View {
     @State private var pendingFocusId: UUID?
     @State private var showingAddTask = false
     @State private var editingTask: Task?
-    @State private var editingDocument: Document?
     @State private var editingNote: Note?
-    @State private var collapsedTaskIds: Set<UUID> = []
-    @State private var collapsedMeetingIds: Set<UUID> = []
+    @State private var expandedTaskIds: Set<UUID> = []
     @State private var notesDropTargetIndex: Int?
     @State private var pendingFocusNoteId: UUID?
     @State private var selectedBlockId: UUID?
@@ -86,10 +84,6 @@ struct DayPageContent: View {
             .sorted { ($0.minutes?.meetingAt ?? .distantPast) < ($1.minutes?.meetingAt ?? .distantPast) }
     }
 
-    private var dayDocuments: [Document] {
-        (dayRecord?.documents ?? []).sorted { $0.createdAt < $1.createdAt }
-    }
-
     private var dayNotes: [Note] {
         (dayRecord?.noteItems ?? []).sorted { $0.sortOrder < $1.sortOrder }
     }
@@ -109,10 +103,8 @@ struct DayPageContent: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
                 ActivitySection(dayRecord: dayRecord, date: date, todayEntries: todayTimeEntries, meetings: dayMeetings, completedTasks: activityCompletedTasks, findOrCreateDayRecord: findOrCreateDayRecord)
-                meetingsSection
                 newTasksSection
                 completedTasksSection
-                documentsSection
                 notesSection
                 if showTaskSections { sidebarSections }
             }
@@ -128,9 +120,6 @@ struct DayPageContent: View {
         }
         .sheet(item: $editingTask) { task in
             TaskEditorSheet(task: task, defaultDate: date)
-        }
-        .sheet(item: $editingDocument) { doc in
-            DocumentDetailView(document: doc, asSheet: true)
         }
         .sheet(item: $editingNote) { n in
             NoteEditorSheet(note: n)
@@ -204,19 +193,19 @@ struct DayPageContent: View {
     @ViewBuilder
     private var notesSection: some View {
         DaySectionHeader(title: "Notes", onAdd: addNote)
-        notesDropZone(belowIndex: -1)
-        ForEach(Array(dayNotes.enumerated()), id: \.element.id) { idx, note in
-            noteRow(note: note, index: idx)
-                .draggable(note.id.uuidString)
-            notesDropZone(belowIndex: idx)
-        }
-    }
-
-    @ViewBuilder
-    private var meetingsSection: some View {
-        DaySectionHeader(title: "Meetings", onAdd: addMeeting)
-        ForEach(Array(dayMeetings.enumerated()), id: \.element.id) { idx, entry in
-            meetingRow(entry: entry, index: idx)
+        if dayNotes.isEmpty {
+            Text("No notes created on this day.")
+                .foregroundStyle(.tertiary)
+                .font(.callout)
+                .padding(.horizontal)
+                .padding(.vertical, 4)
+        } else {
+            notesDropZone(belowIndex: -1)
+            ForEach(Array(dayNotes.enumerated()), id: \.element.id) { idx, note in
+                noteRow(note: note, index: idx)
+                    .draggable(note.id.uuidString)
+                notesDropZone(belowIndex: idx)
+            }
         }
     }
 
@@ -224,7 +213,7 @@ struct DayPageContent: View {
     private var newTasksSection: some View {
         DaySectionHeader(title: "New Tasks", onAdd: { showingAddTask = true })
         if newTasks.isEmpty {
-            Text("No tasks for this day.")
+            Text("No tasks created on this day.")
                 .foregroundStyle(.tertiary)
                 .font(.callout)
                 .padding(.horizontal)
@@ -243,19 +232,6 @@ struct DayPageContent: View {
             ForEach(completedTasks) { task in
                 CompletedTaskRow(task: task, onEdit: { _ in editingTask = task })
             }
-        }
-    }
-
-    @ViewBuilder
-    private var documentsSection: some View {
-        DaySectionHeader(title: "Documents", onAdd: addDocument)
-        ForEach(dayDocuments) { doc in
-            DayDocumentRow(document: doc, onEdit: { editingDocument = doc })
-                .onTapGesture { editingDocument = doc }
-                .contextMenu {
-                    Button("Edit…") { editingDocument = doc }
-                    Button("Delete", role: .destructive) { modelContext.delete(doc) }
-                }
         }
     }
 
@@ -279,45 +255,15 @@ struct DayPageContent: View {
 
     // MARK: - Row builders
 
-    private func meetingRow(entry: DayEntry, index: Int) -> some View {
-        let count = dayMeetings.count
-        return EntryRowView(
-            entry: entry,
-            focusedEntryId: $focusedEntryId,
-            onMoveToPrevious: index > 0 ? { pendingFocusId = dayMeetings[index - 1].id } : nil,
-            onMoveToNext: index < count - 1 ? { pendingFocusId = dayMeetings[index + 1].id } : nil,
-            isCollapsed: collapsedMeetingIds.contains(entry.id),
-            onToggleCollapse: {
-                if collapsedMeetingIds.contains(entry.id) { collapsedMeetingIds.remove(entry.id) }
-                else { collapsedMeetingIds.insert(entry.id) }
-            },
-            onRemoveFromMeeting: { task in
-                let record = findOrCreateDayRecord()
-                task.originMinutes = nil
-                task.dayRecord = record
-                task.sortOrder = nextTaskSortOrder(record)
-            },
-            onDropExternalOntoMeetingTask: { uuidString, targetTask in
-                guard let id = UUID(uuidString: uuidString),
-                      let dragged = findAnyTask(id: id),
-                      dragged.id != targetTask.id else { return false }
-                dragged.parent = targetTask
-                dragged.dayRecord = nil
-                dragged.originMinutes = entry.minutes
-                return true
-            }
-        )
-    }
-
     private func taskRow(task: Task, index: Int) -> some View {
         let count = newTasks.count
         return DiaryTaskRow(
             task: task,
             focusedEntryId: $focusedEntryId,
-            isCollapsed: collapsedTaskIds.contains(task.id),
+            isCollapsed: !expandedTaskIds.contains(task.id),
             onToggleCollapse: {
-                if collapsedTaskIds.contains(task.id) { collapsedTaskIds.remove(task.id) }
-                else { collapsedTaskIds.insert(task.id) }
+                if expandedTaskIds.contains(task.id) { expandedTaskIds.remove(task.id) }
+                else { expandedTaskIds.insert(task.id) }
             },
             onMoveToPrevious: index > 0 ? { pendingFocusId = newTasks[index - 1].id } : nil,
             onMoveToNext: index < count - 1 ? { pendingFocusId = newTasks[index + 1].id } : nil,
@@ -353,20 +299,6 @@ struct DayPageContent: View {
     }
 
     // MARK: - Helpers
-
-    private func findMeetingTask(id: UUID) -> Task? {
-        func search(_ tasks: [Task]) -> Task? {
-            for task in tasks {
-                if task.id == id { return task }
-                if let found = search(task.children) { return found }
-            }
-            return nil
-        }
-        for entry in dayMeetings {
-            if let found = search(entry.minutes?.newTasks ?? []) { return found }
-        }
-        return nil
-    }
 
     private func findAnyTask(id: UUID) -> Task? {
         func search(_ list: [Task]) -> Task? {
@@ -404,26 +336,6 @@ struct DayPageContent: View {
         let hour = cal.component(.hour, from: roundedNow)
         let minute = cal.component(.minute, from: roundedNow)
         return cal.date(bySettingHour: hour, minute: minute, second: 0, of: day) ?? day
-    }
-
-    private func addMeeting() {
-        let record = findOrCreateDayRecord()
-        let meeting = Minutes(meetingAt: nearestQuarterHour(on: date))
-        modelContext.insert(meeting)
-        let entry = DayEntry(kind: .meeting, text: "",
-                             sortOrder: (record.entries.map(\.sortOrder).max() ?? -1) + 1)
-        entry.minutes = meeting
-        entry.dayRecord = record
-        modelContext.insert(entry)
-        pendingFocusId = entry.id
-    }
-
-    private func addDocument() {
-        let record = findOrCreateDayRecord()
-        let doc = Document()
-        doc.dayRecord = record
-        modelContext.insert(doc)
-        editingDocument = doc
     }
 
     private func addNote() {
@@ -638,13 +550,6 @@ struct DayPageContent: View {
                 let idx = newTasks.firstIndex(where: { $0.id == focusId })
                 if let i = idx, i > 0 { pendingFocusId = newTasks[i - 1].id }
                 modelContext.delete(task)
-                return true
-            }
-        } else if let entry = dayMeetings.first(where: { $0.id == focusId }) {
-            deleteMonitor.action = {
-                guard entry.isInlineSummaryEmpty else { return false }
-                if let m = entry.minutes { modelContext.delete(m) }
-                modelContext.delete(entry)
                 return true
             }
         } else if let note = dayNotes.first(where: { n in

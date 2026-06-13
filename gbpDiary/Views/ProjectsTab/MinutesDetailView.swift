@@ -11,6 +11,24 @@ struct MinutesDetailView: View {
     @State private var durationText = ""
     @State private var durationError = false
 
+    private struct DurationPreset: Identifiable {
+        let id: String
+        let label: String
+        let hours: Double
+    }
+    private let durationPresets: [DurationPreset] = [
+        DurationPreset(id: "15m",  label: "15m",  hours: 0.25),
+        DurationPreset(id: "30m",  label: "30m",  hours: 0.5),
+        DurationPreset(id: "1h",   label: "1h",   hours: 1.0),
+        DurationPreset(id: "1.5h", label: "1.5h", hours: 1.5),
+        DurationPreset(id: "2h",   label: "2h",   hours: 2.0),
+        DurationPreset(id: "3h",   label: "3h",   hours: 3.0),
+    ]
+    private func isPresetActive(_ preset: DurationPreset) -> Bool {
+        guard let d = minutes.duration else { return false }
+        return abs(d.hoursNormalized - preset.hours) < 0.01
+    }
+
     var body: some View {
         if asSheet {
             NavigationStack {
@@ -44,7 +62,10 @@ struct MinutesDetailView: View {
         }
         .onAppear {
             ensureNoteExists()
-            durationText = minutes.duration?.displayString ?? ""
+            if let d = minutes.duration {
+                let matchesPreset = durationPresets.contains { abs($0.hours - d.hoursNormalized) < 0.01 }
+                durationText = matchesPreset ? "" : d.displayString
+            }
         }
     }
 
@@ -65,30 +86,60 @@ struct MinutesDetailView: View {
                 set: { minutes.summary = $0.isEmpty ? nil : $0 }
             ))
             .textFieldStyle(.plain)
-            HStack {
-                TextField("Duration (e.g. 1.5h, 2d)", text: $durationText)
+            durationPicker
+        }
+    }
+
+    private var durationPicker: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                ForEach(durationPresets) { preset in
+                    Button(preset.label) {
+                        minutes.duration = Duration(value: preset.hours, unit: .h)
+                        minutes.updatedAt = Date()
+                        durationText = ""
+                        durationError = false
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(isPresetActive(preset) ? Color.accentColor : Color.secondary.opacity(0.12), in: Capsule())
+                    .foregroundStyle(isPresetActive(preset) ? Color.white : Color.primary)
+                }
+            }
+            HStack(spacing: 6) {
+                TextField("Custom (e.g. 2.5h)", text: $durationText)
                     .textFieldStyle(.plain)
+                    .font(.caption)
+                    .onChange(of: durationText) { _, newVal in
+                        let trimmed = newVal.trimmingCharacters(in: .whitespaces)
+                        if trimmed.isEmpty {
+                            durationError = false
+                        } else if let d = Duration.parse(trimmed) {
+                            durationError = false
+                            minutes.duration = d
+                            minutes.updatedAt = Date()
+                        } else {
+                            durationError = true
+                        }
+                    }
                 if durationError {
                     Image(systemName: "exclamationmark.circle.fill")
                         .foregroundStyle(.red)
+                        .font(.caption)
                 }
-            }
-            Text("Units: h (hours), d (days ≈7.6h)")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .onChange(of: durationText) { _, newVal in
-            let trimmed = newVal.trimmingCharacters(in: .whitespaces)
-            if trimmed.isEmpty {
-                durationError = false
-                minutes.duration = nil
-                minutes.updatedAt = Date()
-            } else if let d = Duration.parse(trimmed) {
-                durationError = false
-                minutes.duration = d
-                minutes.updatedAt = Date()
-            } else {
-                durationError = true
+                if minutes.duration != nil {
+                    Button("Clear") {
+                        minutes.duration = nil
+                        minutes.updatedAt = Date()
+                        durationText = ""
+                        durationError = false
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
             }
         }
     }
@@ -168,17 +219,34 @@ struct MinutesEditorSheet: View {
                 TextField("One-line summary", text: $summary)
 
                 Section("Duration") {
+                    let presets: [(label: String, value: String)] = [
+                        ("15m", "0.25h"), ("30m", "0.5h"), ("1h", "1h"),
+                        ("1.5h", "1.5h"), ("2h", "2h"), ("3h", "3h")
+                    ]
+                    let parsedHours = Duration.parse(durationText.trimmingCharacters(in: .whitespaces))?.hoursNormalized
+                    HStack(spacing: 6) {
+                        ForEach(presets, id: \.label) { preset in
+                            let active = parsedHours.map { abs($0 - (Duration.parse(preset.value)?.hoursNormalized ?? -1)) < 0.01 } ?? false
+                            Button(preset.label) {
+                                durationText = preset.value
+                                durationError = false
+                            }
+                            .buttonStyle(.plain)
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(active ? Color.accentColor : Color.secondary.opacity(0.12), in: Capsule())
+                            .foregroundStyle(active ? Color.white : Color.primary)
+                        }
+                    }
                     HStack {
-                        TextField("e.g. 1.5h, 2d", text: $durationText)
+                        TextField("Custom (e.g. 2.5h)", text: $durationText)
                             .onChange(of: durationText) { _, _ in durationError = false }
                         if durationError {
                             Image(systemName: "exclamationmark.circle.fill")
                                 .foregroundStyle(.red)
                         }
                     }
-                    Text("Units: h (hours), d (days ≈7.6h)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
 
                 Section("Projects") {

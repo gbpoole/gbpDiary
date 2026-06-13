@@ -17,6 +17,7 @@ struct EntryRowView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var editingMinutes: Minutes?
     @State private var showingDeleteConfirm = false
+    @State private var summaryDraft = ""
     @State private var isDropTargeted = false
     @State private var meetingTaskCollapsedIds: Set<UUID> = []
 
@@ -53,10 +54,6 @@ struct EntryRowView: View {
         let nextForSummary: (() -> Void)? = hasTasks
             ? { if let first = rootTasks.first { focusedEntryId.wrappedValue = first.id } else { onMoveToNext?() } }
             : onMoveToNext
-        let summaryBinding = Binding<String>(
-            get: { entry.inlineSummary },
-            set: { entry.inlineSummary = $0 }
-        )
         return VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .center, spacing: 6) {
                 Group {
@@ -72,14 +69,15 @@ struct EntryRowView: View {
                         Color.clear
                     }
                 }
-                .frame(width: 16, height: 22)
+                .frame(width: 20, height: 28)
                 MeetingEntryContent(
-                    summaryBinding: summaryBinding,
+                    summaryBinding: $summaryDraft,
                     minutes: entry.minutes,
                     isEntryFocused: isEntryFocused,
                     isCollapsed: isCollapsed,
                     onToggleCollapse: nil,
                     onEdit: { minutes in editingMinutes = minutes },
+                    onDelete: { showingDeleteConfirm = true },
                     inlineText: { binding in
                         InlineEditableSingleLineText(
                             placeholder: "Meeting summary",
@@ -166,12 +164,17 @@ struct EntryRowView: View {
             }
         }
         .onAppear {
+            summaryDraft = entry.inlineSummary
             guard let minutes = entry.minutes, minutes.note == nil else { return }
             let note = Note(content: minutes.minutesContent ?? "")
             modelContext.insert(note)
             minutes.note = note
             minutes.minutesContent = nil
             minutes.updatedAt = Date()
+        }
+        .onDisappear { entry.inlineSummary = summaryDraft }
+        .onChange(of: isEntryFocused) { _, focused in
+            if !focused { entry.inlineSummary = summaryDraft }
         }
     }
 

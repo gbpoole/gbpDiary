@@ -55,18 +55,22 @@ struct ProjectsView: View {
                     .lineLimit(1)
             }
             .width(90)
-            TableColumn("Dev Lead") { project in
-                Text(project.devLead?.name ?? "")
+            TableColumn("Dev Team") { project in
+                let lead = project.devLead.map { [$0.name] } ?? []
+                let others = project.devTeam.filter { $0.id != project.devLead?.id }.map(\.name).sorted()
+                Text((lead + others).joined(separator: ", "))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .width(120)
-            TableColumn("Sci Lead") { project in
-                Text(project.sciLead?.name ?? "")
+            .width(140)
+            TableColumn("Sci Team") { project in
+                let lead = project.sciLead.map { [$0.name] } ?? []
+                let others = project.sciTeam.filter { $0.id != project.sciLead?.id }.map(\.name).sorted()
+                Text((lead + others).joined(separator: ", "))
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
-            .width(120)
+            .width(140)
             TableColumn("Subprojects") { project in
                 Text("\(project.subprojects.count)")
                     .foregroundStyle(.secondary)

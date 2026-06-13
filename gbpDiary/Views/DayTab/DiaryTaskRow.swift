@@ -66,7 +66,7 @@ struct DiaryTaskRow: View {
                 Color.clear
             }
         }
-        .frame(width: 16, height: 22)
+        .frame(width: 20, height: 28)
     }
 
     private var rowCard: some View {

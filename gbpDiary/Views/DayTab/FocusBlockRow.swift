@@ -21,15 +21,21 @@ struct FocusBlockRow: View {
     }
 
     @State private var isCollapsed = false
-    @State private var showingLogTime = false
     @State private var showingEditor = false
+    @State private var selectedMeetingMinutes: Minutes?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             headerRow
             if !isCollapsed {
-                activityRows
+                VStack(alignment: .leading, spacing: 0) {
+                    activityRows
+                }
+                .padding(.leading, 16)
             }
+        }
+        .sheet(item: $selectedMeetingMinutes) { m in
+            MinutesDetailView(minutes: m, asSheet: true)
         }
     }
 
@@ -42,10 +48,9 @@ struct FocusBlockRow: View {
                 Text(block.displayLabel)
                     .font(.subheadline)
                     .fontWeight(.medium)
+                editButton
                 Spacer(minLength: 0)
                 durationChips
-                addActivityButton
-                editButton
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
@@ -59,9 +64,6 @@ struct FocusBlockRow: View {
                 if let record = block.dayRecord {
                     FocusBlockEditorSheet(dayRecord: record, existingBlock: block)
                 }
-            }
-            .sheet(isPresented: $showingLogTime) {
-                LogTimeSheet(presetFocusBlock: block, presetDate: date)
             }
         }
         .padding(.leading)
@@ -107,18 +109,6 @@ struct FocusBlockRow: View {
         }
     }
 
-    private var addActivityButton: some View {
-        Button {
-            showingLogTime = true
-        } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(AppTheme.accent)
-        }
-        .buttonStyle(.plain)
-        .help("Log activity in this focus block")
-    }
-
     private var editButton: some View {
         InlineRowEditButton { showingEditor = true }
     }
@@ -127,7 +117,7 @@ struct FocusBlockRow: View {
     private var meetingRows: some View {
         ForEach(meetings, id: \.id) { entry in
             if let minutes = entry.minutes {
-                MeetingActivityRow(minutes: minutes)
+                MeetingActivityRow(minutes: minutes, onTap: { selectedMeetingMinutes = minutes })
             }
         }
     }
@@ -143,6 +133,7 @@ struct FocusBlockRow: View {
 
 private struct MeetingActivityRow: View {
     var minutes: Minutes
+    var onTap: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
@@ -152,7 +143,6 @@ private struct MeetingActivityRow: View {
                     .font(.system(size: 12))
                     .foregroundStyle(AppTheme.project)
                     .frame(width: 18)
-                    .padding(.leading, 2)
                 Text(minutes.summary ?? "Meeting")
                     .font(.subheadline)
                     .foregroundStyle(AppTheme.text)
@@ -166,6 +156,8 @@ private struct MeetingActivityRow: View {
             .padding(.vertical, 4)
             .background(AppTheme.cardRaised.opacity(0.45))
             .clipShape(RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+            .onTapGesture { onTap?() }
             .padding(.trailing)
         }
         .padding(.leading)
@@ -187,7 +179,6 @@ private struct ActivityEntryRow: View {
                     .font(.system(size: 12))
                     .foregroundStyle(.secondary)
                     .frame(width: 18)
-                    .padding(.leading, 2)
 
                 if let task = entry.task {
                     Text(task.summary)

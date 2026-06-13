@@ -31,21 +31,40 @@ struct DayNoteRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
+            if note.project != nil || !note.tags.isEmpty {
+                HStack(spacing: 4) {
+                    if let project = note.project {
+                        Chip(label: project.name, color: AppTheme.project)
+                    }
+                    ForEach(note.tags, id: \.self) { tag in
+                        Chip(label: tag, color: AppTheme.tag)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 4)
+            }
+
+            blocksView
+
+            // Non-image attachments (PDF, text, other) stay in the strip
+            let nonImageAtts = note.attachments
+                .filter { $0.kind != .image }
+                .sorted { $0.createdAt < $1.createdAt }
+            if !nonImageAtts.isEmpty {
+                nonImageAttachmentStrip(nonImageAtts)
+            }
+
             HStack(spacing: 4) {
-                if let project = note.project {
-                    Chip(label: project.name, color: AppTheme.project)
-                }
-                ForEach(note.tags, id: \.self) { tag in
-                    Chip(label: tag, color: AppTheme.tag)
-                }
                 Spacer(minLength: 0)
                 Button {
                     onHeaderButtonTap?()
                     showingFilePicker = true
                 } label: {
                     Image(systemName: "paperclip")
-                        .foregroundStyle(AppTheme.mutedText)
+                        .foregroundStyle(AppTheme.accent)
                         .font(.caption)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 #if os(macOS)
@@ -54,8 +73,10 @@ struct DayNoteRow: View {
                     pasteImageFromClipboard()
                 } label: {
                     Image(systemName: "clipboard")
-                        .foregroundStyle(AppTheme.mutedText)
+                        .foregroundStyle(AppTheme.accent)
                         .font(.caption)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 Button {
@@ -63,8 +84,10 @@ struct DayNoteRow: View {
                     exportAsPDF()
                 } label: {
                     Image(systemName: "square.and.arrow.down")
-                        .foregroundStyle(AppTheme.mutedText)
+                        .foregroundStyle(AppTheme.accent)
                         .font(.caption)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 #endif
@@ -76,17 +99,7 @@ struct DayNoteRow: View {
                 }
             }
             .padding(.horizontal, 12)
-            .padding(.top, 4)
-
-            blocksView
-
-            // Non-image attachments (PDF, text, other) stay in the strip
-            let nonImageAtts = note.attachments
-                .filter { $0.kind != .image }
-                .sorted { $0.createdAt < $1.createdAt }
-            if !nonImageAtts.isEmpty {
-                nonImageAttachmentStrip(nonImageAtts)
-            }
+            .padding(.bottom, 4)
         }
         .padding(.horizontal)
         .contextMenu {
@@ -161,7 +174,7 @@ struct DayNoteRow: View {
             // so macOS registers it as a hit-testable drop target (Color.clear is not).
             Rectangle()
                 .fill(Color.clear)
-                .frame(maxWidth: .infinity, minHeight: 44)
+                .frame(maxWidth: .infinity, minHeight: 8)
                 .contentShape(Rectangle())
                 .dropDestination(for: String.self) { items, _ in
                     guard let s = items.first else { return false }
@@ -960,7 +973,7 @@ private struct NoteAttachmentRow: View {
             Spacer()
             Button(action: onPreview) {
                 Image(systemName: "eye").font(.caption)
-            }.buttonStyle(.plain).foregroundStyle(.secondary)
+            }.buttonStyle(.plain).foregroundStyle(AppTheme.accent)
             Button(action: onDelete) {
                 Image(systemName: "xmark").font(.caption)
             }.buttonStyle(.plain).foregroundStyle(.red)

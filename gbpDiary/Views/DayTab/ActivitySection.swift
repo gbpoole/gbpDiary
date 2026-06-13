@@ -3,6 +3,7 @@ import SwiftData
 
 struct ActivitySection: View {
     @Query(sort: \FocusBlock.sortOrder) private var allFocusBlocks: [FocusBlock]
+    @Environment(\.modelContext) private var modelContext
 
     var dayRecord: DayRecord?
     var date: Date
@@ -13,6 +14,8 @@ struct ActivitySection: View {
     var findOrCreateDayRecord: (() -> DayRecord)? = nil
 
     @State private var showingAddFocusBlock = false
+    @State private var showingLogTime = false
+    @State private var selectedMeetingMinutes: Minutes?
     @State private var editorDayRecord: DayRecord?
 
     // @Query-driven so new blocks appear immediately without relationship-refresh lag.
@@ -35,13 +38,12 @@ struct ActivitySection: View {
 
     // Meetings not already shown inside a FocusBlock, sorted by start time.
     private var standaloneMeetings: [Minutes] {
-        let takenSlots = Set(blocks.map(\.slot))
+        let assignedMinutesIds = Set(
+            blocks.flatMap { meetings(for: $0) }.compactMap { $0.minutes?.id }
+        )
         return meetings
             .compactMap(\.minutes)
-            .filter { m in
-                let slots = MeetingSlotClassifier.slots(for: m, on: date)
-                return slots.allSatisfy { !takenSlots.contains($0) }
-            }
+            .filter { !assignedMinutesIds.contains($0.id) }
             .sorted { $0.meetingAt < $1.meetingAt }
     }
 
@@ -57,17 +59,14 @@ struct ActivitySection: View {
         let hasContent = !blocks.isEmpty || !unspecified.isEmpty
             || !standaloneMeetings.isEmpty || !completedTasks.isEmpty
 
-        DaySectionHeader(title: "Activity", onAdd: canAddBlock ? {
-            editorDayRecord = findOrCreateDayRecord?() ?? dayRecord
-            showingAddFocusBlock = true
-        } : nil)
+        activityHeader
 
         ForEach(blocks) { block in
             FocusBlockRow(block: block, date: date, meetings: meetings(for: block))
         }
 
         ForEach(standaloneMeetings, id: \.id) { minutes in
-            StandaloneMeetingRow(minutes: minutes)
+            StandaloneMeetingRow(minutes: minutes, onTap: { selectedMeetingMinutes = minutes })
         }
 
         ForEach(completedTasks) { task in
@@ -93,6 +92,90 @@ struct ActivitySection: View {
                     FocusBlockEditorSheet(dayRecord: record)
                 }
         }
+
+        Color.clear
+            .sheet(isPresented: $showingLogTime) {
+                let presetBlock = blocks.count == 1 ? blocks.first : nil
+                LogTimeSheet(presetFocusBlock: presetBlock, presetDate: date)
+            }
+
+        Color.clear
+            .sheet(item: $selectedMeetingMinutes) { m in
+                MinutesDetailView(minutes: m, asSheet: true)
+            }
+    }
+
+    // MARK: - Custom Activity header
+
+    private var activityHeader: some View {
+        HStack(spacing: 8) {
+            Text("Activity")
+                .font(AppTheme.interfaceFont(size: 12, weight: .semibold))
+                .tracking(0.8)
+                .textCase(.uppercase)
+                .foregroundStyle(AppTheme.mutedText)
+            Spacer()
+            Button { addMeeting() } label: {
+                Image(systemName: "calendar.badge.plus")
+                    .font(.caption.bold())
+                    .foregroundStyle(AppTheme.accent)
+            }
+            .buttonStyle(.plain)
+            .help("Add meeting")
+            if !blocks.isEmpty {
+                Button { showingLogTime = true } label: {
+                    Image(systemName: "timer")
+                        .font(.caption.bold())
+                        .foregroundStyle(AppTheme.accent)
+                }
+                .buttonStyle(.plain)
+                .help("Log time")
+            }
+            if canAddBlock {
+                Button {
+                    editorDayRecord = findOrCreateDayRecord?() ?? dayRecord
+                    showingAddFocusBlock = true
+                } label: {
+                    Image(systemName: "scope")
+                        .font(.caption.bold())
+                        .foregroundStyle(AppTheme.accent)
+                }
+                .buttonStyle(.plain)
+                .help("Add focus block")
+            }
+        }
+        .padding(.horizontal)
+        .padding(.top, 16)
+        .padding(.bottom, 4)
+        .background(AppTheme.background)
+    }
+
+    // MARK: - Add meeting
+
+    private func addMeeting() {
+        let record = findOrCreateDayRecord?() ?? dayRecord
+        guard let record else { return }
+        let meeting = Minutes(meetingAt: nearestQuarterHour())
+        meeting.duration = Duration(value: 1, unit: .h)
+        modelContext.insert(meeting)
+        let entry = DayEntry(kind: .meeting, text: "",
+                             sortOrder: (record.entries.map(\.sortOrder).max() ?? -1) + 1)
+        entry.minutes = meeting
+        entry.dayRecord = record
+        modelContext.insert(entry)
+        selectedMeetingMinutes = meeting
+    }
+
+    private func nearestQuarterHour() -> Date {
+        let quarterHour = 15.0 * 60.0
+        let now = Date()
+        let interval = now.timeIntervalSinceReferenceDate
+        let rounded = (interval / quarterHour).rounded() * quarterHour
+        let roundedNow = Date(timeIntervalSinceReferenceDate: rounded)
+        let cal = Calendar.current
+        let hour = cal.component(.hour, from: roundedNow)
+        let minute = cal.component(.minute, from: roundedNow)
+        return cal.date(bySettingHour: hour, minute: minute, second: 0, of: date) ?? date
     }
 
     @ViewBuilder
@@ -138,6 +221,7 @@ struct ActivitySection: View {
 
 private struct StandaloneMeetingRow: View {
     let minutes: Minutes
+    var onTap: (() -> Void)? = nil
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
@@ -147,7 +231,6 @@ private struct StandaloneMeetingRow: View {
                     .font(.system(size: 12))
                     .foregroundStyle(AppTheme.project)
                     .frame(width: 18)
-                    .padding(.leading, 2)
                 Text(minutes.summary ?? "Meeting")
                     .font(.subheadline)
                     .foregroundStyle(AppTheme.text)
@@ -162,6 +245,8 @@ private struct StandaloneMeetingRow: View {
             .padding(.vertical, 4)
             .background(AppTheme.cardRaised.opacity(0.45))
             .clipShape(RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+            .onTapGesture { onTap?() }
             .padding(.trailing)
         }
         .padding(.leading)
