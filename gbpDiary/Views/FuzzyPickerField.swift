@@ -2,9 +2,10 @@ import SwiftUI
 
 /// A reusable search-filter selector with chips for selected items.
 ///
-/// Embeds a live-filtered list inside any form or sheet context.
+/// The search bar and dropdown share a single rounded container so the list
+/// always appears below the search field rather than overlapping it.
 /// Supports multi-select (default) and single-select (`maxSelections: 1`).
-/// An optional sticky "+ Create…" row calls `onCreate` when tapped.
+/// Keyboard: ↑↓ to move highlight, Return to pick, Escape to dismiss.
 struct FuzzyPickerField<Item: Identifiable>: View {
     let allItems: [Item]
     @Binding var selected: [Item]
@@ -17,6 +18,9 @@ struct FuzzyPickerField<Item: Identifiable>: View {
 
     @State private var searchText: String = ""
     @FocusState private var searchFocused: Bool
+    @State private var highlightedIndex: Int? = nil
+
+    private var isDropdownOpen: Bool { searchFocused || !searchText.isEmpty }
 
     private var filteredItems: [Item] {
         guard !searchText.isEmpty else { return allItems }
@@ -34,10 +38,23 @@ struct FuzzyPickerField<Item: Identifiable>: View {
         } else {
             if maxSelections == 1 {
                 selected = [item]
-                searchText = ""
+                searchFocused = false
             } else if selected.count < maxSelections {
                 selected.append(item)
+                searchFocused = true
             }
+        }
+        searchText = ""
+        highlightedIndex = nil
+    }
+
+    private func moveHighlight(by delta: Int) {
+        guard !filteredItems.isEmpty else { return }
+        let count = filteredItems.count
+        if let current = highlightedIndex {
+            highlightedIndex = max(0, min(count - 1, current + delta))
+        } else {
+            highlightedIndex = delta > 0 ? 0 : count - 1
         }
     }
 
@@ -53,57 +70,83 @@ struct FuzzyPickerField<Item: Identifiable>: View {
                 }
             }
 
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                    .font(.caption)
-                TextField(placeholder, text: $searchText)
-                    .textFieldStyle(.plain)
-                    .focused($searchFocused)
-                if !searchText.isEmpty {
-                    Button { searchText = "" } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(.secondary)
-                            .font(.caption)
+            // Search bar + dropdown share one rounded background so the list
+            // always renders below the field, never on top of it.
+            VStack(spacing: 0) {
+                HStack(spacing: 6) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    TextField(placeholder, text: $searchText)
+                        .textFieldStyle(.plain)
+                        .font(.callout)
+                        .focused($searchFocused)
+                        .onKeyPress(.upArrow, phases: .down) { _ in
+                            moveHighlight(by: -1); return .handled
+                        }
+                        .onKeyPress(.downArrow, phases: .down) { _ in
+                            moveHighlight(by: 1); return .handled
+                        }
+                        .onKeyPress(.return, phases: .down) { _ in
+                            guard isDropdownOpen else { return .ignored }
+                            if let idx = highlightedIndex, idx < filteredItems.count {
+                                toggle(filteredItems[idx])
+                            }
+                            return .handled
+                        }
+                        .onKeyPress(.escape, phases: .down) { _ in
+                            searchText = ""
+                            searchFocused = false
+                            highlightedIndex = nil
+                            return .handled
+                        }
+                    if !searchText.isEmpty {
+                        Button { searchText = "" } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                                .font(.callout)
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .buttonStyle(.plain)
                 }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
 
-            if searchFocused || !searchText.isEmpty {
-                VStack(spacing: 0) {
-                    if filteredItems.isEmpty && !searchText.isEmpty {
-                        Text("No results matching \"\(searchText)\"")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 10)
-                            .frame(maxWidth: .infinity)
-                    } else {
-                        ForEach(Array(filteredItems.enumerated()), id: \.element.id) { idx, item in
-                            itemRow(item)
-                            if idx < filteredItems.count - 1 {
-                                Divider().padding(.leading, 10)
+                if isDropdownOpen {
+                    Divider().padding(.horizontal, 4)
+                    ScrollView {
+                        VStack(spacing: 0) {
+                            if filteredItems.isEmpty && !searchText.isEmpty {
+                                Text("No results matching \"\(searchText)\"")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .padding(.vertical, 10)
+                                    .frame(maxWidth: .infinity)
+                            } else {
+                                ForEach(Array(filteredItems.enumerated()), id: \.element.id) { idx, item in
+                                    itemRow(item, highlighted: highlightedIndex == idx)
+                                    if idx < filteredItems.count - 1 {
+                                        Divider().padding(.leading, 10)
+                                    }
+                                }
+                            }
+                            if let createLabel, let onCreate {
+                                if !filteredItems.isEmpty || searchText.isEmpty { Divider() }
+                                createRow(label: createLabel, action: onCreate)
                             }
                         }
                     }
-                    if let createLabel, let onCreate {
-                        if !filteredItems.isEmpty || searchText.isEmpty {
-                            Divider()
-                        }
-                        createRow(label: createLabel, action: onCreate)
-                    }
+                    .frame(maxHeight: 200)
                 }
-                .frame(maxHeight: 200)
-                .background(Color.secondary.opacity(0.06), in: RoundedRectangle(cornerRadius: 6))
             }
+            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
         }
+        .onChange(of: searchText) { _, _ in highlightedIndex = nil }
     }
 
-    private func itemRow(_ item: Item) -> some View {
+    private func itemRow(_ item: Item, highlighted: Bool) -> some View {
         let sel = isSelected(item)
+        let bg: Color = highlighted ? chipColor.opacity(0.15) : (sel ? chipColor.opacity(0.08) : Color.clear)
         return Button { toggle(item) } label: {
             HStack(spacing: 8) {
                 Text(label(item))
@@ -119,7 +162,7 @@ struct FuzzyPickerField<Item: Identifiable>: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
             .contentShape(Rectangle())
-            .background(sel ? chipColor.opacity(0.08) : Color.clear)
+            .background(bg)
         }
         .buttonStyle(.plain)
     }
