@@ -9,6 +9,17 @@ private final class TapFlags {
     var didTapLink = false
 }
 
+private final class Debouncer {
+    private var work: DispatchWorkItem?
+    func schedule(delay: Double, action: @escaping () -> Void) {
+        work?.cancel()
+        let item = DispatchWorkItem(block: action)
+        work = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+    func cancel() { work?.cancel(); work = nil }
+}
+
 enum CursorPlacement { case start, end }
 
 struct EntryNotesSubArea: View {
@@ -30,6 +41,8 @@ struct EntryNotesSubArea: View {
     @Environment(\.openURL) private var openURL
     @State private var tapFlags = TapFlags()
     @State private var tapRequestCount = 0
+    @State private var draft: String = ""
+    @State private var debouncer = Debouncer()
 
     var body: some View {
         HStack(spacing: 0) {
@@ -46,7 +59,7 @@ struct EntryNotesSubArea: View {
                 // mouseDown then places the cursor at the click position natively,
                 // with no coordinate-space translation needed between renderers.
                 if !isFocused && !isSelected {
-                    if text.isEmpty {
+                    if draft.isEmpty {
                         Text(placeholder)
                             .foregroundStyle(.tertiary)
                             .font(.body)
@@ -54,7 +67,7 @@ struct EntryNotesSubArea: View {
                             .padding(.leading, 9)
                     } else {
                         StructuredText(
-                            markdown: text.replacingOccurrences(of: "\n", with: "  \n"),
+                            markdown: draft.replacingOccurrences(of: "\n", with: "  \n"),
                             syntaxExtensions: [.math]
                         )
                         .textual.structuredTextStyle(.gitHub)
@@ -79,7 +92,7 @@ struct EntryNotesSubArea: View {
                 // (!(hit is NSTextView)) fails and AppKit routes the click to this view,
                 // letting mouseDown place the cursor at the exact click position.
                 NoteTextEditor(
-                    text: $text,
+                    text: $draft,
                     onMoveToPrevious: onMoveToPrevious,
                     onMoveToNext: onMoveToNext,
                     cursorPlacement: cursorPlacement,
@@ -92,7 +105,7 @@ struct EntryNotesSubArea: View {
                 .allowsHitTesting(isFocused || isSelected)
                 .opacity(isFocused || isSelected ? 1 : 0)
                 #else
-                TextEditor(text: $text)
+                TextEditor(text: $draft)
                     .font(.body)
                     .scrollContentBackground(.hidden)
                     .focused(focusedEntryId, equals: focusId)
@@ -135,6 +148,15 @@ struct EntryNotesSubArea: View {
             .padding(.horizontal, 4)
             .padding(.vertical, 4)
         }
+        .onAppear { draft = text }
+        .onChange(of: draft) { _, newValue in
+            debouncer.schedule(delay: 2.0) { text = newValue }
+        }
+        .onChange(of: isFocused) { _, focused in
+            debouncer.cancel()
+            if focused { draft = text } else { text = draft }
+        }
+        .onDisappear { debouncer.cancel(); text = draft }
         .background(
             Color.secondary.opacity(0.06),
             in: UnevenRoundedRectangle(

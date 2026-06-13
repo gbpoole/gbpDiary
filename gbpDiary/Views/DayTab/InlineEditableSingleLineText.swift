@@ -1,5 +1,16 @@
 import SwiftUI
 
+private final class Debouncer {
+    private var work: DispatchWorkItem?
+    func schedule(delay: Double, action: @escaping () -> Void) {
+        work?.cancel()
+        let item = DispatchWorkItem(block: action)
+        work = item
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: item)
+    }
+    func cancel() { work?.cancel(); work = nil }
+}
+
 struct InlineEditableSingleLineText: View {
     let placeholder: String
     @Binding var text: String
@@ -13,15 +24,18 @@ struct InlineEditableSingleLineText: View {
     var onMoveToPrevious: (() -> Void)? = nil
     var onMoveToNext: (() -> Void)? = nil
 
+    @State private var draft: String = ""
+    @State private var debouncer = Debouncer()
+
     var body: some View {
         ZStack(alignment: .leading) {
-            Text(text.isEmpty ? " " : text)
+            Text(draft.isEmpty ? " " : draft)
                 .lineLimit(1)
                 .strikethrough(struckThrough)
                 .foregroundStyle(foregroundColor)
                 .opacity(isFocused ? 0 : 1)
 
-            TextField(placeholder, text: $text)
+            TextField(placeholder, text: $draft)
                 .textFieldStyle(.plain)
                 .lineLimit(1)
                 .focused(focusBinding, equals: focusId)
@@ -41,5 +55,14 @@ struct InlineEditableSingleLineText: View {
         .frame(maxWidth: isFocused ? .infinity : nil)
         .contentShape(Rectangle())
         .onTapGesture { focusBinding.wrappedValue = focusId }
+        .onAppear { draft = text }
+        .onChange(of: draft) { _, newValue in
+            debouncer.schedule(delay: 2.0) { text = newValue }
+        }
+        .onChange(of: isFocused) { _, focused in
+            debouncer.cancel()
+            if focused { draft = text } else { text = draft }
+        }
+        .onDisappear { debouncer.cancel(); text = draft }
     }
 }
