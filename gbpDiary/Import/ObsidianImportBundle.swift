@@ -12,6 +12,7 @@ struct ObsidianImportBundle: Decodable {
     var documents: [ImportedDocument]
     var notes: [ImportedNote]
     var dayRecords: [ImportedDayRecord]
+    var focusBlocks: [ImportedFocusBlock]?
     var tasks: [ImportedTask]
     var diagnostics: [ImportedDiagnostic]
 }
@@ -114,6 +115,20 @@ struct ImportedDayRecord: Decodable {
     var date: String
     var createdAt: String?
     var updatedAt: String?
+    var sourceContext: ImportedSourceContext?
+}
+
+struct ImportedFocusBlock: Decodable {
+    var id: UUID
+    var summary: String
+    var rawText: String?
+    var duration: ImportedDuration?
+    var slot: DaySlot?
+    var sortOrder: Int?
+    var taskId: UUID?
+    var projectId: UUID?
+    var assigneePersonId: UUID?
+    var dayRecordId: UUID?
     var sourceContext: ImportedSourceContext?
 }
 

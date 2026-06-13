@@ -15,6 +15,8 @@ extension Note: StableModelIdentified {}
 extension DayRecord: StableModelIdentified {}
 extension Task: StableModelIdentified {}
 extension DayEntry: StableModelIdentified {}
+extension FocusBlock: StableModelIdentified {}
+extension Attachment: StableModelIdentified {}
 
 struct ObsidianImportReport: Equatable {
     var institutions = 0
@@ -24,7 +26,9 @@ struct ObsidianImportReport: Equatable {
     var documents = 0
     var notes = 0
     var dayRecords = 0
+    var focusBlocks = 0
     var tasks = 0
+    var attachments = 0
     var meetingEntries = 0
     var diagnostics = 0
 }
@@ -57,6 +61,8 @@ struct ObsidianBundleImporter {
         var dayRecords = try mapById(FetchDescriptor<DayRecord>())
         var tasks = try mapById(FetchDescriptor<Task>())
         var dayEntries = try mapById(FetchDescriptor<DayEntry>())
+        var focusBlocks = try mapById(FetchDescriptor<FocusBlock>())
+        var attachments = try mapById(FetchDescriptor<Attachment>())
 
         for imported in bundle.institutions {
             let institution = institutions[imported.id] ?? Institution(name: imported.name, id: imported.id)
@@ -131,6 +137,8 @@ struct ObsidianBundleImporter {
             document.summary = emptyToNil(imported.summary)
             document.documentDescription = documentDescription(imported)
             document.projects = imported.projectIds?.compactMap { projects[$0] } ?? []
+            document.attachments = importAttachments(imported, document: document, existing: &attachments, vaultPath: bundle.vaultPath)
+            report.attachments += document.attachments.count
             applyDates(created: imported.createdAt, updated: imported.updatedAt, to: document)
             report.documents += 1
         }
@@ -160,6 +168,37 @@ struct ObsidianBundleImporter {
             report.tasks += 1
         }
 
+        for imported in bundle.focusBlocks ?? [] {
+            let block = focusBlocks[imported.id]
+                ?? FocusBlock(duration: imported.duration?.domainDuration ?? DaySlot.allDay.defaultDuration,
+                              slot: imported.slot ?? .allDay,
+                              sortOrder: imported.sortOrder ?? 0,
+                              id: imported.id)
+            if focusBlocks[imported.id] == nil { context.insert(block); focusBlocks[imported.id] = block }
+            block.duration = imported.duration?.domainDuration ?? DaySlot.allDay.defaultDuration
+            block.slot = imported.slot ?? .allDay
+            block.sortOrder = imported.sortOrder ?? 0
+            block.dayRecord = imported.dayRecordId.flatMap { dayRecords[$0] }
+
+            let backingTask: Task
+            if let taskId = imported.taskId {
+                backingTask = tasks[taskId] ?? Task(summary: imported.summary, id: taskId)
+                if tasks[taskId] == nil { context.insert(backingTask); tasks[taskId] = backingTask }
+            } else {
+                backingTask = Task(summary: imported.summary)
+                context.insert(backingTask)
+            }
+            backingTask.summary = imported.summary
+            backingTask.notes = emptyToNil(imported.rawText).flatMap { $0 == imported.summary ? nil : $0 }
+            backingTask.project = imported.projectId.flatMap { projects[$0] }
+            backingTask.assignee = imported.assigneePersonId.flatMap { people[$0] }
+            backingTask.originDay = block.dayRecord
+            backingTask.sourceContext = SourceContext(imported: imported.sourceContext)
+            block.task = backingTask
+            block.project = imported.projectId.flatMap { projects[$0] }
+            report.focusBlocks += 1
+        }
+
         assignTaskParents(bundle.tasks, tasks: tasks)
 
         var dayRecordByDate = Dictionary(uniqueKeysWithValues: dayRecords.values.map { (dayKey($0.date), $0) })
@@ -173,6 +212,7 @@ struct ObsidianBundleImporter {
                 context.insert(record)
                 dayRecords[record.id] = record
                 dayRecordByDate[key] = record
+                report.dayRecords += 1
             }
             entry.kind = .meeting
             entry.minutes = item
@@ -223,6 +263,71 @@ struct ObsidianBundleImporter {
             parts.append("Imported attachment references:\n" + refs.map { "- \($0)" }.joined(separator: "\n"))
         }
         return parts.isEmpty ? nil : parts.joined(separator: "\n\n")
+    }
+
+    private func importAttachments(
+        _ imported: ImportedDocument,
+        document: Document,
+        existing: inout [UUID: Attachment],
+        vaultPath: String?
+    ) -> [Attachment] {
+        guard let refs = imported.attachmentRefs, !refs.isEmpty else { return [] }
+        return refs.compactMap { ref in
+            guard let sourceURL = resolveAttachment(ref, documentSource: imported.sourceContext?.sourceRecordId, vaultPath: vaultPath) else {
+                return nil
+            }
+            let attachmentId = deterministicUUID("attachment:\(imported.id.uuidString):\(ref)")
+            let attachment = existing[attachmentId] ?? Attachment(
+                fileName: sourceURL.lastPathComponent,
+                fileURL: sourceURL,
+                kind: attachmentKind(for: sourceURL),
+                id: attachmentId
+            )
+            if existing[attachmentId] == nil { context.insert(attachment); existing[attachmentId] = attachment }
+            do {
+                if attachment.fileURL == sourceURL || !FileManager.default.fileExists(atPath: attachment.fileURL.path) {
+                    let dest = AttachmentStorage.attachmentsDirectory
+                        .appendingPathComponent(attachmentId.uuidString)
+                        .appendingPathExtension(sourceURL.pathExtension)
+                    if FileManager.default.fileExists(atPath: dest.path) {
+                        try? FileManager.default.removeItem(at: dest)
+                    }
+                    attachment.fileURL = try AttachmentStorage.store(from: sourceURL, fileId: attachmentId)
+                }
+                attachment.fileName = sourceURL.lastPathComponent
+                attachment.kind = attachmentKind(for: sourceURL)
+                attachment.fileSizeBytes = (try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+                attachment.document = document
+                if attachment.kind == .image {
+                    attachment.sourceImageWidth = AttachmentStorage.capSource(at: attachment.fileURL)
+                }
+                return attachment
+            } catch {
+                return nil
+            }
+        }
+    }
+
+    private func resolveAttachment(_ ref: String, documentSource: String?, vaultPath: String?) -> URL? {
+        let rawURL = URL(fileURLWithPath: ref)
+        var candidates: [URL] = rawURL.path.hasPrefix("/") ? [rawURL] : []
+        if let vaultPath {
+            let vaultURL = URL(fileURLWithPath: vaultPath)
+            candidates.append(vaultURL.appendingPathComponent(ref))
+            if let documentSource {
+                candidates.append(vaultURL.appendingPathComponent(documentSource).deletingLastPathComponent().appendingPathComponent(ref))
+            }
+        }
+        return candidates.first { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    private func attachmentKind(for url: URL) -> AttachmentKind {
+        switch url.pathExtension.lowercased() {
+        case "pdf": return .pdf
+        case "png", "jpg", "jpeg", "gif", "heic", "tif", "tiff", "webp": return .image
+        case "txt", "md", "csv", "json", "yaml", "yml": return .text
+        default: return .other
+        }
     }
 
     private func parseDate(_ value: String?) -> Date? {

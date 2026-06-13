@@ -36,22 +36,61 @@ struct ObsidianBundleImporterTests {
         #expect(report.projects == 1)
         #expect(report.minutes == 1)
         #expect(report.notes == 1)
+        #expect(report.dayRecords == 1)
         #expect(report.tasks == 1)
 
         let people = try context.fetch(FetchDescriptor<Person>())
         let projects = try context.fetch(FetchDescriptor<Project>())
         let minutes = try context.fetch(FetchDescriptor<Minutes>())
+        let dayRecords = try context.fetch(FetchDescriptor<DayRecord>())
         let tasks = try context.fetch(FetchDescriptor<Task>())
 
         #expect(people.first?.institution?.name == "Test Institute")
         #expect(projects.first?.devTeam.first?.name == "Ada Lovelace")
         #expect(minutes.first?.note?.content == "Meeting notes")
+        #expect(dayRecords.count == 1)
+        #expect(dayRecords.first?.entries.first?.minutes?.summary == "Planning")
         #expect(tasks.first?.assignee?.name == "Ada Lovelace")
         #expect(tasks.first?.project?.name == "Test Project")
         #expect(tasks.first?.originMinutes?.summary == "Planning")
         #expect(tasks.first?.status == .completed)
         #expect(tasks.first?.duration?.hoursNormalized == 1.5)
         #expect(tasks.first?.tags == ["timesheet"])
+    }
+
+    @Test func importBundle_createsFocusBlocksAndCopiesDocumentAttachments() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("obsidian-importer-test-\(UUID().uuidString)")
+        let vault = tempDir.appendingPathComponent("Vault")
+        let attachmentDir = vault.appendingPathComponent("Files")
+        try FileManager.default.createDirectory(at: attachmentDir, withIntermediateDirectories: true)
+        let sourceFile = attachmentDir.appendingPathComponent("paper.pdf")
+        try Data("pdf".utf8).write(to: sourceFile)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let json = focusBlockAndAttachmentFixture(vaultPath: vault.path)
+        let bundle = try JSONDecoder().decode(ObsidianImportBundle.self, from: Data(json.utf8))
+
+        let report = try ObsidianBundleImporter(context: context).importBundle(bundle)
+
+        #expect(report.focusBlocks == 1)
+        #expect(report.dayRecords == 1)
+        #expect(report.attachments == 1)
+
+        let focusBlocks = try context.fetch(FetchDescriptor<FocusBlock>())
+        let documents = try context.fetch(FetchDescriptor<Document>())
+        let attachments = try context.fetch(FetchDescriptor<gbpDiary.Attachment>())
+
+        #expect(focusBlocks.first?.displayLabel == "Apply for access")
+        #expect(focusBlocks.first?.duration.hoursNormalized == 1.5)
+        #expect(focusBlocks.first?.task?.project?.name == "YWang_2026A")
+        #expect(focusBlocks.first?.task?.assignee?.name == "Owen Cole")
+        #expect(documents.first?.attachments.count == 1)
+        #expect(attachments.first?.fileName == "paper.pdf")
+        #expect(attachments.first?.kind == .pdf)
+        #expect(FileManager.default.fileExists(atPath: attachments.first?.fileURL.path ?? "") == true)
     }
 
     private var fixtureJSON: String {
@@ -83,6 +122,38 @@ struct ObsidianBundleImporterTests {
           "tasks": [
             {"id": "00000000-0000-5000-8000-000000000006", "summary": "Do work", "rawText": "Do work (duration:: 1.5 h) #timesheet", "status": "completed", "tags": ["timesheet"], "duration": {"value": 1.5, "unit": "h", "hoursNormalized": 1.5}, "completedAt": "2026-06-12", "indent": 0, "line": 10, "sourcePath": "CMS/Minutes/Test.md", "projectId": "00000000-0000-5000-8000-000000000003", "assigneePersonId": "00000000-0000-5000-8000-000000000002", "originMinutesId": "00000000-0000-5000-8000-000000000005"}
           ]
+        }
+        """
+    }
+
+    private func focusBlockAndAttachmentFixture(vaultPath: String) -> String {
+        """
+        {
+          "schemaVersion": 1,
+          "generatedAt": "2026-06-12T00:00:00",
+          "vaultPath": "\(vaultPath)",
+          "counts": {},
+          "summary": {},
+          "diagnostics": [],
+          "institutions": [],
+          "people": [
+            {"id": "00000000-0000-5000-8000-000000000011", "name": "Owen Cole"}
+          ],
+          "projects": [
+            {"id": "00000000-0000-5000-8000-000000000012", "name": "YWang_2026A", "tags": []}
+          ],
+          "notes": [],
+          "minutes": [],
+          "documents": [
+            {"id": "00000000-0000-5000-8000-000000000013", "summary": "Paper", "attachmentRefs": ["Files/paper.pdf"], "sourceContext": {"sourceRecordId": "CMS/Documents/Paper.md"}}
+          ],
+          "dayRecords": [
+            {"id": "00000000-0000-5000-8000-000000000014", "date": "2026-03-02"}
+          ],
+          "focusBlocks": [
+            {"id": "00000000-0000-5000-8000-000000000015", "summary": "Apply for access", "duration": {"value": 1.5, "unit": "h", "hoursNormalized": 1.5}, "slot": "allDay", "sortOrder": 10, "taskId": "00000000-0000-5000-8000-000000000016", "projectId": "00000000-0000-5000-8000-000000000012", "assigneePersonId": "00000000-0000-5000-8000-000000000011", "dayRecordId": "00000000-0000-5000-8000-000000000014"}
+          ],
+          "tasks": []
         }
         """
     }

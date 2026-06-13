@@ -15,7 +15,7 @@ import re
 import sys
 import uuid
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -49,6 +49,7 @@ INLINE_WIKILINK_FIELD_RE = re.compile(
 INLINE_FIELD_RE = re.compile(r"[\[(]\s*(?P<key>[A-Za-z][A-Za-z0-9_-]*)::\s*(?P<value>[^\])]+)\s*[\])]?")
 WIKILINK_RE = re.compile(r"\[\[(?P<link>[^\]]+)\]\]")
 SECTION_RE = re.compile(r"^(?P<level>#{1,6})\s+(?P<title>.+?)\s*$")
+WEEKDAY_HEADING_RE = re.compile(r"^(?P<weekday>Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)\s*\((?P<day>\d{1,2})(?:st|nd|rd|th)?\)", re.IGNORECASE)
 DATE_IN_FILENAME_RE = re.compile(r"(?P<date>\d{4}-\d{2}-\d{2})(?:[_-](?P<hour>\d{2})[.:-](?P<minute>\d{2}))?")
 COMPLETION_STAMP_RE = re.compile(r"\s*✅\s*(?P<date>\d{4}-\d{2}-\d{2})\s*")
 CANCELLED_STAMP_RE = re.compile(r"\s*🚫\s*(?P<date>\d{4}-\d{2}-\d{2})\s*")
@@ -177,6 +178,22 @@ def parse_duration(raw: Any) -> dict[str, Any] | None:
 def parse_date_only(raw: Any) -> str | None:
     parsed = parse_date(raw)
     return parsed[:10] if parsed else None
+
+
+def diary_section_date(title: str, week_start: str | None) -> str | None:
+    if not week_start:
+        return None
+    match = WEEKDAY_HEADING_RE.match(title.strip())
+    if not match:
+        return None
+    try:
+        start = datetime.strptime(week_start[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+    weekdays = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+    offset = weekdays.index(match.group("weekday").lower())
+    date = start + timedelta(days=offset)
+    return date.date().isoformat()
 
 
 def parse_followed_up(raw: Any) -> list[str]:
@@ -380,18 +397,23 @@ def extract_tasks(source: SourceFile) -> list[dict[str, Any]]:
     heading_stack: list[tuple[int, str]] = []
     occurrence_by_hash: dict[str, int] = {}
     source_date = parse_date_only(first_field(source.frontmatter, "date", "created")) or parse_date_only(source.rel_path)
+    week_start = parse_date_only(first_field(source.frontmatter, "week-start"))
+    current_section_date: str | None = source_date
     for line_number, line in enumerate(source.body.splitlines(), start=1):
         section_match = SECTION_RE.match(line)
         if section_match:
             level = len(section_match.group("level"))
             heading_stack = [h for h in heading_stack if h[0] < level]
             heading_stack.append((level, section_match.group("title").strip()))
+            current_section_date = diary_section_date(section_match.group("title"), week_start) or source_date
             continue
         task_match = TASK_RE.match(line)
         if not task_match:
             continue
         raw_text = task_match.group("text").strip()
-        metadata = extract_task_metadata(raw_text, task_match.group("mark"), source_date)
+        if not raw_text:
+            continue
+        metadata = extract_task_metadata(raw_text, task_match.group("mark"), current_section_date)
         summary = metadata["summary"]
         section_path = " / ".join(title for _, title in heading_stack)
         normalized_hash = sha1_text(f"{source.rel_path}\n{section_path}\n{summary.lower()}")
@@ -406,6 +428,7 @@ def extract_tasks(source: SourceFile) -> list[dict[str, Any]]:
                 "section": section_path,
                 "sourcePath": source.rel_path,
                 "sourceType": source.inferred_type,
+                "sectionDate": current_section_date,
             }
         task.update(metadata)
         tasks.append(task)
@@ -433,6 +456,8 @@ def build_bundle(vault: Path) -> dict[str, Any]:
     documents: list[dict[str, Any]] = []
     notes: list[dict[str, Any]] = []
     day_records: list[dict[str, Any]] = []
+    day_record_ids: set[str] = set()
+    focus_blocks: list[dict[str, Any]] = []
     tasks: list[dict[str, Any]] = []
 
     def link_key(value: str) -> str:
@@ -546,13 +571,15 @@ def build_bundle(vault: Path) -> dict[str, Any]:
             date = parse_date(first_field(fm, "date"), source.rel_path)
             if date:
                 day_id = stable_uuid("dayRecord", date[:10])
-                day_records.append({
-                    "id": day_id,
-                    "date": date[:10],
-                    "createdAt": created,
-                    "updatedAt": updated,
-                    "sourceContext": source_context(source),
-                })
+                if day_id not in day_record_ids:
+                    day_records.append({
+                        "id": day_id,
+                        "date": date[:10],
+                        "createdAt": created,
+                        "updatedAt": updated,
+                        "sourceContext": source_context(source),
+                    })
+                    day_record_ids.add(day_id)
                 note_text = strip_generated_blocks(source.body)
                 if note_text.strip():
                     notes.append({
@@ -572,8 +599,35 @@ def build_bundle(vault: Path) -> dict[str, Any]:
             task["assigneePersonId"] = ref_id(fields.get("who") or fields.get("assignee"), "person", source)
             task["minutesId"] = ref_id(fields.get("minutes"), "minutes", source)
             task["originMinutesId"] = task["minutesId"] or (stable_uuid("minutes", source.rel_path) if kind == "minutes" else None)
-            task["dayRecordId"] = stable_uuid("dayRecord", parse_date(first_field(fm, "date"), source.rel_path)[:10]) if kind == "diary" and parse_date(first_field(fm, "date"), source.rel_path) else None
+            diary_date = task.get("sectionDate") if kind == "diary" else None
+            task["dayRecordId"] = stable_uuid("dayRecord", diary_date[:10]) if diary_date else None
+            if kind == "diary" and diary_date and task["dayRecordId"] not in day_record_ids:
+                day_records.append({
+                    "id": task["dayRecordId"],
+                    "date": diary_date[:10],
+                    "createdAt": created,
+                    "updatedAt": updated,
+                    "sourceContext": source_context(source, task.get("section")),
+                })
+                day_record_ids.add(task["dayRecordId"])
             task["sourceContext"] = source_context(source, task.get("section"))
+
+            if kind == "diary" and task.get("indent", 0) == 0 and task.get("dayRecordId"):
+                focus_blocks.append({
+                    "id": stable_uuid("focusBlock", f"{source.rel_path}:{task['line']}:{task['summary'].lower()}"),
+                    "summary": task["summary"],
+                    "rawText": task.get("rawText"),
+                    "duration": task.get("duration") or {"value": 1.0, "unit": "d", "hoursNormalized": 7.6},
+                    "slot": "allDay",
+                    "sortOrder": task.get("line") or 0,
+                    "taskId": stable_uuid("focusBlockTask", f"{source.rel_path}:{task['line']}:{task['summary'].lower()}"),
+                    "projectId": task.get("projectId"),
+                    "assigneePersonId": task.get("assigneePersonId"),
+                    "dayRecordId": task.get("dayRecordId"),
+                    "sourceContext": task.get("sourceContext"),
+                })
+                continue
+
             tasks.append(task)
 
     task_status_counts: dict[str, int] = {}
@@ -617,6 +671,7 @@ def build_bundle(vault: Path) -> dict[str, Any]:
             "documents": len(documents),
             "notes": len(notes),
             "dayRecords": len(day_records),
+            "focusBlocks": len(focus_blocks),
             "tasks": len(tasks),
             "diagnostics": len(diagnostics),
         },
@@ -631,6 +686,7 @@ def build_bundle(vault: Path) -> dict[str, Any]:
         "documents": documents,
         "notes": notes,
         "dayRecords": day_records,
+        "focusBlocks": focus_blocks,
         "tasks": tasks,
         "diagnostics": diagnostics,
     }

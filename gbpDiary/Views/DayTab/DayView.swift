@@ -67,6 +67,19 @@ struct DayPageContent: View {
         }.sorted { ($0.completedAt ?? .distantPast) > ($1.completedAt ?? .distantPast) }
     }
 
+    private var activityCompletedTasks: [Task] {
+        let dayTaskIds = Set((dayRecord?.tasks ?? []).map(\.id))
+        return allTasks.filter { task in
+            guard let at = task.completedAt,
+                  task.status == .completed,
+                  at >= dayStart && at < dayEnd,
+                  !dayTaskIds.contains(task.id),
+                  task.duration != nil,
+                  task.timeEntries.isEmpty else { return false }
+            return true
+        }.sorted { ($0.completedAt ?? .distantPast) < ($1.completedAt ?? .distantPast) }
+    }
+
     private var dayMeetings: [DayEntry] {
         (dayRecord?.entries ?? [])
             .filter { $0.kind == .meeting }
@@ -95,7 +108,7 @@ struct DayPageContent: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                ActivitySection(dayRecord: dayRecord, date: date, todayEntries: todayTimeEntries, meetings: dayMeetings, findOrCreateDayRecord: findOrCreateDayRecord)
+                ActivitySection(dayRecord: dayRecord, date: date, todayEntries: todayTimeEntries, meetings: dayMeetings, completedTasks: activityCompletedTasks, findOrCreateDayRecord: findOrCreateDayRecord)
                 meetingsSection
                 newTasksSection
                 completedTasksSection

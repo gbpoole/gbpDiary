@@ -35,8 +35,16 @@ class ObsidianImportBundleTests(unittest.TestCase):
                 "---\ntype:\n  - person\nEmail: \"greg@example.com\"\n---\n",
                 encoding="utf-8",
             )
+            (vault / "CMS/People/Owen Cole.md").write_text(
+                "---\ntype:\n  - person\n---\n",
+                encoding="utf-8",
+            )
             (vault / "CMS/Projects/Foo.md").write_text(
                 "---\ntype:\n  - project\nDevTeam:\n  - \"[[CMS/People/Greg Poole|Greg Poole]]\"\nDescription: Test project\n---\n",
+                encoding="utf-8",
+            )
+            (vault / "CMS/Projects/YWang_2026A.md").write_text(
+                "---\ntype:\n  - project\n---\n",
                 encoding="utf-8",
             )
             (vault / "CMS/Minutes/Foo/2025-08-20_14.28.md").write_text(
@@ -45,28 +53,30 @@ class ObsidianImportBundleTests(unittest.TestCase):
             )
             (vault / "Diary").mkdir()
             (vault / "Diary/2025-08-21-Thursday.md").write_text(
-                "---\ncreated: 2025-08-21 09:00\n---\n- [x] Timesheet task (duration:: 1.5 h) #timesheet ✅ 2025-08-21\n- [?] Follow up task (follow_up:: 2025-08-28)\n",
+                "---\ncreated: 2025-08-21 09:00\n---\n- [x] Timesheet focus (duration:: 1.5 h) #timesheet ✅ 2025-08-21\n    - [ ] Nested task\n- [?] Follow up focus (follow_up:: 2025-08-28)\n- [x] Apply for access to Nectar and OzSTAR projects (who::[[CMS/People/Owen Cole.md|Owen Cole]]) (project::[[CMS/Projects/YWang_2026A.md|YWang_2026A]]) ✅ 2026-03-02\n",
                 encoding="utf-8",
             )
 
             bundle = importer.build_bundle(vault)
 
-            self.assertEqual(bundle["counts"]["people"], 1)
-            self.assertEqual(bundle["counts"]["projects"], 1)
+            self.assertEqual(bundle["counts"]["people"], 2)
+            self.assertEqual(bundle["counts"]["projects"], 2)
             self.assertEqual(bundle["counts"]["minutes"], 1)
-            self.assertEqual(bundle["counts"]["tasks"], 3)
+            self.assertEqual(bundle["counts"]["focusBlocks"], 3)
+            self.assertEqual(bundle["counts"]["tasks"], 2)
             self.assertEqual(bundle["people"][0]["email"], "greg@example.com")
             self.assertEqual(bundle["projects"][0]["description"], "Test project")
             self.assertEqual(bundle["minutes"][0]["duration"]["hoursNormalized"], 1.0)
             self.assertEqual(bundle["tasks"][0]["summary"], "Do thing")
-            timesheet = next(task for task in bundle["tasks"] if task["summary"] == "Timesheet task")
-            self.assertEqual(timesheet["status"], "completed")
-            self.assertEqual(timesheet["completedAt"], "2025-08-21")
+            nested = next(task for task in bundle["tasks"] if task["summary"] == "Nested task")
+            self.assertIsNotNone(nested["dayRecordId"])
+            timesheet = next(block for block in bundle["focusBlocks"] if block["summary"] == "Timesheet focus")
             self.assertEqual(timesheet["duration"]["hoursNormalized"], 1.5)
-            self.assertEqual(timesheet["tags"], ["timesheet"])
-            follow_up = next(task for task in bundle["tasks"] if task["summary"] == "Follow up task")
-            self.assertEqual(follow_up["status"], "followUpPending")
-            self.assertEqual(follow_up["followUpAt"], "2025-08-28")
+            owen = next(block for block in bundle["focusBlocks"] if block["summary"] == "Apply for access to Nectar and OzSTAR projects")
+            owen_person = next(person for person in bundle["people"] if person["name"] == "Owen Cole")
+            ywang_project = next(project for project in bundle["projects"] if project["name"] == "YWang_2026A")
+            self.assertEqual(owen["assigneePersonId"], owen_person["id"])
+            self.assertEqual(owen["projectId"], ywang_project["id"])
             self.assertEqual(bundle["diagnostics"], [])
 
 

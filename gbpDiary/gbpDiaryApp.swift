@@ -23,6 +23,8 @@ struct gbpDiaryApp: App {
             Attachment.self,
             Document.self,
             Note.self,
+            TaskTimeEntry.self,
+            FocusBlock.self,
         ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: isUITesting)
         do {
