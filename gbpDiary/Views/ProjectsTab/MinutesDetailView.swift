@@ -12,6 +12,7 @@ struct MinutesDetailView: View {
     @State private var summaryDebouncer = Debouncer()
     @State private var durationText = ""
     @State private var durationError = false
+    @State private var showingDeleteConfirm = false
 
     private struct DurationPreset: Identifiable {
         let id: String
@@ -59,10 +60,21 @@ struct MinutesDetailView: View {
         .navigationTitle("Edit Meeting")
         .toolbar {
             if asSheet {
-                ToolbarItem(placement: .automatic) {
+                ToolbarItem(placement: .destructiveAction) {
+                    Button("Delete") { showingDeleteConfirm = true }
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
+                }
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Done") { dismiss() }
                 }
             }
+        }
+        .alert("Delete Meeting?", isPresented: $showingDeleteConfirm) {
+            Button("Delete", role: .destructive) { deleteMeeting() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will permanently delete the meeting and its minutes.")
         }
         .onAppear {
             ensureNoteExists()
@@ -85,6 +97,19 @@ struct MinutesDetailView: View {
         minutes.note = note
         minutes.minutesContent = nil
         minutes.updatedAt = Date()
+    }
+
+    private func deleteMeeting() {
+        summaryDebouncer.cancel()
+        // Remove any diary DayEntry rows that reference this meeting.
+        let minutesId = minutes.id
+        if let entries = try? modelContext.fetch(FetchDescriptor<DayEntry>()) {
+            for entry in entries where entry.minutes?.id == minutesId {
+                modelContext.delete(entry)
+            }
+        }
+        modelContext.delete(minutes)
+        dismiss()
     }
 
     private var dateTimeSection: some View {

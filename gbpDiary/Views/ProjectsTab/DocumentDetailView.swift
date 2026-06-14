@@ -82,7 +82,8 @@ struct DocumentDetailView: View {
             if asSheet {
                 ToolbarItem(placement: .destructiveAction) {
                     Button("Delete") { showingDeleteConfirm = true }
-                        .foregroundStyle(.red)
+                        .buttonStyle(.borderedProminent)
+                        .tint(.red)
                 }
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
