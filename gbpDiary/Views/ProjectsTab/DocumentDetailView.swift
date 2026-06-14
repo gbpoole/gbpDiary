@@ -9,6 +9,9 @@ struct DocumentDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
+    @State private var summaryDraft = ""
+    @State private var descriptionDraft = ""
+    @State private var fieldDebouncer = Debouncer()
     @State private var previewURL: URL?
     @State private var showingFilePicker = false
     @State private var showingDeleteConfirm = false
@@ -29,18 +32,24 @@ struct DocumentDetailView: View {
     @ViewBuilder private var coreContent: some View {
         List {
             Section("Summary") {
-                TextField("Summary", text: Binding(
-                    get: { document.summary ?? "" },
-                    set: { document.summary = $0.isEmpty ? nil : $0 }
-                ))
+                TextField("Summary", text: $summaryDraft)
+                    .onChange(of: summaryDraft) { _, v in
+                        fieldDebouncer.schedule(delay: 1.0) {
+                            document.summary = v.isEmpty ? nil : v
+                            document.updatedAt = Date()
+                        }
+                    }
             }
 
             Section("Description") {
-                TextField("Description", text: Binding(
-                    get: { document.documentDescription ?? "" },
-                    set: { document.documentDescription = $0.isEmpty ? nil : $0 }
-                ), axis: .vertical)
+                TextField("Description", text: $descriptionDraft, axis: .vertical)
                     .lineLimit(3...8)
+                    .onChange(of: descriptionDraft) { _, v in
+                        fieldDebouncer.schedule(delay: 1.0) {
+                            document.documentDescription = v.isEmpty ? nil : v
+                            document.updatedAt = Date()
+                        }
+                    }
             }
 
             Section("Attachments (\(document.attachments.count))") {
@@ -58,6 +67,15 @@ struct DocumentDetailView: View {
                     Label("Add File", systemImage: "plus")
                 }
             }
+        }
+        .onAppear {
+            summaryDraft = document.summary ?? ""
+            descriptionDraft = document.documentDescription ?? ""
+        }
+        .onDisappear {
+            fieldDebouncer.cancel()
+            document.summary = summaryDraft.isEmpty ? nil : summaryDraft
+            document.documentDescription = descriptionDraft.isEmpty ? nil : descriptionDraft
         }
         .navigationTitle("Document")
         .toolbar {

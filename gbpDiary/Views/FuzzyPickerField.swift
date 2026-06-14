@@ -14,10 +14,24 @@ struct FuzzyPickerField<Item: Identifiable>: View {
     var maxSelections: Int = Int.max
     var createLabel: String? = nil
     var onCreate: (() -> Void)? = nil
+    /// When true the whole row is the tap target and no icon is shown.
+    /// `emptyLabel` is displayed in the accent color when nothing is selected.
+    var tapArea: Bool = false
+    var emptyLabel: String? = nil
 
     @State private var isPopoverOpen = false
 
     var body: some View {
+        if tapArea {
+            tapAreaBody
+        } else {
+            iconBody
+        }
+    }
+
+    // MARK: - Icon style (default)
+
+    private var iconBody: some View {
         HStack(alignment: .center, spacing: 6) {
             if !selected.isEmpty {
                 FlowLayout(spacing: 4) {
@@ -39,20 +53,55 @@ struct FuzzyPickerField<Item: Identifiable>: View {
             }
             .buttonStyle(.plain)
             .popover(isPresented: $isPopoverOpen, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
-                PickerPopoverContent(
-                    allItems: allItems,
-                    selected: $selected,
-                    label: label,
-                    chipColor: chipColor,
-                    placeholder: placeholder,
-                    maxSelections: maxSelections,
-                    createLabel: createLabel,
-                    onCreate: onCreate,
-                    dismiss: { isPopoverOpen = false }
-                )
-                .frame(minWidth: 260, maxHeight: 320)
+                popoverContent
             }
         }
+    }
+
+    // MARK: - Tap-area style (no icon; whole row opens picker)
+
+    private var tapAreaBody: some View {
+        Button { isPopoverOpen = true } label: {
+            HStack(alignment: .center, spacing: 6) {
+                if selected.isEmpty {
+                    Text(emptyLabel ?? placeholder)
+                        .foregroundStyle(AppTheme.accent)
+                        .font(.callout)
+                } else {
+                    FlowLayout(spacing: 4) {
+                        ForEach(selected) { item in
+                            PickerRemovableChip(label: label(item), color: chipColor) {
+                                selected.removeAll { $0.id == item.id }
+                            }
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $isPopoverOpen, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+            popoverContent
+        }
+    }
+
+    // MARK: - Shared popover content
+
+    private var popoverContent: some View {
+        PickerPopoverContent(
+            allItems: allItems,
+            selected: $selected,
+            label: label,
+            chipColor: chipColor,
+            placeholder: placeholder,
+            maxSelections: maxSelections,
+            createLabel: createLabel,
+            onCreate: onCreate,
+            dismiss: { isPopoverOpen = false }
+        )
+        .frame(minWidth: 260, maxHeight: 320)
     }
 }
 

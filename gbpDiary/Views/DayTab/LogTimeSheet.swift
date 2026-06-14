@@ -11,8 +11,6 @@ struct LogTimeSheet: View {
     // When set, the sheet edits the existing entry rather than creating a new one.
     var existingEntry: TaskTimeEntry? = nil
 
-    @Query(sort: \Task.summary) private var allTasks: [Task]
-
     @State private var selectedTask: Task?
     @State private var durationText = ""
     @State private var durationError = false
@@ -30,12 +28,7 @@ struct LogTimeSheet: View {
                         Text(task.summary)
                             .foregroundStyle(.secondary)
                     } else {
-                        Picker("Task", selection: $selectedTask) {
-                            Text("None").tag(Optional<Task>.none)
-                            ForEach(allTasks) { t in
-                                Text(t.summary).tag(Optional(t))
-                            }
-                        }
+                        TaskPickerRow(selectedTask: $selectedTask)
                     }
                 }
 
@@ -125,5 +118,21 @@ struct LogTimeSheet: View {
         }
 
         dismiss()
+    }
+}
+
+// Isolated in its own struct so that @Query task changes don't re-render
+// the LogTimeSheet's text fields (comment, duration) while the user types.
+private struct TaskPickerRow: View {
+    @Query(sort: \Task.summary) private var allTasks: [Task]
+    @Binding var selectedTask: Task?
+
+    var body: some View {
+        Picker("Task", selection: $selectedTask) {
+            Text("None").tag(Optional<Task>.none)
+            ForEach(allTasks) { t in
+                Text(t.summary).tag(Optional(t))
+            }
+        }
     }
 }

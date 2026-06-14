@@ -8,6 +8,8 @@ struct MinutesDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Query(sort: \Person.name) private var allPeople: [Person]
+    @State private var summaryDraft = ""
+    @State private var summaryDebouncer = Debouncer()
     @State private var durationText = ""
     @State private var durationError = false
 
@@ -45,14 +47,16 @@ struct MinutesDetailView: View {
     @ViewBuilder private var coreContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                metadataSection
-                attendeesSection
+                summarySection
+                dateTimeSection
+                durationSection
                 projectsSection
+                attendeesSection
                 notesSection
             }
             .padding()
         }
-        .navigationTitle(minutes.meetingAt.formatted(.dateTime.day().month(.wide).year()))
+        .navigationTitle("Edit Meeting")
         .toolbar {
             if asSheet {
                 ToolbarItem(placement: .automatic) {
@@ -62,10 +66,15 @@ struct MinutesDetailView: View {
         }
         .onAppear {
             ensureNoteExists()
+            summaryDraft = minutes.summary ?? ""
             if let d = minutes.duration {
                 let matchesPreset = durationPresets.contains { abs($0.hours - d.hoursNormalized) < 0.01 }
                 durationText = matchesPreset ? "" : d.displayString
             }
+        }
+        .onDisappear {
+            summaryDebouncer.cancel()
+            minutes.summary = summaryDraft.isEmpty ? nil : summaryDraft
         }
     }
 
@@ -78,14 +87,28 @@ struct MinutesDetailView: View {
         minutes.updatedAt = Date()
     }
 
-    private var metadataSection: some View {
-        GroupBox("Meeting") {
-            DatePicker("Date & time", selection: $minutes.meetingAt)
-            TextField("Summary", text: Binding(
-                get: { minutes.summary ?? "" },
-                set: { minutes.summary = $0.isEmpty ? nil : $0 }
-            ))
-            .textFieldStyle(.plain)
+    private var dateTimeSection: some View {
+        GroupBox("When") {
+            DatePicker("", selection: $minutes.meetingAt)
+                .labelsHidden()
+        }
+    }
+
+    private var summarySection: some View {
+        GroupBox("Summary") {
+            TextField("One-line summary", text: $summaryDraft)
+                .textFieldStyle(.plain)
+                .onChange(of: summaryDraft) { _, newValue in
+                    summaryDebouncer.schedule(delay: 1.0) {
+                        minutes.summary = newValue.isEmpty ? nil : newValue
+                        minutes.updatedAt = Date()
+                    }
+                }
+        }
+    }
+
+    private var durationSection: some View {
+        GroupBox("Duration") {
             durationPicker
         }
     }
@@ -153,7 +176,9 @@ struct MinutesDetailView: View {
                     set: { minutes.attendees = $0; minutes.updatedAt = Date() }
                 ),
                 label: \.name,
-                chipColor: AppTheme.person
+                chipColor: AppTheme.person,
+                tapArea: true,
+                emptyLabel: "None selected — tap to add attendees"
             )
         }
     }
@@ -167,13 +192,15 @@ struct MinutesDetailView: View {
                     set: { minutes.projects = $0; minutes.updatedAt = Date() }
                 ),
                 label: \.name,
-                chipColor: AppTheme.project
+                chipColor: AppTheme.project,
+                tapArea: true,
+                emptyLabel: "None selected — tap to link projects"
             )
         }
     }
 
     private var notesSection: some View {
-        GroupBox("Notes") {
+        GroupBox("Minutes") {
             if let note = minutes.note {
                 NoteEditingArea(note: note)
                     .padding(.horizontal, -12)

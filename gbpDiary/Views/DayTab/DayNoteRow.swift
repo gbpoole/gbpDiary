@@ -22,6 +22,7 @@ struct DayNoteRow: View {
     @State private var previewURL: URL?
     @State private var blocksDropTargetIndex: Int?
     @State private var pendingCursorPlacements: [UUID: CursorPlacement] = [:]
+    @State private var pendingFocusId: UUID?
 
     // True when any block within this note is focused
     private var isFocused: Bool {
@@ -56,6 +57,18 @@ struct DayNoteRow: View {
 
             HStack(spacing: 4) {
                 Spacer(minLength: 0)
+                Button {
+                    onHeaderButtonTap?()
+                    addTextBlock()
+                } label: {
+                    Image(systemName: "text.badge.plus")
+                        .foregroundStyle(AppTheme.accent)
+                        .font(.caption)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Add text block")
                 Button {
                     onHeaderButtonTap?()
                     showingFilePicker = true
@@ -120,6 +133,9 @@ struct DayNoteRow: View {
             allowsMultipleSelection: true
         ) { handleImport($0) }
         .quickLookPreview($previewURL)
+        .onChange(of: pendingFocusId) { _, id in
+            if let id { focusedEntryId.wrappedValue = id; pendingFocusId = nil }
+        }
     }
 
     // MARK: - Blocks
@@ -377,6 +393,23 @@ struct DayNoteRow: View {
                 att.renderWidth = targetWidth
             }
         }
+    }
+
+    // MARK: - Add text block
+
+    private func addTextBlock() {
+        var blocks = note.blocks
+        // If the last block is already an empty text block, just focus it.
+        if let last = blocks.last, last.kind == .text,
+           last.textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            pendingFocusId = last.id
+            return
+        }
+        let newBlock = NoteBlock.text("")
+        blocks.append(newBlock)
+        note.blocks = blocks
+        note.updatedAt = Date()
+        pendingFocusId = newBlock.id
     }
 
     // MARK: - Text binding
