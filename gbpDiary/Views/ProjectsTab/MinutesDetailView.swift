@@ -13,6 +13,7 @@ struct MinutesDetailView: View {
     @State private var durationText = ""
     @State private var durationError = false
     @State private var showingDeleteConfirm = false
+    @State private var isDeleted = false
 
     private struct DurationPreset: Identifiable {
         let id: String
@@ -86,6 +87,7 @@ struct MinutesDetailView: View {
         }
         .onDisappear {
             summaryDebouncer.cancel()
+            guard !isDeleted else { return }
             minutes.summary = summaryDraft.isEmpty ? nil : summaryDraft
         }
     }
@@ -100,8 +102,14 @@ struct MinutesDetailView: View {
     }
 
     private func deleteMeeting() {
+        isDeleted = true
         summaryDebouncer.cancel()
-        // Remove any diary DayEntry rows that reference this meeting.
+        // Explicitly detach and delete the note before deleting minutes so that
+        // NoteEditingArea's monitor closures (which reference note.blocks) are
+        // not called on a cascade-deleted object during sheet dismissal.
+        let note = minutes.note
+        minutes.note = nil
+        if let note { modelContext.delete(note) }
         let minutesId = minutes.id
         if let entries = try? modelContext.fetch(FetchDescriptor<DayEntry>()) {
             for entry in entries where entry.minutes?.id == minutesId {
@@ -226,7 +234,7 @@ struct MinutesDetailView: View {
 
     private var notesSection: some View {
         GroupBox("Minutes") {
-            if let note = minutes.note {
+            if !isDeleted, let note = minutes.note {
                 NoteEditingArea(note: note)
                     .padding(.horizontal, -12)
             }

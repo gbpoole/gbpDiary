@@ -128,7 +128,7 @@ struct TaskRowView: View {
             }
             if task.status == .completed && task.followUpAt == nil {
                 Button(action: { showingFollowUpPicker = true }) {
-                    Image(systemName: "clock.badge.plus")
+                    Image(systemName: "calendar.badge.plus")
                         .foregroundStyle(.secondary)
                         .font(.caption)
                 }
