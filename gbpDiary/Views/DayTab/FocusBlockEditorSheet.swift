@@ -86,7 +86,8 @@ struct FocusBlockEditorSheet: View {
                 if existingBlock != nil {
                     ToolbarItem(placement: .destructiveAction) {
                         Button("Delete") { showingDeleteConfirm = true }
-                            .foregroundStyle(.red)
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
                     }
                 }
                 ToolbarItem(placement: .cancellationAction) {

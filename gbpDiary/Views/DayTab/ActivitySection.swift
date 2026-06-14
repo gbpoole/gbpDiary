@@ -294,6 +294,8 @@ private struct UnspecifiedActivityRow: View {
     @Environment(\.modelContext) private var modelContext
     var entry: TaskTimeEntry
 
+    @State private var showingEdit = false
+
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
             Color.clear.frame(width: 16, height: 1)
@@ -314,21 +316,26 @@ private struct UnspecifiedActivityRow: View {
                         .foregroundStyle(AppTheme.mutedText)
                 }
 
-                Spacer(minLength: 0)
-                Chip(label: entry.duration.displayString, color: AppTheme.duration)
-
                 if let comment = entry.comment, !comment.isEmpty {
                     Text(comment)
                         .font(.caption)
                         .foregroundStyle(AppTheme.mutedText)
                         .lineLimit(1)
                 }
+
+                Spacer(minLength: 0)
+                Chip(label: entry.duration.displayString, color: AppTheme.duration)
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(AppTheme.cardRaised.opacity(0.45))
             .clipShape(RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+            .onTapGesture { showingEdit = true }
             .padding(.trailing)
+            .sheet(isPresented: $showingEdit) {
+                LogTimeSheet(existingEntry: entry)
+            }
             .contextMenu {
                 Button("Delete", role: .destructive) {
                     modelContext.delete(entry)

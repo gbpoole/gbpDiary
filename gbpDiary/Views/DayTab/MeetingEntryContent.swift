@@ -38,7 +38,6 @@ struct MeetingEntryContent<InlineText: View>: View {
                     if !hasContent {
                         Chip(label: "No minutes", color: AppTheme.mutedText)
                     }
-                    InlineRowEditButton { onEdit(minutes) }
                     if let onDelete {
                         Button(action: onDelete) {
                             Image(systemName: "trash")
@@ -55,5 +54,7 @@ struct MeetingEntryContent<InlineText: View>: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 5)
+        .contentShape(Rectangle())
+        .onTapGesture { if let m = minutes { onEdit(m) } }
     }
 }

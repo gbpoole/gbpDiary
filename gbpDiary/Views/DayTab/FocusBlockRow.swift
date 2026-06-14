@@ -48,7 +48,6 @@ struct FocusBlockRow: View {
                 Text(block.displayLabel)
                     .font(.subheadline)
                     .fontWeight(.medium)
-                editButton
                 Spacer(minLength: 0)
                 durationChips
             }
@@ -56,6 +55,8 @@ struct FocusBlockRow: View {
             .padding(.vertical, 6)
             .background(Color.secondary.opacity(0.06))
             .clipShape(RoundedRectangle(cornerRadius: 6))
+            .contentShape(Rectangle())
+            .onTapGesture { showingEditor = true }
             .padding(.trailing)
             .contextMenu {
                 Button("Edit Focus Block…") { showingEditor = true }
@@ -107,10 +108,6 @@ struct FocusBlockRow: View {
                     .foregroundStyle(AppTheme.mutedText)
             }
         }
-    }
-
-    private var editButton: some View {
-        InlineRowEditButton { showingEditor = true }
     }
 
     @ViewBuilder
@@ -200,12 +197,13 @@ private struct ActivityEntryRow: View {
                 Spacer(minLength: 0)
 
                 Chip(label: entry.duration.displayString, color: AppTheme.duration)
-                InlineRowEditButton { showingEdit = true }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(AppTheme.cardRaised.opacity(0.45))
             .clipShape(RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+            .onTapGesture { showingEdit = true }
             .padding(.trailing)
             .sheet(isPresented: $showingEdit) {
                 LogTimeSheet(existingEntry: entry)

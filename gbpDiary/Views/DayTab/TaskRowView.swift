@@ -142,7 +142,7 @@ struct TaskRowView: View {
                 }
                 .buttonStyle(.plain)
             }
-            InlineRowEditButton(action: onEdit)
+            if !inlineEditing { InlineRowEditButton(action: onEdit) }
             if !isFocusedInline {
                 Spacer(minLength: 0)
             }

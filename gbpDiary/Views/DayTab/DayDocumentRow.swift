@@ -22,7 +22,6 @@ struct DayDocumentRow: View {
                              color: .gray)
                     }
                     Spacer(minLength: 0)
-                    InlineRowEditButton(action: onEdit)
                 }
                 if let desc = document.documentDescription, !desc.isEmpty {
                     Text(desc)
@@ -35,5 +34,6 @@ struct DayDocumentRow: View {
         .padding(.horizontal)
         .padding(.vertical, 6)
         .contentShape(Rectangle())
+        .onTapGesture { onEdit() }
     }
 }

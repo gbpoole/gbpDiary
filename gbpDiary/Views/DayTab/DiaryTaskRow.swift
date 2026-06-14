@@ -91,6 +91,7 @@ struct DiaryTaskRow: View {
                 onToggleCollapse: nil,
                 onBeforeStatusChange: onBeforeStatusChange
             )
+            .onTapGesture { editingTask = task }
             .background(Color.secondary.opacity(0.06))
             .clipShape(RoundedRectangle(cornerRadius: 6))
             .overlay {

@@ -20,43 +20,42 @@ struct LogTimeSheet: View {
     private var isEditing: Bool { existingEntry != nil }
     private var effectiveTask: Task? { existingEntry?.task ?? presetTask ?? selectedTask }
 
+    private struct DurationPreset: Identifiable {
+        let id: String
+        let label: String
+        let value: String   // parseable string set into durationText
+        let hours: Double
+    }
+    private let durationPresets: [DurationPreset] = [
+        DurationPreset(id: "15m",  label: "15m",  value: "0.25h", hours: 0.25),
+        DurationPreset(id: "30m",  label: "30m",  value: "0.5h",  hours: 0.5),
+        DurationPreset(id: "1h",   label: "1h",   value: "1h",    hours: 1.0),
+        DurationPreset(id: "1.5h", label: "1.5h", value: "1.5h",  hours: 1.5),
+        DurationPreset(id: "2h",   label: "2h",   value: "2h",    hours: 2.0),
+        DurationPreset(id: "3h",   label: "3h",   value: "3h",    hours: 3.0),
+    ]
+    private func isPresetActive(_ preset: DurationPreset) -> Bool {
+        guard let d = Duration.parse(durationText.trimmingCharacters(in: .whitespaces)) else { return false }
+        return abs(d.hoursNormalized - preset.hours) < 0.01
+    }
+
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Task") {
-                    if let task = effectiveTask, isEditing || presetTask != nil {
-                        Text(task.summary)
-                            .foregroundStyle(.secondary)
-                    } else {
-                        TaskPickerRow(selectedTask: $selectedTask)
-                    }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    taskSection
+                    durationSection
+                    commentSection
                 }
-
-                Section("Time") {
-                    HStack {
-                        TextField("e.g. 1.5h, 2d", text: $durationText)
-                            .onChange(of: durationText) { _, _ in durationError = false }
-                        if durationError {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .foregroundStyle(.red)
-                        }
-                    }
-                    Text("Units: h (hours), d (days ≈7.6h)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Comment") {
-                    TextField("Optional note", text: $comment)
-                }
-
+                .padding()
             }
             .navigationTitle(isEditing ? "Edit Activity" : "Log Time")
             .toolbar {
                 if isEditing {
                     ToolbarItem(placement: .destructiveAction) {
                         Button("Delete") { showingDeleteConfirm = true }
-                            .foregroundStyle(.red)
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
                     }
                 }
                 ToolbarItem(placement: .cancellationAction) {
@@ -68,11 +67,11 @@ struct LogTimeSheet: View {
                 }
             }
             .alert("Delete Activity?", isPresented: $showingDeleteConfirm) {
-                Button("Cancel", role: .cancel) {}
                 Button("Delete", role: .destructive) {
                     if let entry = existingEntry { modelContext.delete(entry) }
                     dismiss()
                 }
+                Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This will permanently delete this activity entry.")
             }
@@ -86,8 +85,59 @@ struct LogTimeSheet: View {
             }
         }
         #if os(macOS)
-        .frame(minWidth: 400, minHeight: 300)
+        .frame(minWidth: 400, minHeight: 260)
         #endif
+    }
+
+    private var taskSection: some View {
+        GroupBox("Task") {
+            if let task = effectiveTask, isEditing || presetTask != nil {
+                Text(task.summary)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                TaskPickerRow(selectedTask: $selectedTask)
+            }
+        }
+    }
+
+    private var durationSection: some View {
+        GroupBox("Duration") {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    ForEach(durationPresets) { preset in
+                        Button(preset.label) {
+                            durationText = preset.value
+                            durationError = false
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(isPresetActive(preset) ? Color.accentColor : Color.secondary.opacity(0.12), in: Capsule())
+                        .foregroundStyle(isPresetActive(preset) ? Color.white : Color.primary)
+                    }
+                }
+                HStack(spacing: 6) {
+                    TextField("Custom (e.g. 2.5h)", text: $durationText)
+                        .textFieldStyle(.plain)
+                        .font(.caption)
+                        .onChange(of: durationText) { _, _ in durationError = false }
+                    if durationError {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .foregroundStyle(.red)
+                            .font(.caption)
+                    }
+                }
+            }
+        }
+    }
+
+    private var commentSection: some View {
+        GroupBox("Comment") {
+            TextField("Optional note", text: $comment)
+                .textFieldStyle(.plain)
+        }
     }
 
     private var canSave: Bool {

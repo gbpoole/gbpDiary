@@ -25,6 +25,7 @@ struct TaskEditorSheet: View {
     @State private var tagsText = ""
     @State private var showingLogTime = false
     @State private var deletingEntry: TaskTimeEntry?
+    @State private var showingDeleteConfirm = false
 
     private var isNew: Bool { task == nil }
 
@@ -131,6 +132,13 @@ struct TaskEditorSheet: View {
             }
             .navigationTitle(isNew ? "New Task" : "Edit Task")
             .toolbar {
+                if !isNew {
+                    ToolbarItem(placement: .destructiveAction) {
+                        Button("Delete") { showingDeleteConfirm = true }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                    }
+                }
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
@@ -138,6 +146,12 @@ struct TaskEditorSheet: View {
                     Button(isNew ? "Add" : "Save") { save() }
                         .disabled(summary.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
+            }
+            .alert("Delete Task?", isPresented: $showingDeleteConfirm) {
+                Button("Delete", role: .destructive) { deleteTask() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This will permanently delete the task.")
             }
         }
         .onAppear {
@@ -216,6 +230,12 @@ struct TaskEditorSheet: View {
         followUpDate = t.followUpAt
         tagsText = t.tags.joined(separator: ", ")
         durationText = t.duration?.displayString ?? ""
+    }
+
+    private func deleteTask() {
+        guard let t = task else { return }
+        modelContext.delete(t)
+        dismiss()
     }
 
     private func save() {
