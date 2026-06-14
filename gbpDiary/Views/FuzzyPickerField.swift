@@ -2,10 +2,9 @@ import SwiftUI
 
 /// A reusable search-filter selector with chips for selected items.
 ///
-/// The search bar and dropdown share a single rounded container so the list
-/// always appears below the search field rather than overlapping it.
-/// Supports multi-select (default) and single-select (`maxSelections: 1`).
-/// Keyboard: ↑↓ to move highlight, Return to pick, Escape to dismiss.
+/// The form row shows chips + a fixed-height trigger button. Tapping it opens a
+/// popover that floats above all other content — so the surrounding form layout
+/// never shifts. Supports multi-select (default) and single-select (`maxSelections: 1`).
 struct FuzzyPickerField<Item: Identifiable>: View {
     let allItems: [Item]
     @Binding var selected: [Item]
@@ -16,34 +15,92 @@ struct FuzzyPickerField<Item: Identifiable>: View {
     var createLabel: String? = nil
     var onCreate: (() -> Void)? = nil
 
-    @State private var searchText: String = ""
+    @State private var isPopoverOpen = false
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 6) {
+            if !selected.isEmpty {
+                FlowLayout(spacing: 4) {
+                    ForEach(selected) { item in
+                        PickerRemovableChip(label: label(item), color: chipColor) {
+                            selected.removeAll { $0.id == item.id }
+                        }
+                    }
+                }
+            }
+
+            // Compact icon trigger — opens the floating popover.
+            Button { isPopoverOpen = true } label: {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(AppTheme.accent)
+                    .font(.caption)
+                    .frame(width: 24, height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .popover(isPresented: $isPopoverOpen, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+                PickerPopoverContent(
+                    allItems: allItems,
+                    selected: $selected,
+                    label: label,
+                    chipColor: chipColor,
+                    placeholder: placeholder,
+                    maxSelections: maxSelections,
+                    createLabel: createLabel,
+                    onCreate: onCreate,
+                    dismiss: { isPopoverOpen = false }
+                )
+                .frame(minWidth: 260, maxHeight: 320)
+            }
+        }
+    }
+}
+
+// MARK: - Popover content
+
+private struct PickerPopoverContent<Item: Identifiable>: View {
+    let allItems: [Item]
+    @Binding var selected: [Item]
+    let label: (Item) -> String
+    let chipColor: Color
+    var placeholder: String
+    var maxSelections: Int
+    var createLabel: String?
+    var onCreate: (() -> Void)?
+    var dismiss: () -> Void
+
+    @State private var searchText = ""
     @FocusState private var searchFocused: Bool
     @State private var highlightedIndex: Int? = nil
-
-    private var isDropdownOpen: Bool { searchFocused || !searchText.isEmpty }
+    // Local @State mirror of selected so the popover's own view graph
+    // re-renders reliably on every mutation, independent of binding propagation.
+    @State private var localSelected: [Item] = []
 
     private var filteredItems: [Item] {
-        guard !searchText.isEmpty else { return allItems }
+        let unselected = allItems.filter { item in !localSelected.contains(where: { $0.id == item.id }) }
+        guard !searchText.isEmpty else { return unselected }
         let q = searchText.lowercased()
-        return allItems.filter { label($0).lowercased().contains(q) }
+        return unselected.filter { label($0).lowercased().contains(q) }
     }
 
     private func isSelected(_ item: Item) -> Bool {
-        selected.contains(where: { $0.id == item.id })
+        localSelected.contains(where: { $0.id == item.id })
     }
 
     private func toggle(_ item: Item) {
         if isSelected(item) {
-            selected.removeAll { $0.id == item.id }
+            localSelected.removeAll { $0.id == item.id }
         } else {
             if maxSelections == 1 {
-                selected = [item]
-                searchFocused = false
-            } else if selected.count < maxSelections {
-                selected.append(item)
-                searchFocused = true
+                localSelected = [item]
+                selected = localSelected
+                dismiss()
+                return
+            } else if localSelected.count < maxSelections {
+                localSelected.append(item)
             }
         }
+        selected = localSelected
         searchText = ""
         highlightedIndex = nil
     }
@@ -59,105 +116,123 @@ struct FuzzyPickerField<Item: Identifiable>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if !selected.isEmpty {
-                FlowLayout(spacing: 4) {
-                    ForEach(selected) { item in
-                        PickerRemovableChip(label: label(item), color: chipColor) {
-                            selected.removeAll { $0.id == item.id }
+        VStack(spacing: 0) {
+            // Search field
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                TextField(placeholder, text: $searchText)
+                    .textFieldStyle(.plain)
+                    .font(.callout)
+                    .focused($searchFocused)
+                    .onKeyPress(.upArrow, phases: .down) { _ in
+                        moveHighlight(by: -1); return .handled
+                    }
+                    .onKeyPress(.downArrow, phases: .down) { _ in
+                        moveHighlight(by: 1); return .handled
+                    }
+                    .onKeyPress(.return, phases: .down) { _ in
+                        if let idx = highlightedIndex, idx < filteredItems.count {
+                            toggle(filteredItems[idx])
                         }
+                        return .handled
+                    }
+                    .onKeyPress(.escape, phases: .down) { _ in
+                        dismiss(); return .handled
+                    }
+                if !searchText.isEmpty {
+                    Button { searchText = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .foregroundStyle(.secondary)
+                            .font(.callout)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+
+            Divider()
+
+            // Selected items (multi-select only) — pinned above the scrollable list,
+            // scrollable so a large selection doesn't crowd out the item list.
+            // Cursor navigation skips this section entirely.
+            if maxSelections != 1 && !localSelected.isEmpty {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        ForEach(localSelected) { item in
+                            selectedItemRow(item)
+                        }
+                    }
+                }
+                .frame(maxHeight: 120)
+                Divider()
+            }
+
+            // Filterable list — cursor navigation (highlightedIndex) applies here only.
+            ScrollView {
+                VStack(spacing: 0) {
+                    if filteredItems.isEmpty && !searchText.isEmpty {
+                        Text("No results matching \"\(searchText)\"")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        ForEach(Array(filteredItems.enumerated()), id: \.element.id) { idx, item in
+                            itemRow(item, highlighted: highlightedIndex == idx)
+                            if idx < filteredItems.count - 1 {
+                                Divider().padding(.leading, 10)
+                            }
+                        }
+                    }
+                    if let createLabel, let onCreate {
+                        if !filteredItems.isEmpty || searchText.isEmpty { Divider() }
+                        createRow(label: createLabel, action: onCreate)
                     }
                 }
             }
-
-            // Search bar + dropdown share one rounded background so the list
-            // always renders below the field, never on top of it.
-            VStack(spacing: 0) {
-                HStack(spacing: 6) {
-                    Image(systemName: "magnifyingglass")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    TextField(placeholder, text: $searchText)
-                        .textFieldStyle(.plain)
-                        .font(.callout)
-                        .focused($searchFocused)
-                        .onKeyPress(.upArrow, phases: .down) { _ in
-                            moveHighlight(by: -1); return .handled
-                        }
-                        .onKeyPress(.downArrow, phases: .down) { _ in
-                            moveHighlight(by: 1); return .handled
-                        }
-                        .onKeyPress(.return, phases: .down) { _ in
-                            guard isDropdownOpen else { return .ignored }
-                            if let idx = highlightedIndex, idx < filteredItems.count {
-                                toggle(filteredItems[idx])
-                            }
-                            return .handled
-                        }
-                        .onKeyPress(.escape, phases: .down) { _ in
-                            searchText = ""
-                            searchFocused = false
-                            highlightedIndex = nil
-                            return .handled
-                        }
-                    if !searchText.isEmpty {
-                        Button { searchText = "" } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundStyle(.secondary)
-                                .font(.callout)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-
-                if isDropdownOpen {
-                    Divider().padding(.horizontal, 4)
-                    ScrollView {
-                        VStack(spacing: 0) {
-                            if filteredItems.isEmpty && !searchText.isEmpty {
-                                Text("No results matching \"\(searchText)\"")
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                                    .padding(.vertical, 10)
-                                    .frame(maxWidth: .infinity)
-                            } else {
-                                ForEach(Array(filteredItems.enumerated()), id: \.element.id) { idx, item in
-                                    itemRow(item, highlighted: highlightedIndex == idx)
-                                    if idx < filteredItems.count - 1 {
-                                        Divider().padding(.leading, 10)
-                                    }
-                                }
-                            }
-                            if let createLabel, let onCreate {
-                                if !filteredItems.isEmpty || searchText.isEmpty { Divider() }
-                                createRow(label: createLabel, action: onCreate)
-                            }
-                        }
-                    }
-                    .frame(maxHeight: 200)
-                }
-            }
-            .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .frame(maxHeight: 220)
         }
+        .onAppear {
+            localSelected = selected
+            searchFocused = true
+        }
+        // Keep localSelected in sync if chips are removed from the form while open.
+        .onChange(of: selected.count) { _, _ in localSelected = selected }
         .onChange(of: searchText) { _, _ in highlightedIndex = nil }
     }
 
+    private func selectedItemRow(_ item: Item) -> some View {
+        HStack(spacing: 8) {
+            Text(label(item))
+                .font(.callout)
+                .foregroundStyle(chipColor)
+            Spacer(minLength: 0)
+            Button {
+                localSelected.removeAll { $0.id == item.id }
+                selected = localSelected
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption.bold())
+                    .foregroundStyle(chipColor)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .contentShape(Rectangle())
+        .background(chipColor.opacity(0.08))
+    }
+
     private func itemRow(_ item: Item, highlighted: Bool) -> some View {
-        let sel = isSelected(item)
-        let bg: Color = highlighted ? chipColor.opacity(0.15) : (sel ? chipColor.opacity(0.08) : Color.clear)
+        let bg: Color = highlighted ? chipColor.opacity(0.15) : Color.clear
         return Button { toggle(item) } label: {
             HStack(spacing: 8) {
                 Text(label(item))
                     .font(.callout)
-                    .foregroundStyle(sel ? chipColor : Color.primary)
                 Spacer(minLength: 0)
-                if sel {
-                    Image(systemName: "checkmark")
-                        .font(.caption.bold())
-                        .foregroundStyle(chipColor)
-                }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 7)
