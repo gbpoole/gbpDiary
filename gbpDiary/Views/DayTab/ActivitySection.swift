@@ -55,7 +55,7 @@ struct ActivitySection: View {
     }
 
     var body: some View {
-        let unspecified = todayEntries.filter { $0.focusBlock == nil }
+        let unspecified = todayEntries.filter { $0.focusBlock == nil }.sorted { $0.date < $1.date }
         let hasContent = !blocks.isEmpty || !unspecified.isEmpty
             || !standaloneMeetings.isEmpty || !completedTasks.isEmpty
 
@@ -95,8 +95,11 @@ struct ActivitySection: View {
 
         Color.clear
             .sheet(isPresented: $showingLogTime) {
-                let presetBlock = blocks.count == 1 ? blocks.first : nil
-                LogTimeSheet(presetFocusBlock: presetBlock, presetDate: date)
+                LogTimeSheet(
+                    presetFocusBlock: blocks.count == 1 ? blocks.first : nil,
+                    presetDate: date,
+                    availableFocusBlocks: blocks
+                )
             }
 
         Color.clear
@@ -324,6 +327,8 @@ private struct UnspecifiedActivityRow: View {
                 }
 
                 Spacer(minLength: 0)
+                Chip(label: entry.date.formatted(date: .omitted, time: .shortened),
+                     color: AppTheme.project)
                 Chip(label: entry.duration.displayString, color: AppTheme.duration)
             }
             .padding(.horizontal, 8)

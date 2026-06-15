@@ -12,6 +12,7 @@ struct FocusBlockRow: View {
     // @Query-driven so activity rows appear immediately without relationship-refresh lag.
     private var blockActivities: [TaskTimeEntry] {
         allEntries.filter { $0.focusBlock?.id == block.id }
+            .sorted { $0.date < $1.date }
     }
 
     // Derive locally from blockActivities so the chip updates in sync with the query.
@@ -196,6 +197,8 @@ private struct ActivityEntryRow: View {
 
                 Spacer(minLength: 0)
 
+                Chip(label: entry.date.formatted(date: .omitted, time: .shortened),
+                     color: AppTheme.project)
                 Chip(label: entry.duration.displayString, color: AppTheme.duration)
             }
             .padding(.horizontal, 8)

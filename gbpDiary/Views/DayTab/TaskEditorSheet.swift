@@ -15,8 +15,6 @@ struct TaskEditorSheet: View {
     @State private var summary = ""
     @State private var notes = ""
     @State private var status: TaskStatus = .todo
-    @State private var durationText = ""
-    @State private var durationError = false
     @State private var selectedProject: Project?
     @State private var selectedAssignee: Person?
     @State private var scheduledDate: Date?
@@ -24,111 +22,26 @@ struct TaskEditorSheet: View {
     @State private var followUpDate: Date?
     @State private var tagsText = ""
     @State private var showingLogTime = false
-    @State private var deletingEntry: TaskTimeEntry?
     @State private var showingDeleteConfirm = false
 
     private var isNew: Bool { task == nil }
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Task") {
-                    TextField("Summary", text: $summary)
-                    ZStack(alignment: .topLeading) {
-                        if notes.isEmpty {
-                            Text("Notes (optional)")
-                                .foregroundStyle(.tertiary)
-                                .allowsHitTesting(false)
-                                .padding(.top, 8)
-                                .padding(.leading, 4)
-                        }
-                        TextEditor(text: $notes)
-                            .scrollContentBackground(.hidden)
-                            .frame(minHeight: 72)
-                    }
-                    .padding(4)
-                    .background(.background, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.secondary.opacity(0.25), lineWidth: 1))
-                }
-
-                Section("Status") {
-                    Picker("Status", selection: $status) {
-                        Text("To Do").tag(TaskStatus.todo)
-                        Text("Started").tag(TaskStatus.started)
-                        Text("Completed").tag(TaskStatus.completed)
-                        Text("Cancelled").tag(TaskStatus.cancelled)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    taskSection
+                    statusSection
+                    scheduleSection
+                    followUpSection
+                    projectSection
+                    assigneeSection
+                    tagsSection
+                    if let t = task {
+                        timeLogSection(t)
                     }
                 }
-
-                Section("Follow-up") {
-                    Toggle("Has follow-up date", isOn: $followUpEnabled)
-                        .onChange(of: followUpEnabled) { _, on in
-                            if on && followUpDate == nil {
-                                followUpDate = Calendar.current.date(byAdding: .day, value: 1,
-                                    to: Calendar.current.startOfDay(for: .now))
-                            }
-                        }
-                    if followUpEnabled {
-                        DatePicker("Date",
-                                   selection: Binding(
-                                       get: { followUpDate ?? Date() },
-                                       set: { followUpDate = $0 }
-                                   ),
-                                   displayedComponents: .date)
-                    }
-                }
-
-                Section("Scheduling") {
-                    Toggle("Schedule for a day", isOn: Binding(
-                        get: { scheduledDate != nil },
-                        set: { if $0 { scheduledDate = defaultDate } else { scheduledDate = nil } }
-                    ))
-                    if scheduledDate != nil {
-                        DatePicker("Date",
-                                   selection: Binding(
-                                       get: { scheduledDate ?? defaultDate },
-                                       set: { scheduledDate = $0 }
-                                   ),
-                                   displayedComponents: .date)
-                    }
-                }
-
-                Section("Duration") {
-                    HStack {
-                        TextField("e.g. 1.5h, 2d, 1w", text: $durationText)
-                            .onChange(of: durationText) { _, _ in durationError = false }
-                        if durationError {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .foregroundStyle(.red)
-                        }
-                    }
-                    Text("Units: h (hours), d (days ≈7.6h), w (weeks ≈38h)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Section("Links") {
-                    Picker("Project", selection: $selectedProject) {
-                        Text("None").tag(Optional<Project>.none)
-                        ForEach(projects) { p in
-                            Text(p.name).tag(Optional(p))
-                        }
-                    }
-                    Picker("Assignee", selection: $selectedAssignee) {
-                        Text("None").tag(Optional<Person>.none)
-                        ForEach(people) { p in
-                            Text(p.name).tag(Optional(p))
-                        }
-                    }
-                }
-
-                Section("Tags") {
-                    TextField("Comma-separated tags", text: $tagsText)
-                }
-
-                if let t = task {
-                    timeLogSection(t)
-                }
+                .padding()
             }
             .navigationTitle(isNew ? "New Task" : "Edit Task")
             .toolbar {
@@ -155,9 +68,7 @@ struct TaskEditorSheet: View {
             }
         }
         .onAppear {
-            if task != nil {
-                populateFromTask()
-            }
+            if task != nil { populateFromTask() }
         }
         .sheet(isPresented: $showingLogTime) {
             if let t = task {
@@ -165,58 +76,187 @@ struct TaskEditorSheet: View {
             }
         }
         #if os(macOS)
-        .frame(minWidth: 480, minHeight: 520)
+        .frame(minWidth: 480, minHeight: 480)
         #endif
+    }
+
+    // MARK: - Sections
+
+    private var taskSection: some View {
+        GroupBox("Task") {
+            VStack(alignment: .leading, spacing: 8) {
+                TextField("Summary", text: $summary)
+                    .textFieldStyle(.plain)
+                Divider()
+                ZStack(alignment: .topLeading) {
+                    if notes.isEmpty {
+                        Text("Notes (optional)")
+                            .foregroundStyle(.tertiary)
+                            .allowsHitTesting(false)
+                            .padding(.top, 2)
+                    }
+                    TextEditor(text: $notes)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 60)
+                }
+            }
+        }
+    }
+
+    private var statusSection: some View {
+        GroupBox("Status") {
+            HStack(spacing: 6) {
+                statusCapsule(for: .todo,      label: "To Do")
+                statusCapsule(for: .started,   label: "Started")
+                statusCapsule(for: .completed, label: "Completed")
+                statusCapsule(for: .cancelled, label: "Cancelled")
+            }
+        }
+    }
+
+    private func statusCapsule(for s: TaskStatus, label: String) -> some View {
+        let isActive = status == s
+        let color: Color = switch s {
+        case .completed:       AppTheme.completed
+        case .started:         AppTheme.started
+        case .cancelled, .todo, .followUpPending: Color.secondary
+        }
+        return Button(label) { status = s }
+            .buttonStyle(.plain)
+            .font(.caption)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(isActive ? color : Color.secondary.opacity(0.12), in: Capsule())
+            .foregroundStyle(isActive ? Color.white : Color.primary)
+    }
+
+    private var scheduleSection: some View {
+        GroupBox("Schedule") {
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Schedule for a day", isOn: Binding(
+                    get: { scheduledDate != nil },
+                    set: { if $0 { scheduledDate = defaultDate } else { scheduledDate = nil } }
+                ))
+                if scheduledDate != nil {
+                    DatePicker("Date",
+                               selection: Binding(
+                                   get: { scheduledDate ?? defaultDate },
+                                   set: { scheduledDate = $0 }
+                               ),
+                               displayedComponents: .date)
+                }
+            }
+        }
+    }
+
+    private var followUpSection: some View {
+        GroupBox("Follow-up") {
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Has follow-up date", isOn: $followUpEnabled)
+                    .onChange(of: followUpEnabled) { _, on in
+                        if on && followUpDate == nil {
+                            followUpDate = Calendar.current.date(byAdding: .day, value: 1,
+                                to: Calendar.current.startOfDay(for: .now))
+                        }
+                    }
+                if followUpEnabled {
+                    DatePicker("Date",
+                               selection: Binding(
+                                   get: { followUpDate ?? Date() },
+                                   set: { followUpDate = $0 }
+                               ),
+                               displayedComponents: .date)
+                }
+            }
+        }
+    }
+
+    private var projectSection: some View {
+        GroupBox("Project") {
+            FuzzyPickerField(
+                allItems: projects,
+                selectedItem: $selectedProject,
+                label: { $0.name },
+                chipColor: AppTheme.project,
+                tapArea: true,
+                emptyLabel: "None — tap to link project"
+            )
+        }
+    }
+
+    private var assigneeSection: some View {
+        GroupBox("Assignee") {
+            FuzzyPickerField(
+                allItems: people,
+                selectedItem: $selectedAssignee,
+                label: { $0.name },
+                chipColor: AppTheme.person,
+                tapArea: true,
+                emptyLabel: "None — tap to assign"
+            )
+        }
+    }
+
+    private var tagsSection: some View {
+        GroupBox("Tags") {
+            TextField("Comma-separated tags", text: $tagsText)
+                .textFieldStyle(.plain)
+        }
     }
 
     @ViewBuilder
     private func timeLogSection(_ t: Task) -> some View {
-        Section {
-            let entries = t.timeEntries.sorted { $0.date > $1.date }
-            if entries.isEmpty {
-                Text("No time logged yet.")
-                    .foregroundStyle(.secondary)
-                    .font(.callout)
-            } else {
-                ForEach(entries) { entry in
-                    HStack {
-                        Text(entry.date, format: .dateTime.month(.abbreviated).day())
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                        Chip(label: entry.duration.displayString, color: AppTheme.duration)
-                        if let c = entry.comment {
-                            Text(c)
+        GroupBox {
+            VStack(alignment: .leading, spacing: 4) {
+                let entries = t.timeEntries.sorted { $0.date > $1.date }
+                if entries.isEmpty {
+                    Text("No time logged yet.")
+                        .foregroundStyle(.secondary)
+                        .font(.callout)
+                        .padding(.vertical, 2)
+                } else {
+                    ForEach(entries) { entry in
+                        HStack(spacing: 6) {
+                            Text(entry.date, format: .dateTime.month(.abbreviated).day())
                                 .font(.callout)
                                 .foregroundStyle(.secondary)
-                                .lineLimit(1)
+                            Chip(label: entry.duration.displayString, color: AppTheme.duration)
+                            if let c = entry.comment {
+                                Text(c)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer(minLength: 0)
                         }
-                        Spacer()
-                    }
-                    .swipeActions(edge: .trailing) {
-                        Button(role: .destructive) {
-                            modelContext.delete(entry)
-                        } label: {
-                            Label("Delete", systemImage: "trash")
-                        }
-                    }
-                    .contextMenu {
-                        Button("Delete", role: .destructive) {
-                            modelContext.delete(entry)
+                        .padding(.vertical, 2)
+                        .contextMenu {
+                            Button("Delete", role: .destructive) {
+                                modelContext.delete(entry)
+                            }
                         }
                     }
                 }
+                Button("Add Entry…") { showingLogTime = true }
+                    .font(.callout)
+                    .foregroundStyle(AppTheme.accent)
+                    .buttonStyle(.plain)
+                    .padding(.top, 2)
             }
-            Button("Add Entry…") { showingLogTime = true }
-        } header: {
+        } label: {
             HStack {
                 Text("Time Log")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                Spacer()
                 if let logged = t.loggedDuration {
-                    Spacer()
                     Chip(label: logged.displayString, color: AppTheme.duration)
                 }
             }
         }
     }
+
+    // MARK: - Helpers
 
     private func populateFromTask() {
         guard let t = task else { return }
@@ -229,7 +269,6 @@ struct TaskEditorSheet: View {
         followUpEnabled = t.followUpAt != nil
         followUpDate = t.followUpAt
         tagsText = t.tags.joined(separator: ", ")
-        durationText = t.duration?.displayString ?? ""
     }
 
     private func deleteTask() {
@@ -242,15 +281,6 @@ struct TaskEditorSheet: View {
         let trimmedSummary = summary.trimmingCharacters(in: .whitespaces)
         guard !trimmedSummary.isEmpty else { return }
 
-        var parsedDuration: Duration?
-        if !durationText.trimmingCharacters(in: .whitespaces).isEmpty {
-            guard let d = Duration.parse(durationText) else {
-                durationError = true
-                return
-            }
-            parsedDuration = d
-        }
-
         let tags = tagsText
             .split(separator: ",")
             .map { $0.trimmingCharacters(in: .whitespaces) }
@@ -259,7 +289,6 @@ struct TaskEditorSheet: View {
         if let t = task {
             t.summary = trimmedSummary
             t.notes = notes.isEmpty ? nil : notes
-            t.duration = parsedDuration
             t.scheduledAt = scheduledDate
             t.project = selectedProject
             t.assignee = selectedAssignee
@@ -274,7 +303,6 @@ struct TaskEditorSheet: View {
         } else {
             let newTask = Task(summary: trimmedSummary)
             newTask.notes = notes.isEmpty ? nil : notes
-            newTask.duration = parsedDuration
             newTask.scheduledAt = scheduledDate
             newTask.project = selectedProject
             newTask.assignee = selectedAssignee

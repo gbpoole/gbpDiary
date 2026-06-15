@@ -120,7 +120,7 @@ struct TaskRowView: View {
             if let assignee = task.assignee {
                 Chip(label: assignee.name, color: AppTheme.person)
             }
-            if let dur = task.duration {
+            if let dur = task.loggedDuration {
                 Chip(label: dur.displayString, color: AppTheme.duration)
             }
             ForEach(task.tags, id: \.self) { tag in

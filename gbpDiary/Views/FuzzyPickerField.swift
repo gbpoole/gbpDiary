@@ -320,6 +320,8 @@ extension FuzzyPickerField {
         label: @escaping (Item) -> String,
         chipColor: Color,
         placeholder: String = "Search…",
+        tapArea: Bool = false,
+        emptyLabel: String? = nil,
         createLabel: String? = nil,
         onCreate: (() -> Void)? = nil
     ) {
@@ -328,6 +330,8 @@ extension FuzzyPickerField {
         self.chipColor = chipColor
         self.placeholder = placeholder
         self.maxSelections = 1
+        self.tapArea = tapArea
+        self.emptyLabel = emptyLabel
         self.createLabel = createLabel
         self.onCreate = onCreate
         self._selected = Binding(
