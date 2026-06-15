@@ -123,11 +123,6 @@ struct LogTimeSheet: View {
         GroupBox("Date & Time") {
             DatePicker("", selection: $entryDate, displayedComponents: [.date, .hourAndMinute])
                 .labelsHidden()
-                .onChange(of: entryDate) { _, newDate in
-                    // Auto-update the block selection when time changes,
-                    // but only if the user hasn't explicitly picked one.
-                    selectedFocusBlock = blockMatching(newDate)
-                }
         }
     }
 

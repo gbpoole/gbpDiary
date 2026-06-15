@@ -68,7 +68,7 @@ struct FuzzyPickerField<Item: Identifiable>: View {
                         .foregroundStyle(AppTheme.accent)
                         .font(.callout)
                 } else {
-                    FlowLayout(spacing: 4) {
+                    HStack(alignment: .center, spacing: 4) {
                         ForEach(selected) { item in
                             PickerRemovableChip(label: label(item), color: chipColor) {
                                 selected.removeAll { $0.id == item.id }
