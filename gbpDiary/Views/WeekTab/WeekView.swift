@@ -36,7 +36,7 @@ struct WeekView: View {
 
     private func showBanner(_ msg: BannerMessage) {
         banner = msg
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { banner = nil }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { banner = nil }
     }
 
     private func bannerView(_ msg: BannerMessage) -> some View {
@@ -75,7 +75,7 @@ struct WeekView: View {
                 .padding(.horizontal)
 
             DayPageContent(date: day, dayRecord: record, allTasks: allTasks, showTaskSections: false,
-                           onShowBanner: showBanner)
+                           showActionBar: false, onShowBanner: showBanner)
                 .padding(.bottom, 8)
         }
         .background(isToday ? Color.accentColor.opacity(0.04) : Color.clear)

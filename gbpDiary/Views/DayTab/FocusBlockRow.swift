@@ -86,17 +86,10 @@ struct FocusBlockRow: View {
     }
 
     private var sourceIcon: some View {
-        Group {
-            if block.task != nil {
-                Image(systemName: "checkmark.circle")
-                    .foregroundStyle(AppTheme.started)
-            } else {
-                Image(systemName: "folder")
-                    .foregroundStyle(AppTheme.project)
-            }
-        }
-        .font(.system(size: 14))
-        .frame(width: 18, height: 18)
+        Image(systemName: "scope")
+            .foregroundStyle(AppTheme.tag)
+            .font(.system(size: 14))
+            .frame(width: 18, height: 18)
     }
 
     private var durationChips: some View {

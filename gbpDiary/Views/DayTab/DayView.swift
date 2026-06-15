@@ -16,12 +16,16 @@ struct DayPageContent: View {
     var dayRecord: DayRecord?
     let allTasks: [Task]
     var showTaskSections: Bool = true
+    var showActionBar: Bool = true
     var onShowBanner: (BannerMessage) -> Void = { _ in }
 
     @Environment(\.modelContext) private var modelContext
     @FocusState private var focusedEntryId: UUID?
     @State private var pendingFocusId: UUID?
     @State private var showingAddTask = false
+    @State private var activityMeetingTrigger = false
+    @State private var activityLogTimeTrigger = false
+    @State private var activityFocusBlockTrigger = false
     @State private var editingTask: Task?
     @State private var editingNote: Note?
     @State private var expandedTaskIds: Set<UUID> = []
@@ -99,10 +103,35 @@ struct DayPageContent: View {
         DayTaskFiltering.inboxTasks(allTasks: allTasks)
     }
 
+    /// Platform-agnostic action list. macOS renders this as DayActionBar;
+    /// iOS will render the same list as a FAB (future).
+    private var actionItems: [DayActionItem] {
+        [
+            DayActionItem(id: "focusblock", systemName: "scope",               color: AppTheme.tag,       tooltip: "Add focus block") { activityFocusBlockTrigger = true },
+            DayActionItem(id: "meeting",    systemName: "calendar.badge.plus", color: AppTheme.project,   tooltip: "Add meeting")     { activityMeetingTrigger = true },
+            DayActionItem(id: "logtime",    systemName: "timer",               color: AppTheme.duration,  tooltip: "Log time")        { activityLogTimeTrigger = true },
+            DayActionItem(id: "task",       systemName: "checkmark.square",    color: AppTheme.completed, tooltip: "Add task")        { showingAddTask = true },
+            DayActionItem(id: "note",       systemName: "square.and.pencil",   color: AppTheme.accent,    tooltip: "Add note")        { addNote() },
+        ]
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                ActivitySection(dayRecord: dayRecord, date: date, todayEntries: todayTimeEntries, meetings: dayMeetings, completedTasks: activityCompletedTasks, findOrCreateDayRecord: findOrCreateDayRecord)
+                if showActionBar {
+                    DayActionBar(items: actionItems)
+                }
+                ActivitySection(
+                    dayRecord: dayRecord,
+                    date: date,
+                    todayEntries: todayTimeEntries,
+                    meetings: dayMeetings,
+                    completedTasks: activityCompletedTasks,
+                    findOrCreateDayRecord: findOrCreateDayRecord,
+                    logTimeTrigger: $activityLogTimeTrigger,
+                    focusBlockTrigger: $activityFocusBlockTrigger,
+                    meetingTrigger: $activityMeetingTrigger
+                )
                 newTasksSection
                 completedTasksSection
                 notesSection
@@ -192,14 +221,8 @@ struct DayPageContent: View {
 
     @ViewBuilder
     private var notesSection: some View {
-        DaySectionHeader(title: "Notes", onAdd: addNote)
-        if dayNotes.isEmpty {
-            Text("No notes created on this day.")
-                .foregroundStyle(.tertiary)
-                .font(.callout)
-                .padding(.horizontal)
-                .padding(.vertical, 4)
-        } else {
+        if !dayNotes.isEmpty {
+            DaySectionHeader(title: "Notes")
             notesDropZone(belowIndex: -1)
             ForEach(Array(dayNotes.enumerated()), id: \.element.id) { idx, note in
                 noteRow(note: note, index: idx)
@@ -211,14 +234,8 @@ struct DayPageContent: View {
 
     @ViewBuilder
     private var newTasksSection: some View {
-        DaySectionHeader(title: "New Tasks", onAdd: { showingAddTask = true })
-        if newTasks.isEmpty {
-            Text("No tasks created on this day.")
-                .foregroundStyle(.tertiary)
-                .font(.callout)
-                .padding(.horizontal)
-                .padding(.vertical, 4)
-        } else {
+        if !newTasks.isEmpty {
+            DaySectionHeader(title: "New Tasks")
             ForEach(Array(newTasks.enumerated()), id: \.element.id) { idx, task in
                 taskRow(task: task, index: idx)
             }
@@ -762,7 +779,7 @@ struct DayView: View {
 
     private func showBanner(_ msg: BannerMessage) {
         banner = msg
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { banner = nil }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { banner = nil }
     }
 
     private func bannerView(_ msg: BannerMessage) -> some View {

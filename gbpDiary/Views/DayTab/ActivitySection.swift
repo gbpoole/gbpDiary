@@ -12,6 +12,11 @@ struct ActivitySection: View {
     var completedTasks: [Task] = []
     // Lazily creates the DayRecord for `date` if it does not exist yet.
     var findOrCreateDayRecord: (() -> DayRecord)? = nil
+    /// Trigger bindings wired from DayPageContent's action bar.
+    /// Default to .constant(false) so callers that don't use the action bar still compile.
+    var logTimeTrigger: Binding<Bool> = .constant(false)
+    var focusBlockTrigger: Binding<Bool> = .constant(false)
+    var meetingTrigger: Binding<Bool> = .constant(false)
 
     @State private var showingAddFocusBlock = false
     @State private var showingLogTime = false
@@ -61,29 +66,35 @@ struct ActivitySection: View {
 
         activityHeader
 
-        ForEach(blocks) { block in
-            FocusBlockRow(block: block, date: date, meetings: meetings(for: block))
-        }
-
-        ForEach(standaloneMeetings, id: \.id) { minutes in
-            StandaloneMeetingRow(minutes: minutes, onTap: { selectedMeetingMinutes = minutes })
-        }
-
-        ForEach(completedTasks) { task in
-            CompletedTaskActivityRow(task: task)
-        }
-
-        if !unspecified.isEmpty {
-            unspecifiedSection(unspecified)
-        }
-
         if hasContent {
+            ForEach(blocks) { block in
+                FocusBlockRow(block: block, date: date, meetings: meetings(for: block))
+            }
+
+            ForEach(standaloneMeetings, id: \.id) { minutes in
+                StandaloneMeetingRow(minutes: minutes, onTap: { selectedMeetingMinutes = minutes })
+            }
+
+            ForEach(completedTasks) { task in
+                CompletedTaskActivityRow(task: task)
+            }
+
+            if !unspecified.isEmpty {
+                unspecifiedSection(unspecified)
+            }
+
             totalFooter(
                 blocks: blocks,
                 unspecified: unspecified,
                 meetings: standaloneMeetings,
                 completedTasks: completedTasks
             )
+        } else {
+            Text("No activity logged for this day.")
+                .foregroundStyle(.tertiary)
+                .font(.callout)
+                .padding(.horizontal)
+                .padding(.vertical, 8)
         }
 
         if let record = editorDayRecord {
@@ -94,6 +105,22 @@ struct ActivitySection: View {
         }
 
         Color.clear
+            .onChange(of: logTimeTrigger.wrappedValue) { _, triggered in
+                guard triggered else { return }
+                showingLogTime = true
+                logTimeTrigger.wrappedValue = false
+            }
+            .onChange(of: focusBlockTrigger.wrappedValue) { _, triggered in
+                guard triggered else { return }
+                editorDayRecord = findOrCreateDayRecord?() ?? dayRecord
+                showingAddFocusBlock = true
+                focusBlockTrigger.wrappedValue = false
+            }
+            .onChange(of: meetingTrigger.wrappedValue) { _, triggered in
+                guard triggered else { return }
+                addMeeting()
+                meetingTrigger.wrappedValue = false
+            }
             .sheet(isPresented: $showingLogTime) {
                 LogTimeSheet(
                     presetFocusBlock: blocks.count == 1 ? blocks.first : nil,
@@ -108,44 +135,16 @@ struct ActivitySection: View {
             }
     }
 
-    // MARK: - Custom Activity header
+    // MARK: - Activity header
 
     private var activityHeader: some View {
-        HStack(spacing: 8) {
+        HStack {
             Text("Activity")
                 .font(AppTheme.interfaceFont(size: 12, weight: .semibold))
                 .tracking(0.8)
                 .textCase(.uppercase)
                 .foregroundStyle(AppTheme.mutedText)
             Spacer()
-            Button { addMeeting() } label: {
-                Image(systemName: "calendar.badge.plus")
-                    .font(.caption.bold())
-                    .foregroundStyle(AppTheme.accent)
-            }
-            .buttonStyle(.plain)
-            .help("Add meeting")
-            if !blocks.isEmpty {
-                Button { showingLogTime = true } label: {
-                    Image(systemName: "timer")
-                        .font(.caption.bold())
-                        .foregroundStyle(AppTheme.accent)
-                }
-                .buttonStyle(.plain)
-                .help("Log time")
-            }
-            if canAddBlock {
-                Button {
-                    editorDayRecord = findOrCreateDayRecord?() ?? dayRecord
-                    showingAddFocusBlock = true
-                } label: {
-                    Image(systemName: "scope")
-                        .font(.caption.bold())
-                        .foregroundStyle(AppTheme.accent)
-                }
-                .buttonStyle(.plain)
-                .help("Add focus block")
-            }
         }
         .padding(.horizontal)
         .padding(.top, 16)
