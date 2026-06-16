@@ -185,14 +185,40 @@ struct TaskEditorSheet: View {
     }
 
     private var assigneeSection: some View {
-        GroupBox("Assignee") {
+        var filters: [PickerFilter<Person>] = []
+        if let proj = selectedProject {
+            filters.append(PickerFilter(
+                id: "project:\(proj.id.uuidString)",
+                label: proj.name,
+                chipColor: AppTheme.project,
+                group: "Project"
+            ) { person in
+                proj.devTeam.contains(where: { $0.id == person.id }) ||
+                proj.sciTeam.contains(where: { $0.id == person.id })
+            })
+        }
+        var seen = Set<String>()
+        let instFilters: [PickerFilter<Person>] = people
+            .compactMap(\.institution)
+            .filter { seen.insert($0.id.uuidString).inserted }
+            .sorted { $0.name < $1.name }
+            .map { inst in
+                PickerFilter(id: "inst:\(inst.id.uuidString)", label: inst.name, chipColor: AppTheme.institution, group: "Institution") {
+                    $0.institution?.id == inst.id
+                }
+            }
+        filters += instFilters
+        let defaultId = selectedProject.map { "project:\($0.id.uuidString)" }
+        return GroupBox("Assignee") {
             FuzzyPickerField(
                 allItems: people,
                 selectedItem: $selectedAssignee,
                 label: { $0.name },
                 chipColor: AppTheme.person,
                 tapArea: true,
-                emptyLabel: "None — tap to assign"
+                emptyLabel: "None — tap to assign",
+                filters: filters.isEmpty ? nil : filters,
+                defaultFilterId: defaultId
             )
         }
     }

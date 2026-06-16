@@ -3,11 +3,15 @@ import SwiftUI
 // MARK: - PickerFilter
 
 /// A named predicate used to narrow the items shown inside a FuzzyPickerField popover.
-/// Pass an array via `filters:` to show a row of toggle chips above the item list.
+/// Pass an array via `filters:` to show labeled rows of toggle chips above the item list.
 /// Only one filter can be active at a time; tapping the active chip deactivates it.
+/// Set `chipColor` to distinguish filter types visually (e.g. blue for projects, mauve for institutions).
+/// Set `group` (e.g. "Project", "Institution", "Tag") to group chips into labeled rows.
 struct PickerFilter<Item>: Identifiable {
     let id: String
     let label: String
+    var chipColor: Color? = nil
+    var group: String? = nil
     let test: (Item) -> Bool
 }
 
@@ -41,8 +45,23 @@ struct FuzzyPickerField<Item: Identifiable>: View {
     /// Optional filter chips shown in the popover between the search field and the
     /// item list. At most one filter can be active at a time.
     var filters: [PickerFilter<Item>]? = nil
+    /// ID of the filter that should be active when the popover first opens.
+    var defaultFilterId: String? = nil
+    /// When provided, the caller controls whether the popover is open.
+    /// Useful for opening the picker programmatically from another view.
+    var isPresented: Binding<Bool>? = nil
+    /// Optional view injected at the top of the filter area, above any filter chips.
+    /// Use this to show a context row (e.g. a current project filter with a link to change it).
+    var filterLeadContent: AnyView? = nil
+    /// When true, the tap-area button steals keyboard focus on appear so the user
+    /// can press Return to open the picker without clicking first.
+    var autoFocus: Bool = false
 
     @State private var isPopoverOpen = false
+    @FocusState private var buttonFocused: Bool
+
+    /// Returns the external binding when provided, otherwise the internal @State.
+    private var popoverIsOpen: Binding<Bool> { isPresented ?? $isPopoverOpen }
 
     var body: some View {
         if tapArea {
@@ -67,7 +86,7 @@ struct FuzzyPickerField<Item: Identifiable>: View {
             }
 
             // Compact icon trigger — opens the floating popover.
-            Button { isPopoverOpen = true } label: {
+            Button { popoverIsOpen.wrappedValue = true } label: {
                 Image(systemName: "magnifyingglass")
                     .foregroundStyle(AppTheme.accent)
                     .font(.caption)
@@ -75,7 +94,7 @@ struct FuzzyPickerField<Item: Identifiable>: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .popover(isPresented: $isPopoverOpen, arrowEdge: .bottom) {
+            .popover(isPresented: popoverIsOpen, arrowEdge: .bottom) {
                 popoverContent
             }
         }
@@ -84,7 +103,7 @@ struct FuzzyPickerField<Item: Identifiable>: View {
     // MARK: - Tap-area style (no icon; whole row opens picker)
 
     private var tapAreaBody: some View {
-        Button { isPopoverOpen = true } label: {
+        Button { popoverIsOpen.wrappedValue = true } label: {
             HStack(alignment: .center, spacing: 6) {
                 if selected.isEmpty {
                     Text(emptyLabel ?? placeholder)
@@ -105,8 +124,19 @@ struct FuzzyPickerField<Item: Identifiable>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $isPopoverOpen, arrowEdge: .bottom) {
+        .focusable()
+        .focused($buttonFocused)
+        .onKeyPress(.return, phases: .down) { _ in
+            popoverIsOpen.wrappedValue = true
+            return .handled
+        }
+        .popover(isPresented: popoverIsOpen, arrowEdge: .bottom) {
             popoverContent
+        }
+        .onAppear {
+            if autoFocus {
+                DispatchQueue.main.async { buttonFocused = true }
+            }
         }
     }
 
@@ -125,7 +155,9 @@ struct FuzzyPickerField<Item: Identifiable>: View {
             onCreateItem: onCreateItem,
             autoSelectOnCreate: autoSelectOnCreate,
             filters: filters,
-            dismiss: { isPopoverOpen = false }
+            defaultFilterId: defaultFilterId,
+            filterLeadContent: filterLeadContent,
+            dismiss: { popoverIsOpen.wrappedValue = false }
         )
         .frame(minWidth: 260, maxHeight: 320)
     }
@@ -145,6 +177,8 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
     var onCreateItem: ((String) -> Item?)?
     var autoSelectOnCreate: Bool
     var filters: [PickerFilter<Item>]?
+    var defaultFilterId: String? = nil
+    var filterLeadContent: AnyView? = nil
     var dismiss: () -> Void
 
     @State private var searchText = ""
@@ -253,29 +287,13 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
 
             Divider()
 
-            // Filter chips — only shown when filters are provided.
-            if let filters, !filters.isEmpty {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(filters) { filter in
-                            Button(filter.label) {
-                                activeFilterId = (activeFilterId == filter.id) ? nil : filter.id
-                            }
-                            .buttonStyle(.plain)
-                            .font(.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(
-                                activeFilterId == filter.id
-                                    ? chipColor.opacity(0.2)
-                                    : Color.secondary.opacity(0.1),
-                                in: Capsule()
-                            )
-                            .foregroundStyle(activeFilterId == filter.id ? chipColor : Color.primary)
-                        }
-                    }
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+            // Filter area — lead content (e.g. a project context row) followed by
+            // grouped filter chip rows. Only rendered when something is present.
+            let hasFilterArea = filterLeadContent != nil || !(filters?.isEmpty ?? true)
+            if hasFilterArea {
+                VStack(spacing: 0) {
+                    if let lead = filterLeadContent { lead }
+                    if let filters, !filters.isEmpty { filterSection(filters) }
                 }
                 Divider()
             }
@@ -350,10 +368,68 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
         .onAppear {
             localSelected = selected
             searchFocused = true
+            if let defaultId = defaultFilterId { activeFilterId = defaultId }
         }
         // Keep localSelected in sync if chips are removed from the form while open.
         .onChange(of: selected.count) { _, _ in localSelected = selected }
         .onChange(of: searchText) { _, _ in highlightedIndex = nil }
+    }
+
+    // MARK: - Filter section helpers
+
+    private func filterSection(_ filters: [PickerFilter<Item>]) -> some View {
+        let groups = orderedGroups(from: filters)
+        let hasNamedGroups = groups.contains(where: { $0.name != nil })
+        return VStack(spacing: 0) {
+            ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
+                filterGroupRow(name: hasNamedGroups ? group.name : nil, groupFilters: group.filters)
+            }
+        }
+    }
+
+    private func filterGroupRow(name: String?, groupFilters: [PickerFilter<Item>]) -> some View {
+        HStack(alignment: .center, spacing: 0) {
+            if let name {
+                Text(name)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .frame(width: 76, alignment: .trailing)
+                    .padding(.trailing, 8)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(groupFilters) { filter in
+                        let filterColor = filter.chipColor ?? chipColor
+                        Button(filter.label) {
+                            activeFilterId = (activeFilterId == filter.id) ? nil : filter.id
+                        }
+                        .buttonStyle(.plain)
+                        .font(.caption)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            activeFilterId == filter.id
+                                ? filterColor.opacity(0.2)
+                                : Color.secondary.opacity(0.1),
+                            in: Capsule()
+                        )
+                        .foregroundStyle(activeFilterId == filter.id ? filterColor : Color.primary)
+                    }
+                }
+                .padding(.horizontal, 10)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func orderedGroups(from filters: [PickerFilter<Item>]) -> [(name: String?, filters: [PickerFilter<Item>])] {
+        var seen: [String?: Bool] = [:]
+        var order: [String?] = []
+        for f in filters {
+            if seen[f.group] == nil { seen[f.group] = true; order.append(f.group) }
+        }
+        return order.map { name in (name, filters.filter { $0.group == name }) }
     }
 
     private func selectedItemRow(_ item: Item) -> some View {
@@ -429,7 +505,11 @@ extension FuzzyPickerField {
         emptyLabel: String? = nil,
         createLabel: String? = nil,
         onCreate: (() -> Void)? = nil,
-        filters: [PickerFilter<Item>]? = nil
+        filters: [PickerFilter<Item>]? = nil,
+        defaultFilterId: String? = nil,
+        isPresented: Binding<Bool>? = nil,
+        filterLeadContent: AnyView? = nil,
+        autoFocus: Bool = false
     ) {
         self.allItems = allItems
         self.label = label
@@ -443,6 +523,10 @@ extension FuzzyPickerField {
         self.createLabel = createLabel
         self.onCreate = onCreate
         self.filters = filters
+        self.defaultFilterId = defaultFilterId
+        self.isPresented = isPresented
+        self.filterLeadContent = filterLeadContent
+        self.autoFocus = autoFocus
         self._selected = Binding(
             get: { selectedItem.wrappedValue.map { [$0] } ?? [] },
             set: { selectedItem.wrappedValue = $0.first }

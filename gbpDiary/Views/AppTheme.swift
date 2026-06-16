@@ -35,6 +35,7 @@ enum AppTheme {
 
     static let project = Kanagawa.blue
     static let person = Kanagawa.green
+    static let institution = Kanagawa.mauve
     static let duration = Kanagawa.sapphire
     static let tag = Kanagawa.teal
     static let followUp = Kanagawa.yellow

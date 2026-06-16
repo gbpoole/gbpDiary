@@ -201,16 +201,28 @@ struct MinutesDetailView: View {
     }
 
     private var attendeesSection: some View {
-        let attendeeFilters: [PickerFilter<Person>] = minutes.projects.map { project in
+        let projectFilters: [PickerFilter<Person>] = minutes.projects.map { project in
             PickerFilter(
-                id: project.id.uuidString,
+                id: "project:\(project.id.uuidString)",
                 label: project.name,
-                test: { person in
-                    project.devTeam.contains(where: { $0.id == person.id }) ||
-                    project.sciTeam.contains(where: { $0.id == person.id })
-                }
-            )
+                chipColor: AppTheme.project,
+                group: "Project"
+            ) { person in
+                project.devTeam.contains(where: { $0.id == person.id }) ||
+                project.sciTeam.contains(where: { $0.id == person.id })
+            }
         }
+        var seen = Set<String>()
+        let institutionFilters: [PickerFilter<Person>] = allPeople
+            .compactMap(\.institution)
+            .filter { seen.insert($0.id.uuidString).inserted }
+            .sorted { $0.name < $1.name }
+            .map { inst in
+                PickerFilter(id: "inst:\(inst.id.uuidString)", label: inst.name, chipColor: AppTheme.institution, group: "Institution") {
+                    $0.institution?.id == inst.id
+                }
+            }
+        let allFilters = projectFilters + institutionFilters
         return GroupBox("Attendees") {
             FuzzyPickerField(
                 allItems: allPeople,
@@ -222,7 +234,8 @@ struct MinutesDetailView: View {
                 chipColor: AppTheme.person,
                 tapArea: true,
                 emptyLabel: "None selected — tap to add attendees",
-                filters: attendeeFilters.isEmpty ? nil : attendeeFilters
+                filters: allFilters.isEmpty ? nil : allFilters,
+                defaultFilterId: projectFilters.first?.id
             )
         }
     }
@@ -271,6 +284,39 @@ struct MinutesEditorSheet: View {
     @State private var selectedProjects: [Project] = []
     @State private var selectedAttendees: [Person] = []
 
+    private var attendeesPicker: some View {
+        let projectFilters: [PickerFilter<Person>] = selectedProjects.map { project in
+            PickerFilter(
+                id: "project:\(project.id.uuidString)",
+                label: project.name,
+                chipColor: AppTheme.project,
+                group: "Project"
+            ) { person in
+                project.devTeam.contains(where: { $0.id == person.id }) ||
+                project.sciTeam.contains(where: { $0.id == person.id })
+            }
+        }
+        var seen = Set<String>()
+        let institutionFilters: [PickerFilter<Person>] = allPeople
+            .compactMap(\.institution)
+            .filter { seen.insert($0.id.uuidString).inserted }
+            .sorted { $0.name < $1.name }
+            .map { inst in
+                PickerFilter(id: "inst:\(inst.id.uuidString)", label: inst.name, chipColor: AppTheme.institution, group: "Institution") {
+                    $0.institution?.id == inst.id
+                }
+            }
+        let allFilters = projectFilters + institutionFilters
+        return FuzzyPickerField(
+            allItems: allPeople,
+            selected: $selectedAttendees,
+            label: \.name,
+            chipColor: AppTheme.person,
+            filters: allFilters.isEmpty ? nil : allFilters,
+            defaultFilterId: projectFilters.first?.id
+        )
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -318,12 +364,7 @@ struct MinutesEditorSheet: View {
                 }
 
                 Section("Attendees") {
-                    FuzzyPickerField(
-                        allItems: allPeople,
-                        selected: $selectedAttendees,
-                        label: \.name,
-                        chipColor: AppTheme.person
-                    )
+                    attendeesPicker
                 }
             }
             .navigationTitle(minutes == nil ? "New Meeting" : "Edit Meeting")

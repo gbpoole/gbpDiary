@@ -134,8 +134,9 @@ struct ProjectEditorSheet: View {
         return allPeople
             .compactMap(\.institution)
             .filter { seen.insert($0.id.uuidString).inserted }
+            .sorted { $0.name < $1.name }
             .map { inst in
-                PickerFilter(id: inst.id.uuidString, label: inst.name) {
+                PickerFilter(id: inst.id.uuidString, label: inst.name, chipColor: AppTheme.institution, group: "Institution") {
                     $0.institution?.id == inst.id
                 }
             }
