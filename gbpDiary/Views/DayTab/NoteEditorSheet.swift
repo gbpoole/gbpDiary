@@ -4,23 +4,42 @@ import SwiftData
 struct NoteEditorSheet: View {
     @Bindable var note: Note
     @Environment(\.dismiss) private var dismiss
+
     @Query(sort: \Project.name) private var allProjects: [Project]
+    @Query private var allNotes: [Note]
+    @Query(sort: \Person.name) private var allPeople: [Person]
 
     @State private var selectedProject: Project?
-    @State private var tagsText: String = ""
+    @State private var selectedTags: [TagItem] = []
 
     var body: some View {
         NavigationStack {
-            Form {
-                Picker("Project", selection: $selectedProject) {
-                    Text("None").tag(Optional<Project>.none)
-                    ForEach(allProjects) { p in
-                        Text(p.name).tag(Optional(p))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    GroupBox("Project") {
+                        FuzzyPickerField(
+                            allItems: allProjects,
+                            selectedItem: $selectedProject,
+                            label: { $0.name },
+                            chipColor: AppTheme.project,
+                            tapArea: true,
+                            emptyLabel: "None — tap to link project"
+                        )
+                    }
+                    GroupBox("Tags") {
+                        FuzzyPickerField(
+                            allItems: availableTags,
+                            selected: $selectedTags,
+                            label: { $0.id },
+                            chipColor: AppTheme.tag,
+                            placeholder: "Search tags…",
+                            onCreateItem: { TagItem(id: $0) },
+                            tapArea: true,
+                            emptyLabel: "None — tap to add tags"
+                        )
                     }
                 }
-                Section("Tags") {
-                    TextField("Comma-separated tags", text: $tagsText)
-                }
+                .padding()
             }
             .navigationTitle("Note Details")
             .toolbar {
@@ -30,20 +49,31 @@ struct NoteEditorSheet: View {
         }
         .onAppear {
             selectedProject = note.project
-            tagsText = note.tags.joined(separator: ", ")
+            selectedTags = note.tags.map { TagItem(id: $0) }
         }
         #if os(macOS)
-        .frame(minWidth: 360, minHeight: 240)
+        .frame(minWidth: 380, minHeight: 260)
         #endif
+    }
+
+    private var availableTags: [TagItem] {
+        var seen = Set<String>()
+        var result: [TagItem] = []
+        let all = allNotes.flatMap(\.tags) + allProjects.flatMap(\.tags) + allPeople.flatMap(\.tags)
+        for tag in all.sorted() where seen.insert(tag).inserted {
+            result.append(TagItem(id: tag))
+        }
+        return result
     }
 
     private func save() {
         note.project = selectedProject
-        note.tags = tagsText
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
+        note.tags = selectedTags.map(\.id)
         note.updatedAt = Date()
         dismiss()
     }
+}
+
+private struct TagItem: Identifiable {
+    let id: String
 }

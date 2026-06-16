@@ -13,16 +13,13 @@ struct FocusBlockEditorSheet: View {
     var dayRecord: DayRecord
     var existingBlock: FocusBlock? = nil
 
-    @Query(sort: \Task.summary) private var allTasks: [Task]
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Query(sort: \FocusBlock.sortOrder) private var allFocusBlocks: [FocusBlock]
 
-    // Other blocks for this day (the current block, if editing, is excluded so its slot remains available).
     private var siblingsForDay: [FocusBlock] {
         allFocusBlocks.filter { $0.dayRecord?.id == dayRecord.id && $0.id != existingBlock?.id }
     }
 
-    // Slots that can still be chosen: removes taken slots and enforces all-day ↔ half-day exclusivity.
     private var availableSlots: [DaySlot] {
         let taken = Set(siblingsForDay.map(\.slot))
         let hasAllDay  = taken.contains(.allDay)
@@ -43,43 +40,17 @@ struct FocusBlockEditorSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Source") {
-                    Picker("Type", selection: $source) {
-                        ForEach(FocusSource.allCases, id: \.self) { s in
-                            Text(s.rawValue).tag(s)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    sourceSection
                     if source == .task {
-                        Picker("Task", selection: $selectedTask) {
-                            Text("None").tag(Optional<Task>.none)
-                            ForEach(activeTasks) { t in
-                                Text(t.summary).tag(Optional(t))
-                            }
-                        }
+                        taskSection
                     } else {
-                        Picker("Project", selection: $selectedProject) {
-                            Text("None").tag(Optional<Project>.none)
-                            ForEach(allProjects) { p in
-                                Text(p.name).tag(Optional(p))
-                            }
-                        }
+                        projectSection
                     }
+                    slotSection
                 }
-
-                Section("Schedule") {
-                    Picker("Time Slot", selection: $selectedSlot) {
-                        ForEach(availableSlots, id: \.self) { s in
-                            Text(s.displayName).tag(s)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                }
-
+                .padding()
             }
             .navigationTitle(existingBlock == nil ? "Add Focus Block" : "Edit Focus Block")
             .toolbar {
@@ -110,13 +81,62 @@ struct FocusBlockEditorSheet: View {
         }
         .onAppear { loadExisting() }
         #if os(macOS)
-        .frame(minWidth: 400, minHeight: 280)
+        .frame(minWidth: 420, minHeight: 280)
         #endif
     }
 
-    private var activeTasks: [Task] {
-        allTasks.filter { $0.status == .todo || $0.status == .started }
+    // MARK: - Sections
+
+    private var sourceSection: some View {
+        GroupBox("Source") {
+            HStack(spacing: 6) {
+                ForEach(FocusSource.allCases, id: \.self) { s in
+                    capsule(label: s.rawValue, isActive: source == s) { source = s }
+                }
+            }
+        }
     }
+
+    private var taskSection: some View {
+        GroupBox("Task") {
+            FocusBlockTaskPickerRow(selectedTask: $selectedTask)
+        }
+    }
+
+    private var projectSection: some View {
+        GroupBox("Project") {
+            FuzzyPickerField(
+                allItems: allProjects,
+                selectedItem: $selectedProject,
+                label: { $0.name },
+                chipColor: AppTheme.project,
+                tapArea: true,
+                emptyLabel: "None — tap to select project"
+            )
+        }
+    }
+
+    private var slotSection: some View {
+        GroupBox("Time Slot") {
+            HStack(spacing: 6) {
+                ForEach(availableSlots, id: \.self) { s in
+                    capsule(label: s.displayName, isActive: selectedSlot == s) { selectedSlot = s }
+                }
+            }
+        }
+    }
+
+    private func capsule(label: String, isActive: Bool, action: @escaping () -> Void) -> some View {
+        Button(label, action: action)
+            .buttonStyle(.plain)
+            .font(.caption)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(isActive ? Color.accentColor : Color.secondary.opacity(0.12), in: Capsule())
+            .foregroundStyle(isActive ? Color.white : Color.primary)
+    }
+
+    // MARK: - Helpers
 
     private var canSave: Bool {
         source == .task ? selectedTask != nil : selectedProject != nil
@@ -161,5 +181,26 @@ struct FocusBlockEditorSheet: View {
         }
 
         dismiss()
+    }
+}
+
+// Isolated so @Query task changes don't force a re-render of the whole sheet.
+private struct FocusBlockTaskPickerRow: View {
+    @Query(sort: \Task.summary) private var allTasks: [Task]
+    @Binding var selectedTask: Task?
+
+    private var activeTasks: [Task] {
+        allTasks.filter { $0.status == .todo || $0.status == .started }
+    }
+
+    var body: some View {
+        FuzzyPickerField(
+            allItems: activeTasks,
+            selectedItem: $selectedTask,
+            label: { $0.summary },
+            chipColor: AppTheme.completed,
+            tapArea: true,
+            emptyLabel: "None — tap to select task"
+        )
     }
 }

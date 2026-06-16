@@ -94,12 +94,10 @@ struct FocusBlockRow: View {
 
     private var durationChips: some View {
         HStack(spacing: 4) {
-            Chip(label: block.slot.displayName, color: AppTheme.duration)
+            Chip(label: block.slot.displayName, color: AppTheme.project)
             if netHours > 0 && !blockActivities.isEmpty {
                 let netDur = Duration(value: netHours, unit: .h)
-                Text("\(netDur.displayString) unspecified")
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.mutedText)
+                Chip(label: netDur.displayString, color: AppTheme.duration)
             }
         }
     }

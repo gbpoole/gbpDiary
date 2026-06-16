@@ -31,20 +31,7 @@ struct DayNoteRow: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            if note.project != nil || !note.tags.isEmpty {
-                HStack(spacing: 4) {
-                    if let project = note.project {
-                        Chip(label: project.name, color: AppTheme.project)
-                    }
-                    ForEach(note.tags, id: \.self) { tag in
-                        Chip(label: tag, color: AppTheme.tag)
-                    }
-                }
-                .padding(.horizontal, 12)
-                .padding(.top, 4)
-            }
-
+        VStack(alignment: .leading, spacing: 0) {
             blocksView
 
             // Non-image attachments (PDF, text, other) stay in the strip
@@ -55,64 +42,7 @@ struct DayNoteRow: View {
                 nonImageAttachmentStrip(nonImageAtts)
             }
 
-            HStack(spacing: 4) {
-                Spacer(minLength: 0)
-                Button {
-                    onHeaderButtonTap?()
-                    addTextBlock()
-                } label: {
-                    Image(systemName: "text.badge.plus")
-                        .foregroundStyle(AppTheme.accent)
-                        .font(.caption)
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("Add text block")
-                Button {
-                    onHeaderButtonTap?()
-                    showingFilePicker = true
-                } label: {
-                    Image(systemName: "paperclip")
-                        .foregroundStyle(AppTheme.accent)
-                        .font(.caption)
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                #if os(macOS)
-                Button {
-                    onHeaderButtonTap?()
-                    pasteImageFromClipboard()
-                } label: {
-                    Image(systemName: "clipboard")
-                        .foregroundStyle(AppTheme.accent)
-                        .font(.caption)
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                Button {
-                    onHeaderButtonTap?()
-                    exportAsPDF()
-                } label: {
-                    Image(systemName: "square.and.arrow.down")
-                        .foregroundStyle(AppTheme.accent)
-                        .font(.caption)
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                #endif
-                if let onEdit {
-                    InlineRowEditButton(action: {
-                        onHeaderButtonTap?()
-                        onEdit()
-                    })
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 4)
+            metadataFooter
         }
         .padding(.horizontal)
         .contextMenu {
@@ -186,24 +116,6 @@ struct DayNoteRow: View {
                         }
                     }
             }
-            // Trailing zone: standalone placement below all groups. Uses Rectangle+contentShape
-            // so macOS registers it as a hit-testable drop target (Color.clear is not).
-            Rectangle()
-                .fill(Color.clear)
-                .frame(maxWidth: .infinity, minHeight: 8)
-                .contentShape(Rectangle())
-                .dropDestination(for: String.self) { items, _ in
-                    guard let s = items.first else { return false }
-                    reorderBlock(draggedIdString: s, belowIndex: blocks.count - 1)
-                    return true
-                } isTargeted: { targeted in
-                    blocksDropTargetIndex = targeted ? blocks.count : nil
-                }
-                .overlay(alignment: .top) {
-                    if blocksDropTargetIndex == blocks.count {
-                        Color.accentColor.frame(height: 2)
-                    }
-                }
         }
     }
 
@@ -730,7 +642,85 @@ struct DayNoteRow: View {
             }
         }
         .padding(.horizontal, 12)
-        .padding(.bottom, 4)
+    }
+
+    // MARK: - Metadata footer
+
+    @ViewBuilder
+    private var metadataChipsOrPlaceholder: some View {
+        let hasMetadata = note.project != nil || !note.tags.isEmpty
+        if hasMetadata {
+            HStack(spacing: 4) {
+                if let project = note.project {
+                    Chip(label: project.name, color: AppTheme.project)
+                }
+                ForEach(note.tags, id: \.self) { tag in
+                    Chip(label: tag, color: AppTheme.tag)
+                }
+            }
+        } else if onEdit != nil {
+            Text("No project or tags — tap to add")
+                .font(.caption)
+                .foregroundStyle(.quaternary)
+        }
+    }
+
+    private var metadataFooter: some View {
+        let blockCount = note.blocks.count
+        return HStack(spacing: 4) {
+            metadataChipsOrPlaceholder
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    onHeaderButtonTap?()
+                    onEdit?()
+                }
+            iconButton("text.badge.plus", tip: "Add text block") {
+                onHeaderButtonTap?()
+                addTextBlock()
+            }
+            iconButton("paperclip", tip: "Attach file") {
+                onHeaderButtonTap?()
+                showingFilePicker = true
+            }
+            #if os(macOS)
+            iconButton("clipboard", tip: "Paste image from clipboard") {
+                onHeaderButtonTap?()
+                pasteImageFromClipboard()
+            }
+            iconButton("square.and.arrow.down", tip: "Export as PDF") {
+                onHeaderButtonTap?()
+                exportAsPDF()
+            }
+            #endif
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 5)
+        .background(Color.secondary.opacity(0.08))
+        .dropDestination(for: String.self) { items, _ in
+            guard let s = items.first else { return false }
+            reorderBlock(draggedIdString: s, belowIndex: blockCount - 1)
+            return true
+        } isTargeted: { targeted in
+            blocksDropTargetIndex = targeted ? blockCount : nil
+        }
+        .overlay(alignment: .top) {
+            if blocksDropTargetIndex == blockCount {
+                Color.accentColor.frame(height: 2)
+            }
+        }
+    }
+
+    private func iconButton(_ systemName: String, tip: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .foregroundStyle(AppTheme.accent)
+                .font(.caption)
+                .frame(width: 24, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(tip)
     }
 }
 

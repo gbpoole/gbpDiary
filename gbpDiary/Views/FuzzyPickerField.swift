@@ -14,6 +14,9 @@ struct FuzzyPickerField<Item: Identifiable>: View {
     var maxSelections: Int = Int.max
     var createLabel: String? = nil
     var onCreate: (() -> Void)? = nil
+    /// When set, a "Add 'X'" row appears in the popover while the user is typing.
+    /// The closure receives the trimmed search text and returns the new item to select.
+    var onCreateItem: ((String) -> Item?)? = nil
     /// When true the whole row is the tap target and no icon is shown.
     /// `emptyLabel` is displayed in the accent color when nothing is selected.
     var tapArea: Bool = false
@@ -78,7 +81,7 @@ struct FuzzyPickerField<Item: Identifiable>: View {
                 }
                 Spacer(minLength: 0)
             }
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 22)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -99,6 +102,7 @@ struct FuzzyPickerField<Item: Identifiable>: View {
             maxSelections: maxSelections,
             createLabel: createLabel,
             onCreate: onCreate,
+            onCreateItem: onCreateItem,
             dismiss: { isPopoverOpen = false }
         )
         .frame(minWidth: 260, maxHeight: 320)
@@ -116,6 +120,7 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
     var maxSelections: Int
     var createLabel: String?
     var onCreate: (() -> Void)?
+    var onCreateItem: ((String) -> Item?)?
     var dismiss: () -> Void
 
     @State private var searchText = ""
@@ -184,6 +189,16 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
                     .onKeyPress(.return, phases: .down) { _ in
                         if let idx = highlightedIndex, idx < filteredItems.count {
                             toggle(filteredItems[idx])
+                        } else if let onCreateItem {
+                            let trimmed = searchText.trimmingCharacters(in: .whitespaces)
+                            if !trimmed.isEmpty, !localSelected.contains(where: { label($0) == trimmed }),
+                               let newItem = onCreateItem(trimmed),
+                               !localSelected.contains(where: { $0.id == newItem.id }) {
+                                localSelected.append(newItem)
+                                selected = localSelected
+                                searchText = ""
+                                highlightedIndex = nil
+                            }
                         }
                         return .handled
                     }
@@ -233,6 +248,21 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
                             itemRow(item, highlighted: highlightedIndex == idx)
                             if idx < filteredItems.count - 1 {
                                 Divider().padding(.leading, 10)
+                            }
+                        }
+                    }
+                    if let onCreateItem {
+                        let trimmed = searchText.trimmingCharacters(in: .whitespaces)
+                        if !trimmed.isEmpty, !localSelected.contains(where: { label($0) == trimmed }) {
+                            if !filteredItems.isEmpty { Divider().padding(.leading, 10) }
+                            createRow(label: "Add \"\(trimmed)\"") {
+                                if let newItem = onCreateItem(trimmed),
+                                   !localSelected.contains(where: { $0.id == newItem.id }) {
+                                    localSelected.append(newItem)
+                                    selected = localSelected
+                                }
+                                searchText = ""
+                                highlightedIndex = nil
                             }
                         }
                     }
