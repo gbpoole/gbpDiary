@@ -151,9 +151,15 @@ struct NoteEditingArea: View {
         if note.blocks.contains(where: { $0.id == focusId && $0.kind == .text }) {
             let blockId = focusId
             deleteMonitor.action = {
-                guard note.blocks.first(where: { $0.id == blockId })?
-                    .textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
-                else { return false }
+                // Check live NSTextView content; backing store lags by up to 2s (debouncer)
+                let isEmpty: Bool
+                if let tv = NSApp.keyWindow?.firstResponder as? NSTextView {
+                    isEmpty = tv.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                } else {
+                    isEmpty = note.blocks.first(where: { $0.id == blockId })?
+                        .textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
+                }
+                guard isEmpty else { return false }
                 deleteTextBlock(blockId: blockId)
                 return true
             }

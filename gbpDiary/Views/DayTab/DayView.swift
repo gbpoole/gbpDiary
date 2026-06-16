@@ -575,9 +575,15 @@ struct DayPageContent: View {
            note.blocks[idx].kind == .text {
             let blockId = note.blocks[idx].id
             deleteMonitor.action = {
-                guard note.blocks.first(where: { $0.id == blockId })?
-                    .textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
-                else { return false }
+                // Check live NSTextView content; backing store lags by up to 2s (debouncer)
+                let isEmpty: Bool
+                if let tv = NSApp.keyWindow?.firstResponder as? NSTextView {
+                    isEmpty = tv.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                } else {
+                    isEmpty = note.blocks.first(where: { $0.id == blockId })?
+                        .textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
+                }
+                guard isEmpty else { return false }
                 makeDeleteTextBlockClosure(note: note, blockId: blockId)()
                 return true
             }
@@ -594,22 +600,17 @@ struct DayPageContent: View {
             let prevBlock = idx > 0 ? blocks[idx - 1] : nil
             let nextBlock = idx < blocks.count - 1 ? blocks[idx + 1] : nil
             blocks.remove(at: idx)
+            let wasLastBlock = blocks.isEmpty
+            if wasLastBlock { blocks = [.text("")] }
             note.blocks = blocks
             note.updatedAt = Date()
             selectedBlockId = nil
-            if blocks.isEmpty {
-                if let ni = dayNotes.firstIndex(where: { $0.id == note.id }), ni > 0 {
-                    let prevNote = dayNotes[ni - 1]
-                    if let last = prevNote.blocks.last {
-                        if last.kind == .text { pendingFocusId = last.id }
-                        else { selectedBlockId = last.id }
-                    }
-                }
-                modelContext.delete(note)
-            } else if let prev = prevBlock {
+            // When the last text block is removed keep the note alive with an empty sentinel
+            // block — consistent with NoteEditingArea. The note can be deleted via context menu.
+            if !wasLastBlock, let prev = prevBlock {
                 if prev.kind == .text { pendingFocusId = prev.id }
                 else { selectedBlockId = prev.id }
-            } else if let next = nextBlock {
+            } else if !wasLastBlock, let next = nextBlock {
                 if next.kind == .text { pendingFocusId = next.id }
                 else { selectedBlockId = next.id }
             }
