@@ -6,30 +6,32 @@ struct TagEntry: Identifiable {
     var id: String { tag }
     let projects: [Project]
     let people: [Person]
+    let notes: [Note]
 }
 
 struct TagsView: View {
     @Query(sort: \Project.name) private var projects: [Project]
     @Query(sort: \Person.name) private var people: [Person]
+    @Query private var notes: [Note]
 
     @State private var selectedEntry: TagEntry?
 
     private var tagEntries: [TagEntry] {
         var tagProjects: [String: [Project]] = [:]
         var tagPeople: [String: [Person]] = [:]
+        var tagNotes: [String: [Note]] = [:]
         for project in projects {
-            for tag in project.tags {
-                tagProjects[tag, default: []].append(project)
-            }
+            for tag in project.tags { tagProjects[tag, default: []].append(project) }
         }
         for person in people {
-            for tag in person.tags {
-                tagPeople[tag, default: []].append(person)
-            }
+            for tag in person.tags { tagPeople[tag, default: []].append(person) }
         }
-        let allTags = Set(tagProjects.keys).union(tagPeople.keys).sorted()
+        for note in notes {
+            for tag in note.tags { tagNotes[tag, default: []].append(note) }
+        }
+        let allTags = Set(tagProjects.keys).union(tagPeople.keys).union(tagNotes.keys).sorted()
         return allTags.map {
-            TagEntry(tag: $0, projects: tagProjects[$0] ?? [], people: tagPeople[$0] ?? [])
+            TagEntry(tag: $0, projects: tagProjects[$0] ?? [], people: tagPeople[$0] ?? [], notes: tagNotes[$0] ?? [])
         }
     }
 
@@ -58,6 +60,11 @@ struct TagsView: View {
                     .foregroundStyle(.secondary)
             }
             .width(70)
+            TableColumn("Notes") { entry in
+                Text("\(entry.notes.count)")
+                    .foregroundStyle(.secondary)
+            }
+            .width(70)
         }
     }
     #else
@@ -66,7 +73,7 @@ struct TagsView: View {
             HStack {
                 Text(entry.tag)
                 Spacer()
-                Text("\(entry.projects.count + entry.people.count)")
+                Text("\(entry.projects.count + entry.people.count + entry.notes.count)")
                     .foregroundStyle(.secondary)
                     .font(.caption)
             }
@@ -102,7 +109,17 @@ struct TagDetailSheet: View {
                             }
                         }
                     }
-                    if entry.projects.isEmpty && entry.people.isEmpty {
+                    if !entry.notes.isEmpty {
+                        GroupBox("Notes (\(entry.notes.count))") {
+                            FlowLayout(spacing: 6) {
+                                ForEach(entry.notes) { note in
+                                    let snippet = noteSnippet(note)
+                                    Chip(label: snippet, color: AppTheme.tag)
+                                }
+                            }
+                        }
+                    }
+                    if entry.projects.isEmpty && entry.people.isEmpty && entry.notes.isEmpty {
                         Text("Nothing uses this tag.").foregroundStyle(.secondary)
                     }
                 }
@@ -118,5 +135,19 @@ struct TagDetailSheet: View {
         #if os(macOS)
         .frame(minWidth: 380, minHeight: 300)
         #endif
+    }
+
+    private func noteSnippet(_ note: Note) -> String {
+        if let date = note.dayRecord?.date {
+            return date.formatted(.dateTime.month(.abbreviated).day().year())
+        }
+        for block in note.blocks where block.kind == .text {
+            let line = block.textContent
+                .split(separator: "\n", omittingEmptySubsequences: true)
+                .first
+                .map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""
+            if !line.isEmpty { return String(line.prefix(40)) }
+        }
+        return "Note"
     }
 }

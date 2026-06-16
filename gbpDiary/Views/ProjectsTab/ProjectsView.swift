@@ -129,6 +129,18 @@ struct ProjectEditorSheet: View {
         return true
     }
 
+    private var institutionFilters: [PickerFilter<Person>] {
+        var seen = Set<String>()
+        return allPeople
+            .compactMap(\.institution)
+            .filter { seen.insert($0.id.uuidString).inserted }
+            .map { inst in
+                PickerFilter(id: inst.id.uuidString, label: inst.name) {
+                    $0.institution?.id == inst.id
+                }
+            }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -157,7 +169,8 @@ struct ProjectEditorSheet: View {
                             }
                         ),
                         label: \.name,
-                        chipColor: AppTheme.person
+                        chipColor: AppTheme.person,
+                        filters: institutionFilters
                     )
                     if !selectedDevPeople.isEmpty {
                         Picker("Dev Lead", selection: $devLeadId) {
@@ -181,7 +194,8 @@ struct ProjectEditorSheet: View {
                             }
                         ),
                         label: \.name,
-                        chipColor: AppTheme.person
+                        chipColor: AppTheme.person,
+                        filters: institutionFilters
                     )
                     if !selectedSciPeople.isEmpty {
                         Picker("Sci Lead", selection: $sciLeadId) {

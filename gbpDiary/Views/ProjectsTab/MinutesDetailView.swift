@@ -201,7 +201,17 @@ struct MinutesDetailView: View {
     }
 
     private var attendeesSection: some View {
-        GroupBox("Attendees") {
+        let attendeeFilters: [PickerFilter<Person>] = minutes.projects.map { project in
+            PickerFilter(
+                id: project.id.uuidString,
+                label: project.name,
+                test: { person in
+                    project.devTeam.contains(where: { $0.id == person.id }) ||
+                    project.sciTeam.contains(where: { $0.id == person.id })
+                }
+            )
+        }
+        return GroupBox("Attendees") {
             FuzzyPickerField(
                 allItems: allPeople,
                 selected: Binding(
@@ -211,7 +221,8 @@ struct MinutesDetailView: View {
                 label: \.name,
                 chipColor: AppTheme.person,
                 tapArea: true,
-                emptyLabel: "None selected — tap to add attendees"
+                emptyLabel: "None selected — tap to add attendees",
+                filters: attendeeFilters.isEmpty ? nil : attendeeFilters
             )
         }
     }

@@ -52,7 +52,7 @@ struct NoteEditorSheet: View {
             selectedTags = note.tags.map { TagItem(id: $0) }
         }
         #if os(macOS)
-        .frame(minWidth: 380, minHeight: 260)
+        .frame(minWidth: 380, minHeight: 280)
         #endif
     }
 

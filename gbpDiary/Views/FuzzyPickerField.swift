@@ -1,5 +1,18 @@
 import SwiftUI
 
+// MARK: - PickerFilter
+
+/// A named predicate used to narrow the items shown inside a FuzzyPickerField popover.
+/// Pass an array via `filters:` to show a row of toggle chips above the item list.
+/// Only one filter can be active at a time; tapping the active chip deactivates it.
+struct PickerFilter<Item>: Identifiable {
+    let id: String
+    let label: String
+    let test: (Item) -> Bool
+}
+
+// MARK: - FuzzyPickerField
+
 /// A reusable search-filter selector with chips for selected items.
 ///
 /// The form row shows chips + a fixed-height trigger button. Tapping it opens a
@@ -17,10 +30,17 @@ struct FuzzyPickerField<Item: Identifiable>: View {
     /// When set, a "Add 'X'" row appears in the popover while the user is typing.
     /// The closure receives the trimmed search text and returns the new item to select.
     var onCreateItem: ((String) -> Item?)? = nil
+    /// Controls whether a newly created item (via `onCreateItem`) is automatically
+    /// added to the selection. Default `true`. Set to `false` when the creation is
+    /// a side-effect (e.g. inserting a SwiftData entity) but selection is not desired.
+    var autoSelectOnCreate: Bool = true
     /// When true the whole row is the tap target and no icon is shown.
     /// `emptyLabel` is displayed in the accent color when nothing is selected.
     var tapArea: Bool = false
     var emptyLabel: String? = nil
+    /// Optional filter chips shown in the popover between the search field and the
+    /// item list. At most one filter can be active at a time.
+    var filters: [PickerFilter<Item>]? = nil
 
     @State private var isPopoverOpen = false
 
@@ -55,7 +75,7 @@ struct FuzzyPickerField<Item: Identifiable>: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .popover(isPresented: $isPopoverOpen, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+            .popover(isPresented: $isPopoverOpen, arrowEdge: .bottom) {
                 popoverContent
             }
         }
@@ -85,7 +105,7 @@ struct FuzzyPickerField<Item: Identifiable>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .popover(isPresented: $isPopoverOpen, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+        .popover(isPresented: $isPopoverOpen, arrowEdge: .bottom) {
             popoverContent
         }
     }
@@ -103,6 +123,8 @@ struct FuzzyPickerField<Item: Identifiable>: View {
             createLabel: createLabel,
             onCreate: onCreate,
             onCreateItem: onCreateItem,
+            autoSelectOnCreate: autoSelectOnCreate,
+            filters: filters,
             dismiss: { isPopoverOpen = false }
         )
         .frame(minWidth: 260, maxHeight: 320)
@@ -121,20 +143,27 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
     var createLabel: String?
     var onCreate: (() -> Void)?
     var onCreateItem: ((String) -> Item?)?
+    var autoSelectOnCreate: Bool
+    var filters: [PickerFilter<Item>]?
     var dismiss: () -> Void
 
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
     @State private var highlightedIndex: Int? = nil
+    @State private var activeFilterId: String? = nil
     // Local @State mirror of selected so the popover's own view graph
     // re-renders reliably on every mutation, independent of binding propagation.
     @State private var localSelected: [Item] = []
 
     private var filteredItems: [Item] {
-        let unselected = allItems.filter { item in !localSelected.contains(where: { $0.id == item.id }) }
-        guard !searchText.isEmpty else { return unselected }
+        var items = allItems.filter { item in !localSelected.contains(where: { $0.id == item.id }) }
+        if let activeFilterId,
+           let f = filters?.first(where: { $0.id == activeFilterId }) {
+            items = items.filter { f.test($0) }
+        }
+        guard !searchText.isEmpty else { return items }
         let q = searchText.lowercased()
-        return unselected.filter { label($0).lowercased().contains(q) }
+        return items.filter { label($0).lowercased().contains(q) }
     }
 
     private func isSelected(_ item: Item) -> Bool {
@@ -169,6 +198,19 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
         }
     }
 
+    private func commitCreate(text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty,
+              !localSelected.contains(where: { label($0) == trimmed }),
+              let newItem = onCreateItem?(trimmed) else { return }
+        if autoSelectOnCreate, !localSelected.contains(where: { $0.id == newItem.id }) {
+            localSelected.append(newItem)
+            selected = localSelected
+        }
+        searchText = ""
+        highlightedIndex = nil
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Search field
@@ -189,16 +231,8 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
                     .onKeyPress(.return, phases: .down) { _ in
                         if let idx = highlightedIndex, idx < filteredItems.count {
                             toggle(filteredItems[idx])
-                        } else if let onCreateItem {
-                            let trimmed = searchText.trimmingCharacters(in: .whitespaces)
-                            if !trimmed.isEmpty, !localSelected.contains(where: { label($0) == trimmed }),
-                               let newItem = onCreateItem(trimmed),
-                               !localSelected.contains(where: { $0.id == newItem.id }) {
-                                localSelected.append(newItem)
-                                selected = localSelected
-                                searchText = ""
-                                highlightedIndex = nil
-                            }
+                        } else if onCreateItem != nil {
+                            commitCreate(text: searchText)
                         }
                         return .handled
                     }
@@ -219,6 +253,33 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
 
             Divider()
 
+            // Filter chips — only shown when filters are provided.
+            if let filters, !filters.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(filters) { filter in
+                            Button(filter.label) {
+                                activeFilterId = (activeFilterId == filter.id) ? nil : filter.id
+                            }
+                            .buttonStyle(.plain)
+                            .font(.caption)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(
+                                activeFilterId == filter.id
+                                    ? chipColor.opacity(0.2)
+                                    : Color.secondary.opacity(0.1),
+                                in: Capsule()
+                            )
+                            .foregroundStyle(activeFilterId == filter.id ? chipColor : Color.primary)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                }
+                Divider()
+            }
+
             // Selected items (multi-select only) — pinned above the scrollable list,
             // scrollable so a large selection doesn't crowd out the item list.
             // Cursor navigation skips this section entirely.
@@ -234,45 +295,57 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
                 Divider()
             }
 
-            // Filterable list — cursor navigation (highlightedIndex) applies here only.
-            ScrollView {
-                VStack(spacing: 0) {
-                    if filteredItems.isEmpty && !searchText.isEmpty {
-                        Text("No results matching \"\(searchText)\"")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .padding(.vertical, 10)
-                            .frame(maxWidth: .infinity)
-                    } else {
-                        ForEach(Array(filteredItems.enumerated()), id: \.element.id) { idx, item in
-                            itemRow(item, highlighted: highlightedIndex == idx)
-                            if idx < filteredItems.count - 1 {
-                                Divider().padding(.leading, 10)
-                            }
-                        }
-                    }
-                    if let onCreateItem {
-                        let trimmed = searchText.trimmingCharacters(in: .whitespaces)
-                        if !trimmed.isEmpty, !localSelected.contains(where: { label($0) == trimmed }) {
-                            if !filteredItems.isEmpty { Divider().padding(.leading, 10) }
-                            createRow(label: "Add \"\(trimmed)\"") {
-                                if let newItem = onCreateItem(trimmed),
-                                   !localSelected.contains(where: { $0.id == newItem.id }) {
-                                    localSelected.append(newItem)
-                                    selected = localSelected
+            // Filterable list — only rendered when there is something to show so that
+            // the flexible ScrollView doesn't consume space when empty.
+            let trimmedSearch = searchText.trimmingCharacters(in: .whitespaces)
+            let hasListContent = !filteredItems.isEmpty
+                || !searchText.isEmpty
+                || (createLabel != nil && onCreate != nil)
+            if hasListContent {
+                ScrollView {
+                    VStack(spacing: 0) {
+                        // Suppress "no results" when the create row will appear — it's self-explanatory.
+                        let createRowWillShow = onCreateItem != nil
+                            && !trimmedSearch.isEmpty
+                            && !localSelected.contains(where: { label($0) == trimmedSearch })
+                        if filteredItems.isEmpty && !searchText.isEmpty && !createRowWillShow {
+                            Text("No results matching \"\(searchText)\"")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.vertical, 10)
+                                .frame(maxWidth: .infinity)
+                        } else {
+                            ForEach(Array(filteredItems.enumerated()), id: \.element.id) { idx, item in
+                                itemRow(item, highlighted: highlightedIndex == idx)
+                                if idx < filteredItems.count - 1 {
+                                    Divider().padding(.leading, 10)
                                 }
-                                searchText = ""
-                                highlightedIndex = nil
                             }
                         }
-                    }
-                    if let createLabel, let onCreate {
-                        if !filteredItems.isEmpty || searchText.isEmpty { Divider() }
-                        createRow(label: createLabel, action: onCreate)
+                        if let onCreateItem {
+                            if !trimmedSearch.isEmpty, !localSelected.contains(where: { label($0) == trimmedSearch }) {
+                                if !filteredItems.isEmpty { Divider().padding(.leading, 10) }
+                                createRow(label: "Add \"\(trimmedSearch)\"") {
+                                    if let newItem = onCreateItem(trimmedSearch) {
+                                        if autoSelectOnCreate,
+                                           !localSelected.contains(where: { $0.id == newItem.id }) {
+                                            localSelected.append(newItem)
+                                            selected = localSelected
+                                        }
+                                    }
+                                    searchText = ""
+                                    highlightedIndex = nil
+                                }
+                            }
+                        }
+                        if let createLabel, let onCreate {
+                            if !filteredItems.isEmpty || searchText.isEmpty { Divider() }
+                            createRow(label: createLabel, action: onCreate)
+                        }
                     }
                 }
+                .frame(maxHeight: 220)
             }
-            .frame(maxHeight: 220)
         }
         .onAppear {
             localSelected = selected
@@ -350,20 +423,26 @@ extension FuzzyPickerField {
         label: @escaping (Item) -> String,
         chipColor: Color,
         placeholder: String = "Search…",
+        onCreateItem: ((String) -> Item?)? = nil,
+        autoSelectOnCreate: Bool = true,
         tapArea: Bool = false,
         emptyLabel: String? = nil,
         createLabel: String? = nil,
-        onCreate: (() -> Void)? = nil
+        onCreate: (() -> Void)? = nil,
+        filters: [PickerFilter<Item>]? = nil
     ) {
         self.allItems = allItems
         self.label = label
         self.chipColor = chipColor
         self.placeholder = placeholder
         self.maxSelections = 1
+        self.onCreateItem = onCreateItem
+        self.autoSelectOnCreate = autoSelectOnCreate
         self.tapArea = tapArea
         self.emptyLabel = emptyLabel
         self.createLabel = createLabel
         self.onCreate = onCreate
+        self.filters = filters
         self._selected = Binding(
             get: { selectedItem.wrappedValue.map { [$0] } ?? [] },
             set: { selectedItem.wrappedValue = $0.first }
