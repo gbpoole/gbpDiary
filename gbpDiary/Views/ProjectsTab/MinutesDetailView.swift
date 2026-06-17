@@ -4,6 +4,9 @@ import SwiftData
 struct MinutesDetailView: View {
     @Bindable var minutes: Minutes
     var asSheet: Bool = false
+    /// When true the sheet was opened for a brand-new meeting: Cancel deletes it,
+    /// Escape deletes it, and the confirm button is labelled "Add" not "Done".
+    var isNew: Bool = false
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Project.name) private var allProjects: [Project]
@@ -14,6 +17,7 @@ struct MinutesDetailView: View {
     @State private var durationError = false
     @State private var showingDeleteConfirm = false
     @State private var isDeleted = false
+    @State private var isConfirmed = false
 
     private struct DurationPreset: Identifiable {
         let id: String
@@ -50,24 +54,35 @@ struct MinutesDetailView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 summarySection
-                dateTimeSection
-                durationSection
                 projectsSection
                 attendeesSection
+                durationSection
+                timeSection
                 notesSection
             }
             .padding()
         }
-        .navigationTitle("Edit Meeting")
+        .navigationTitle(isNew ? "New Meeting" : "Edit Meeting")
         .toolbar {
             if asSheet {
-                ToolbarItem(placement: .destructiveAction) {
-                    Button("Delete") { showingDeleteConfirm = true }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.red)
+                if isNew {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Cancel") { performDelete(); dismiss() }
+                            .keyboardShortcut(.cancelAction)
+                    }
+                } else {
+                    ToolbarItem(placement: .destructiveAction) {
+                        Button("Delete") { showingDeleteConfirm = true }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                    }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button(isNew ? "Add" : "Done") {
+                        isConfirmed = true
+                        dismiss()
+                    }
+                    .keyboardShortcut(.defaultAction)
                 }
             }
         }
@@ -87,8 +102,12 @@ struct MinutesDetailView: View {
         }
         .onDisappear {
             summaryDebouncer.cancel()
-            guard !isDeleted else { return }
-            minutes.summary = summaryDraft.isEmpty ? nil : summaryDraft
+            if isNew && !isConfirmed && !isDeleted {
+                // Escaped or dismissed without confirming — remove the orphan record.
+                performDelete()
+            } else if !isDeleted {
+                minutes.summary = summaryDraft.isEmpty ? nil : summaryDraft
+            }
         }
     }
 
@@ -101,7 +120,8 @@ struct MinutesDetailView: View {
         minutes.updatedAt = Date()
     }
 
-    private func deleteMeeting() {
+    private func performDelete() {
+        guard !isDeleted else { return }
         isDeleted = true
         summaryDebouncer.cancel()
         // Explicitly detach and delete the note before deleting minutes so that
@@ -117,12 +137,16 @@ struct MinutesDetailView: View {
             }
         }
         modelContext.delete(minutes)
+    }
+
+    private func deleteMeeting() {
+        performDelete()
         dismiss()
     }
 
-    private var dateTimeSection: some View {
-        GroupBox("When") {
-            DatePicker("", selection: $minutes.meetingAt)
+    private var timeSection: some View {
+        GroupBox("Time") {
+            DatePicker("", selection: $minutes.meetingAt, displayedComponents: [.hourAndMinute])
                 .labelsHidden()
         }
     }
@@ -273,11 +297,14 @@ struct MinutesEditorSheet: View {
 
     let minutes: Minutes?
     let project: Project?
+    /// Date whose calendar day is used when creating a new meeting.
+    /// Only the day portion is used; the time is set to the nearest quarter-hour.
+    var presetDate: Date = Date()
 
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Query(sort: \Person.name) private var allPeople: [Person]
 
-    @State private var meetingAt: Date = Self.nearestQuarterHour(from: Date())
+    @State private var meetingAt: Date = Date()
     @State private var summary = ""
     @State private var durationText = ""
     @State private var durationError = false
@@ -320,7 +347,6 @@ struct MinutesEditorSheet: View {
     var body: some View {
         NavigationStack {
             Form {
-                DatePicker("Meeting date & time", selection: $meetingAt)
                 TextField("One-line summary", text: $summary)
 
                 Section("Duration") {
@@ -366,12 +392,21 @@ struct MinutesEditorSheet: View {
                 Section("Attendees") {
                     attendeesPicker
                 }
+
+                Section("Date & Time") {
+                    DatePicker("", selection: $meetingAt)
+                        .labelsHidden()
+                }
             }
             .navigationTitle(minutes == nil ? "New Meeting" : "Edit Meeting")
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                        .keyboardShortcut(.cancelAction)
+                }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(minutes == nil ? "Add" : "Save") { save() }
+                        .keyboardShortcut(.defaultAction)
                 }
             }
         }
@@ -382,8 +417,9 @@ struct MinutesEditorSheet: View {
                 durationText = m.duration?.displayString ?? ""
                 selectedProjects = m.projects
                 selectedAttendees = m.attendees
-            } else if let p = project {
-                selectedProjects = [p]
+            } else {
+                meetingAt = Self.nearestQuarterHourOn(presetDate)
+                if let p = project { selectedProjects = [p] }
             }
         }
         #if os(macOS)
@@ -416,11 +452,15 @@ struct MinutesEditorSheet: View {
         dismiss()
     }
 
-    private static func nearestQuarterHour(from date: Date) -> Date {
+    /// Returns the nearest quarter-hour to the current clock time, placed on `date`'s calendar day.
+    private static func nearestQuarterHourOn(_ date: Date) -> Date {
         let quarterHour = 15.0 * 60.0
-        let interval = date.timeIntervalSinceReferenceDate
-        let rounded = (interval / quarterHour).rounded() * quarterHour
-        return Date(timeIntervalSinceReferenceDate: rounded)
+        let rounded = (Date().timeIntervalSinceReferenceDate / quarterHour).rounded() * quarterHour
+        let roundedNow = Date(timeIntervalSinceReferenceDate: rounded)
+        let cal = Calendar.current
+        let h = cal.component(.hour, from: roundedNow)
+        let m = cal.component(.minute, from: roundedNow)
+        return cal.date(bySettingHour: h, minute: m, second: 0, of: date) ?? date
     }
 }
 

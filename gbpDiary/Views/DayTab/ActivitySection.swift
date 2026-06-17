@@ -131,7 +131,7 @@ struct ActivitySection: View {
 
         Color.clear
             .sheet(item: $selectedMeetingMinutes) { m in
-                MinutesDetailView(minutes: m, asSheet: true)
+                MinutesDetailView(minutes: m, asSheet: true, isNew: true)
             }
     }
 

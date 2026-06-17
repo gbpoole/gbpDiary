@@ -61,8 +61,8 @@ struct LogTimeSheet: View {
                     }
                     taskSection
                     if showFocusBlockSelector { focusBlockSection }
-                    durationSection
                     commentSection
+                    durationSection
                     timeSection
                 }
                 .padding()

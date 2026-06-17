@@ -19,6 +19,7 @@ struct DayNoteRow: View {
 
     @Environment(\.modelContext) private var modelContext
     @State private var showingFilePicker = false
+    @State private var showingDeleteConfirm = false
     @State private var previewURL: URL?
     @State private var blocksDropTargetIndex: Int?
     @State private var pendingCursorPlacements: [UUID: CursorPlacement] = [:]
@@ -44,6 +45,12 @@ struct DayNoteRow: View {
 
             metadataFooter
         }
+        .alert("Delete Note?", isPresented: $showingDeleteConfirm) {
+            Button("Delete", role: .destructive) { onDelete?() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This will permanently delete this note and its content.")
+        }
         .padding(.horizontal)
         .contextMenu {
             if onEdit != nil {
@@ -54,7 +61,7 @@ struct DayNoteRow: View {
             #endif
             if onDelete != nil {
                 Divider()
-                Button("Delete", role: .destructive) { onDelete?() }
+                Button("Delete", role: .destructive) { showingDeleteConfirm = true }
             }
         }
         .fileImporter(
@@ -693,6 +700,20 @@ struct DayNoteRow: View {
                 exportAsPDF()
             }
             #endif
+            if onDelete != nil {
+                Button {
+                    onHeaderButtonTap?()
+                    showingDeleteConfirm = true
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.red)
+                        .font(.caption)
+                        .frame(width: 24, height: 24)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Delete note")
+            }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 5)
