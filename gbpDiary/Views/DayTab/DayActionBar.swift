@@ -10,6 +10,7 @@ struct DayActionItem: Identifiable {
     let systemName: String
     let color: Color
     let tooltip: String
+    var isEnabled: Bool = true
     let action: () -> Void
 }
 
@@ -31,6 +32,7 @@ struct DayActionBar: View {
                         }
                         .buttonStyle(.plain)
                         .help(item.tooltip)
+                        .disabled(!item.isEnabled)
                     }
                 }
                 Spacer()

@@ -103,11 +103,19 @@ struct DayPageContent: View {
         DayTaskFiltering.inboxTasks(allTasks: allTasks)
     }
 
+    // Mirrors ActivitySection.canAddBlock — no more slots if allDay is taken,
+    // or both morning and afternoon are already filled.
+    private var canAddFocusBlock: Bool {
+        let taken = Set((dayRecord?.focusBlocks ?? []).map(\.slot))
+        if taken.contains(.allDay) { return false }
+        return !taken.contains(.morning) || !taken.contains(.afternoon)
+    }
+
     /// Platform-agnostic action list. macOS renders this as DayActionBar;
     /// iOS will render the same list as a FAB (future).
     private var actionItems: [DayActionItem] {
         [
-            DayActionItem(id: "focusblock", systemName: "scope",               color: AppTheme.tag,       tooltip: "Add focus block") { activityFocusBlockTrigger = true },
+            DayActionItem(id: "focusblock", systemName: "scope",               color: AppTheme.tag,       tooltip: "Add focus block", isEnabled: canAddFocusBlock) { activityFocusBlockTrigger = true },
             DayActionItem(id: "meeting",    systemName: "calendar.badge.plus", color: AppTheme.project,   tooltip: "Add meeting")     { activityMeetingTrigger = true },
             DayActionItem(id: "logtime",    systemName: "timer",               color: AppTheme.duration,  tooltip: "Log time")        { activityLogTimeTrigger = true },
             DayActionItem(id: "task",       systemName: "checkmark.square",    color: AppTheme.completed, tooltip: "Add task")        { showingAddTask = true },
