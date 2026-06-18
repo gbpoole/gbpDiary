@@ -147,6 +147,7 @@ struct ImportedTask: Decodable {
     var id: UUID
     var summary: String
     var rawText: String?
+    var notes: String?
     var status: TaskStatus
     var tags: [String]?
     var duration: ImportedDuration?

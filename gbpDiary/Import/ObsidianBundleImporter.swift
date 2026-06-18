@@ -151,7 +151,8 @@ struct ObsidianBundleImporter {
             let task = tasks[imported.id] ?? Task(summary: imported.summary, id: imported.id)
             if tasks[imported.id] == nil { context.insert(task); tasks[imported.id] = task }
             task.summary = imported.summary
-            task.notes = emptyToNil(imported.rawText).flatMap { $0 == imported.summary ? nil : $0 }
+            task.notes = imported.notes.map(emptyToNil)
+                ?? emptyToNil(imported.rawText).flatMap { $0 == imported.summary ? nil : $0 }
             task.status = imported.status
             task.tags = imported.tags ?? []
             task.duration = imported.duration?.domainDuration

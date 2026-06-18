@@ -56,6 +56,7 @@ struct ObsidianBundleImporterTests {
         #expect(tasks.first?.status == .completed)
         #expect(tasks.first?.duration?.hoursNormalized == 1.5)
         #expect(tasks.first?.tags == ["timesheet"])
+        #expect(tasks.first?.notes == nil)
     }
 
     @Test func importBundle_createsFocusBlocksAndCopiesDocumentAttachments() throws {
@@ -157,7 +158,7 @@ struct ObsidianBundleImporterTests {
           "documents": [],
           "dayRecords": [],
           "tasks": [
-            {"id": "00000000-0000-5000-8000-000000000006", "summary": "Do work", "rawText": "Do work (duration:: 1.5 h) #timesheet", "status": "completed", "tags": ["timesheet"], "duration": {"value": 1.5, "unit": "h", "hoursNormalized": 1.5}, "completedAt": "2026-06-12", "indent": 0, "line": 10, "sourcePath": "CMS/Minutes/Test.md", "projectId": "00000000-0000-5000-8000-000000000003", "assigneePersonId": "00000000-0000-5000-8000-000000000002", "originMinutesId": "00000000-0000-5000-8000-000000000005"}
+            {"id": "00000000-0000-5000-8000-000000000006", "summary": "Do work", "rawText": "Do work (duration:: 1.5 h) #timesheet", "notes": "", "status": "completed", "tags": ["timesheet"], "duration": {"value": 1.5, "unit": "h", "hoursNormalized": 1.5}, "completedAt": "2026-06-12", "indent": 0, "line": 10, "sourcePath": "CMS/Minutes/Test.md", "projectId": "00000000-0000-5000-8000-000000000003", "assigneePersonId": "00000000-0000-5000-8000-000000000002", "originMinutesId": "00000000-0000-5000-8000-000000000005"}
           ]
         }
         """

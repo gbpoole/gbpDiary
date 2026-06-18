@@ -42,6 +42,10 @@ class ObsidianImportBundleTests(unittest.TestCase):
                 "---\ntype:\n  - person\n---\n",
                 encoding="utf-8",
             )
+            (vault / "CMS/People/Lee Spitler.md").write_text(
+                "---\ntype:\n  - person\n---\n",
+                encoding="utf-8",
+            )
             (vault / "CMS/Projects/Foo.md").write_text(
                 "---\ntype:\n  - project\nDevTeam:\n  - \"[[CMS/People/Greg Poole|Greg Poole]]\"\nDescription: Test project\n---\n",
                 encoding="utf-8",
@@ -56,17 +60,17 @@ class ObsidianImportBundleTests(unittest.TestCase):
             )
             (vault / "Diary").mkdir()
             (vault / "Diary/2025-08-21-Thursday.md").write_text(
-                "---\ncreated: 2025-08-21 09:00\ntags:\n  - diary-tag\n---\n- [x] Timesheet focus (duration:: 1.5 h) #timesheet ✅ 2025-08-21\n    - [ ] Nested task\n- [?] Follow up focus (follow_up:: 2025-08-28)\n- [x] Apply for access to Nectar and OzSTAR projects (who::[[CMS/People/Owen Cole.md|Owen Cole]]) (project::[[CMS/Projects/YWang_2026A.md|YWang_2026A]]) ✅ 2026-03-02\n",
+                "---\ncreated: 2025-08-21 09:00\ntags:\n  - diary-tag\n---\n- [x] Timesheet focus (duration:: 1.5 h) #timesheet ✅ 2025-08-21\n    - [ ] Nested task\n    - [ ] [[CMS/People/Lee Spitler|Lee Spitler]] needs to be informed that he won't be able to apply for RT time next semester📅 2025-08-22\n- [?] Follow up focus (follow_up:: 2025-08-28)\n- [x] Apply for access to Nectar and OzSTAR projects (who::[[CMS/People/Owen Cole.md|Owen Cole]]) (project::[[CMS/Projects/YWang_2026A.md|YWang_2026A]]) ✅ 2026-03-02\n",
                 encoding="utf-8",
             )
 
             bundle = importer.build_bundle(vault)
 
-            self.assertEqual(bundle["counts"]["people"], 2)
+            self.assertEqual(bundle["counts"]["people"], 3)
             self.assertEqual(bundle["counts"]["projects"], 2)
             self.assertEqual(bundle["counts"]["minutes"], 1)
             self.assertEqual(bundle["counts"]["focusBlocks"], 3)
-            self.assertEqual(bundle["counts"]["tasks"], 2)
+            self.assertEqual(bundle["counts"]["tasks"], 3)
             self.assertEqual(bundle["people"][0]["email"], "greg@example.com")
             self.assertEqual(bundle["people"][0]["tags"], ["collaborator"])
             self.assertEqual(bundle["projects"][0]["description"], "Test project")
@@ -83,6 +87,11 @@ class ObsidianImportBundleTests(unittest.TestCase):
             self.assertEqual(bundle["tasks"][0]["summary"], "Do thing")
             nested = next(task for task in bundle["tasks"] if task["summary"] == "Nested task")
             self.assertIsNotNone(nested["dayRecordId"])
+            lee_task = next(task for task in bundle["tasks"] if task["summary"].startswith("Lee Spitler needs"))
+            self.assertEqual(lee_task["summary"], "Lee Spitler needs to be informed that he won't be able to apply for RT time next semester")
+            self.assertEqual(lee_task["scheduledAt"], "2025-08-22")
+            self.assertIsNone(lee_task["assigneePersonId"])
+            self.assertEqual(lee_task["notes"], "")
             timesheet = next(block for block in bundle["focusBlocks"] if block["summary"] == "Timesheet focus")
             self.assertEqual(timesheet["duration"]["hoursNormalized"], 1.5)
             self.assertEqual(timesheet["tags"], ["timesheet"])

@@ -53,7 +53,7 @@ WEEKDAY_HEADING_RE = re.compile(r"^(?P<weekday>Monday|Tuesday|Wednesday|Thursday
 DATE_IN_FILENAME_RE = re.compile(r"(?P<date>\d{4}-\d{2}-\d{2})(?:[_-](?P<hour>\d{2})[.:-](?P<minute>\d{2}))?")
 COMPLETION_STAMP_RE = re.compile(r"\s*✅\s*(?P<date>\d{4}-\d{2}-\d{2})\s*")
 CANCELLED_STAMP_RE = re.compile(r"\s*🚫\s*(?P<date>\d{4}-\d{2}-\d{2})\s*")
-SCHEDULED_STAMP_RE = re.compile(r"\s*⏳\s*(?P<date>\d{4}-\d{2}-\d{2})\s*")
+SCHEDULED_STAMP_RE = re.compile(r"\s*[⏳📅]\s*(?P<date>\d{4}-\d{2}-\d{2})\s*")
 TAG_RE = re.compile(r"(^|\s)#(?P<tag>[A-Za-z0-9_/-]+)(?=\s|$)")
 OBSIDIAN_IMAGE_RE = re.compile(r"!\[\[(?P<target>[^\]]+)\]\]")
 MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\((?P<target>[^)]+)\)")
@@ -141,6 +141,13 @@ def display_name_from_link(raw: str) -> str:
         text = inner
     text = text.split("#")[0].split("^")[0].strip()
     return Path(text).stem if text else ""
+
+
+def wikilinks_to_display_text(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        return display_name_from_link(match.group(0))
+
+    return WIKILINK_RE.sub(replace, text)
 
 
 def parse_date(raw: Any, fallback_path: str | None = None) -> str | None:
@@ -430,6 +437,7 @@ def extract_task_metadata(raw_text: str, checkbox_mark: str, source_date: str | 
     summary = CANCELLED_STAMP_RE.sub(" ", summary)
     summary = SCHEDULED_STAMP_RE.sub(" ", summary)
     summary = TAG_RE.sub(lambda match: match.group(1), summary)
+    summary = wikilinks_to_display_text(summary)
     summary = re.sub(r"\s+", " ", summary).strip()
     if not summary:
         summary = "Untitled task"
@@ -498,6 +506,7 @@ def extract_tasks(source: SourceFile) -> list[dict[str, Any]]:
                 "id": stable_uuid("task", f"{source.rel_path}:{line_number}:{normalized_hash}:{occurrence}"),
                 "summary": summary,
                 "rawText": raw_text,
+                "notes": "",
                 "indent": len(task_match.group("indent").replace("\t", "    ")),
                 "line": line_number,
                 "section": section_path,
