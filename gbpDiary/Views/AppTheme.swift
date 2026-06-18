@@ -38,7 +38,8 @@ enum AppTheme {
     static let institution = Kanagawa.mauve
     static let duration = Kanagawa.sapphire
     static let tag = Kanagawa.teal
-    static let followUp = Kanagawa.yellow
+    static let action = Kanagawa.peach
+    static let followUp = Kanagawa.peach
     static let completed = Kanagawa.green
     static let started = Kanagawa.blue
 

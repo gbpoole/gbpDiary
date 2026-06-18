@@ -197,7 +197,7 @@ private struct MeetingActivityRow: View {
             } label: {
                 Image(systemName: "note.text.badge.plus")
                     .font(.system(size: 12))
-                    .foregroundStyle(AppTheme.mutedText)
+                    .foregroundStyle(AppTheme.action)
             }
             .buttonStyle(.plain)
             .help("Add minutes")
@@ -210,7 +210,7 @@ private struct MeetingActivityRow: View {
             } label: {
                 Image(systemName: "note.text")
                     .font(.system(size: 12))
-                    .foregroundStyle(AppTheme.accent)
+                    .foregroundStyle(AppTheme.action)
             }
             .buttonStyle(.plain)
             .help("Open minutes")
@@ -353,7 +353,7 @@ private struct ActivityEntryRow: View {
             } label: {
                 Image(systemName: "pencil")
                     .font(.system(size: 11))
-                    .foregroundStyle(AppTheme.mutedText)
+                    .foregroundStyle(AppTheme.action)
             }
             .buttonStyle(.plain)
             .help("Edit task")
@@ -370,7 +370,7 @@ private struct ActivityEntryRow: View {
             } label: {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 12))
-                    .foregroundStyle(AppTheme.mutedText)
+                    .foregroundStyle(AppTheme.action)
             }
             .buttonStyle(.plain)
             .help("Log time")
@@ -387,7 +387,7 @@ private struct ActivityEntryRow: View {
             } label: {
                 Image(systemName: task.status == .followUpPending ? "clock.fill" : "clock.badge")
                     .font(.system(size: 12))
-                    .foregroundStyle(task.status == .followUpPending ? AppTheme.followUp : AppTheme.mutedText)
+                    .foregroundStyle(task.status == .followUpPending ? AppTheme.followUp : AppTheme.action)
             }
             .buttonStyle(.plain)
             .help(task.status == .followUpPending ? "Edit follow-up date" : "Set follow-up date")

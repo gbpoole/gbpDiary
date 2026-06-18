@@ -845,7 +845,7 @@ struct DayTaskActivityRow: View {
             } label: {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 12))
-                    .foregroundStyle(AppTheme.mutedText)
+                    .foregroundStyle(AppTheme.action)
             }
             .buttonStyle(.plain)
             .help("Log time")
