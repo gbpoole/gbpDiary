@@ -28,7 +28,6 @@ struct DayPageContent: View {
     @State private var activityFocusBlockTrigger = false
     @State private var editingTask: Task?
     @State private var editingNote: Note?
-    @State private var expandedTaskIds: Set<UUID> = []
     @State private var notesDropTargetIndex: Int?
     @State private var pendingFocusNoteId: UUID?
     @State private var selectedBlockId: UUID?
@@ -244,8 +243,8 @@ struct DayPageContent: View {
     private var newTasksSection: some View {
         if !newTasks.isEmpty {
             DaySectionHeader(title: "New Tasks")
-            ForEach(Array(newTasks.enumerated()), id: \.element.id) { idx, task in
-                taskRow(task: task, index: idx)
+            ForEach(newTasks) { task in
+                DayTaskActivityRow(task: task, date: date)
             }
         }
     }
@@ -278,67 +277,7 @@ struct DayPageContent: View {
         }
     }
 
-    // MARK: - Row builders
-
-    private func taskRow(task: Task, index: Int) -> some View {
-        let count = newTasks.count
-        return DiaryTaskRow(
-            task: task,
-            focusedEntryId: $focusedEntryId,
-            isCollapsed: !expandedTaskIds.contains(task.id),
-            onToggleCollapse: {
-                if expandedTaskIds.contains(task.id) { expandedTaskIds.remove(task.id) }
-                else { expandedTaskIds.insert(task.id) }
-            },
-            onMoveToPrevious: index > 0 ? { pendingFocusId = newTasks[index - 1].id } : nil,
-            onMoveToNext: index < count - 1 ? { pendingFocusId = newTasks[index + 1].id } : nil,
-            onMoveToNextFromNotes: index < count - 1 ? { pendingFocusId = newTasks[index + 1].id } : nil,
-            onDropOntoTask: { uuidString in
-                guard let id = UUID(uuidString: uuidString),
-                      let dragged = findAnyTask(id: id),
-                      dragged.id != task.id else { return false }
-                dragged.parent = task
-                dragged.dayRecord = nil
-                dragged.originMinutes = nil
-                return true
-            },
-            onExternalDropOntoSubtask: { uuidString, targetTask in
-                guard let id = UUID(uuidString: uuidString),
-                      let dragged = findAnyTask(id: id),
-                      dragged.id != targetTask.id else { return false }
-                dragged.parent = targetTask
-                dragged.dayRecord = nil
-                dragged.originMinutes = nil
-                return true
-            },
-            onExternalDropIntoSubtree: { uuidString in
-                guard let id = UUID(uuidString: uuidString),
-                      let dragged = findAnyTask(id: id),
-                      dragged.id != task.id else { return false }
-                dragged.parent = task
-                dragged.dayRecord = nil
-                dragged.originMinutes = nil
-                return true
-            }
-        )
-    }
-
     // MARK: - Helpers
-
-    private func findAnyTask(id: UUID) -> Task? {
-        func search(_ list: [Task]) -> Task? {
-            for t in list {
-                if t.id == id { return t }
-                if let found = search(t.children) { return found }
-            }
-            return nil
-        }
-        if let found = search(newTasks) { return found }
-        for entry in dayMeetings {
-            if let found = search(entry.minutes?.newTasks ?? []) { return found }
-        }
-        return nil
-    }
 
     private func findOrCreateDayRecord() -> DayRecord {
         if let existing = dayRecord { return existing }
@@ -803,6 +742,158 @@ struct DayView: View {
         .shadow(color: .black.opacity(0.15), radius: 4)
         .padding(.bottom, 12)
         .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+}
+
+// MARK: - Day task activity row (New Tasks section)
+
+private final class DayTaskActivityTapFlags { var didTapStatus = false; var didTapAddTime = false }
+
+struct DayTaskActivityRow: View {
+    var task: Task
+    var date: Date
+
+    @Environment(\.modelContext) private var modelContext
+    @State private var showingEdit = false
+    @State private var showingAddTime = false
+    @State private var tapFlags = DayTaskActivityTapFlags()
+    @State private var tapCount = 0
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 6) {
+            Color.clear.frame(width: 16, height: 1)
+                .sheet(isPresented: $showingAddTime) {
+                    LogTimeSheet(presetTask: task, presetDate: date)
+                }
+
+            HStack(alignment: .center, spacing: 6) {
+                statusIconView
+
+                Text(task.summary)
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.text)
+
+                Spacer(minLength: 8)
+
+                HStack(spacing: 4) {
+                    addTimeIconView
+                        .frame(width: 24, alignment: .center)
+                    Group {
+                        if let project = task.project {
+                            Chip(label: project.name, color: AppTheme.project)
+                        }
+                    }
+                    .frame(width: 110, alignment: .leading)
+                    Group {
+                        if let dur = task.loggedDuration {
+                            Chip(label: dur.displayString, color: AppTheme.duration)
+                        }
+                    }
+                    .frame(width: 46, alignment: .leading)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(AppTheme.cardRaised.opacity(0.45))
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded { tapCount += 1 })
+            .onChange(of: tapCount) {
+                if tapFlags.didTapStatus || tapFlags.didTapAddTime {
+                    tapFlags.didTapStatus = false
+                    tapFlags.didTapAddTime = false
+                } else {
+                    showingEdit = true
+                }
+            }
+            .padding(.trailing)
+            .sheet(isPresented: $showingEdit) {
+                TaskEditorSheet(task: task, defaultDate: date)
+            }
+            .contextMenu {
+                if task.status != .completed {
+                    Button("Mark Complete") { task.markCompleted() }
+                }
+                if task.status == .todo || task.status == .cancelled {
+                    Button("Mark Started") { task.status = .started; task.updatedAt = Date() }
+                }
+                if task.status == .completed || task.status == .cancelled || task.status == .followUpPending {
+                    Button("Reopen") {
+                        if task.status == .cancelled { task.unmarkCancelled() } else { task.unmarkCompleted() }
+                    }
+                }
+                Divider()
+                Button("Delete", role: .destructive) { modelContext.delete(task) }
+            }
+        }
+        .padding(.leading)
+        .padding(.vertical, 1)
+        .onChange(of: showingAddTime) { _, isShowing in
+            if !isShowing, task.status == .todo, !task.timeEntries.isEmpty {
+                task.status = .started
+                task.updatedAt = Date()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var addTimeIconView: some View {
+        if task.status == .todo || task.status == .started {
+            Button {
+                tapFlags.didTapAddTime = true
+                showingAddTime = true
+            } label: {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AppTheme.mutedText)
+            }
+            .buttonStyle(.plain)
+            .help("Log time")
+        }
+    }
+
+    @ViewBuilder
+    private var statusIconView: some View {
+        Button {
+            tapFlags.didTapStatus = true
+            toggleStatus(task)
+        } label: {
+            Image(systemName: taskStatusIcon(task))
+                .font(.system(size: 12))
+                .foregroundStyle(taskStatusColor(task))
+                .frame(width: 18)
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func toggleStatus(_ task: Task) {
+        switch task.status {
+        case .todo:            task.status = .started; task.updatedAt = Date()
+        case .started:         task.markCompleted()
+        case .completed:       task.markCancelled()
+        case .followUpPending: task.markCancelled()
+        case .cancelled:       task.unmarkCancelled()
+        }
+    }
+
+    private func taskStatusIcon(_ task: Task) -> String {
+        switch task.status {
+        case .todo:            return "circle"
+        case .started:         return "play.circle.fill"
+        case .completed:       return "checkmark.circle.fill"
+        case .cancelled:       return "xmark.circle.fill"
+        case .followUpPending: return "arrow.clockwise.circle.fill"
+        }
+    }
+
+    private func taskStatusColor(_ task: Task) -> Color {
+        switch task.status {
+        case .todo:            return AppTheme.mutedText
+        case .started:         return AppTheme.started
+        case .completed:       return AppTheme.completed
+        case .cancelled:       return AppTheme.mutedText
+        case .followUpPending: return AppTheme.followUp
+        }
     }
 }
 

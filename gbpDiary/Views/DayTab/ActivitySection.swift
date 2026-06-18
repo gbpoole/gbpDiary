@@ -22,6 +22,7 @@ struct ActivitySection: View {
     @State private var showingLogTime = false
     @State private var selectedMeetingMinutes: Minutes?
     @State private var editorDayRecord: DayRecord?
+    @State private var isUnspecifiedCollapsed = false
 
     // @Query-driven so new blocks appear immediately without relationship-refresh lag.
     private var blocks: [FocusBlock] {
@@ -183,16 +184,47 @@ struct ActivitySection: View {
     @ViewBuilder
     private func unspecifiedSection(_ entries: [TaskTimeEntry]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("Unspecified")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.leading, 38)
-                    .padding(.vertical, 4)
-                Spacer()
+            HStack(alignment: .center, spacing: 6) {
+                Button { isUnspecifiedCollapsed.toggle() } label: {
+                    Image(systemName: isUnspecifiedCollapsed ? "chevron.right" : "chevron.down")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(AppTheme.mutedText)
+                }
+                .buttonStyle(.plain)
+                .contentShape(Rectangle())
+                .frame(width: 16, height: 22)
+
+                HStack(alignment: .center, spacing: 6) {
+                    Image(systemName: "circle.dashed")
+                        .foregroundStyle(AppTheme.mutedText)
+                        .font(.system(size: 14))
+                        .frame(width: 18, height: 18)
+                    Text("Unspecified")
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                    Spacer(minLength: 0)
+                    let totalHours = entries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
+                    if totalHours > 0 {
+                        Chip(label: Duration(value: totalHours, unit: .h).displayString,
+                             color: AppTheme.duration)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+                .background(Color.secondary.opacity(0.06))
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+                .padding(.trailing)
             }
-            ForEach(entries) { entry in
-                UnspecifiedActivityRow(entry: entry)
+            .padding(.leading)
+            .padding(.vertical, 2)
+
+            if !isUnspecifiedCollapsed {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(entries) { entry in
+                        UnspecifiedActivityRow(entry: entry)
+                    }
+                }
+                .padding(.leading, 16)
             }
         }
     }
@@ -354,7 +386,7 @@ private struct CompletedTaskActivityRow: View {
     }
 }
 
-private final class UnspecifiedActivityTapFlags { var didTapStatus = false; var didTapFollowUp = false }
+private final class UnspecifiedActivityTapFlags { var didTapStatus = false; var didTapFollowUp = false; var didTapAddTime = false; var didTapEditTask = false }
 
 private struct UnspecifiedActivityRow: View {
     @Environment(\.modelContext) private var modelContext
@@ -362,12 +394,22 @@ private struct UnspecifiedActivityRow: View {
 
     @State private var showingEdit = false
     @State private var showingFollowUpPicker = false
+    @State private var showingAddTime = false
+    @State private var editingTask: Task?
     @State private var tapFlags = UnspecifiedActivityTapFlags()
     @State private var tapCount = 0
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
             Color.clear.frame(width: 16, height: 1)
+                .sheet(isPresented: $showingAddTime) {
+                    LogTimeSheet(presetTask: entry.task, presetDate: entry.date)
+                }
+                .overlay {
+                    Color.clear.sheet(item: $editingTask) { task in
+                        TaskEditorSheet(task: task, defaultDate: entry.date)
+                    }
+                }
 
             HStack(alignment: .center, spacing: 6) {
                 statusIconView
@@ -390,6 +432,10 @@ private struct UnspecifiedActivityRow: View {
 
                 Spacer(minLength: 8)
                 HStack(spacing: 4) {
+                    editTaskIconView
+                        .frame(width: 24, alignment: .center)
+                    addTimeIconView
+                        .frame(width: 24, alignment: .center)
                     followUpIconView
                         .frame(width: 24, alignment: .center)
                     Group {
@@ -412,9 +458,11 @@ private struct UnspecifiedActivityRow: View {
             .contentShape(Rectangle())
             .simultaneousGesture(TapGesture().onEnded { tapCount += 1 })
             .onChange(of: tapCount) {
-                if tapFlags.didTapStatus || tapFlags.didTapFollowUp {
+                if tapFlags.didTapStatus || tapFlags.didTapFollowUp || tapFlags.didTapAddTime || tapFlags.didTapEditTask {
                     tapFlags.didTapStatus = false
                     tapFlags.didTapFollowUp = false
+                    tapFlags.didTapAddTime = false
+                    tapFlags.didTapEditTask = false
                 } else {
                     showingEdit = true
                 }
@@ -425,6 +473,8 @@ private struct UnspecifiedActivityRow: View {
             }
             .contextMenu {
                 if let task = entry.task {
+                    Button("Edit Task…") { editingTask = task }
+                    Divider()
                     if task.status != .completed {
                         Button("Mark Complete") { task.markCompleted() }
                     }
@@ -451,6 +501,46 @@ private struct UnspecifiedActivityRow: View {
                     onRemove: task.status == .followUpPending ? { task.clearFollowUp() } : nil
                 )
             }
+        }
+        .onChange(of: showingAddTime) { _, isShowing in
+            if !isShowing, let task = entry.task,
+               task.status == .todo, !task.timeEntries.isEmpty {
+                task.status = .started
+                task.updatedAt = Date()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var editTaskIconView: some View {
+        if let task = entry.task {
+            Button {
+                tapFlags.didTapEditTask = true
+                editingTask = task
+            } label: {
+                Image(systemName: "pencil")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.mutedText)
+            }
+            .buttonStyle(.plain)
+            .help("Edit task")
+        }
+    }
+
+    @ViewBuilder
+    private var addTimeIconView: some View {
+        if let task = entry.task,
+           task.status == .todo || task.status == .started {
+            Button {
+                tapFlags.didTapAddTime = true
+                showingAddTime = true
+            } label: {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AppTheme.mutedText)
+            }
+            .buttonStyle(.plain)
+            .help("Log time")
         }
     }
 

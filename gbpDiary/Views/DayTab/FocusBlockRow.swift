@@ -218,7 +218,7 @@ private struct MeetingActivityRow: View {
     }
 }
 
-private final class ActivityEntryTapFlags { var didTapStatus = false; var didTapFollowUp = false }
+private final class ActivityEntryTapFlags { var didTapStatus = false; var didTapFollowUp = false; var didTapAddTime = false; var didTapEditTask = false }
 
 private struct ActivityEntryRow: View {
     var entry: TaskTimeEntry
@@ -226,12 +226,22 @@ private struct ActivityEntryRow: View {
     @Environment(\.modelContext) private var modelContext
     @State private var showingEdit = false
     @State private var showingFollowUpPicker = false
+    @State private var showingAddTime = false
+    @State private var editingTask: Task?
     @State private var tapFlags = ActivityEntryTapFlags()
     @State private var tapCount = 0
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
             Color.clear.frame(width: 16, height: 1)
+                .sheet(isPresented: $showingAddTime) {
+                    LogTimeSheet(presetTask: entry.task, presetFocusBlock: entry.focusBlock, presetDate: entry.date)
+                }
+                .overlay {
+                    Color.clear.sheet(item: $editingTask) { task in
+                        TaskEditorSheet(task: task, defaultDate: entry.date)
+                    }
+                }
 
             HStack(alignment: .center, spacing: 6) {
                 statusIconView
@@ -255,6 +265,10 @@ private struct ActivityEntryRow: View {
 
                 Spacer(minLength: 8)
                 HStack(spacing: 4) {
+                    editTaskIconView
+                        .frame(width: 24, alignment: .center)
+                    addTimeIconView
+                        .frame(width: 24, alignment: .center)
                     followUpIconView
                         .frame(width: 24, alignment: .center)
                     Group {
@@ -277,9 +291,11 @@ private struct ActivityEntryRow: View {
             .contentShape(Rectangle())
             .simultaneousGesture(TapGesture().onEnded { tapCount += 1 })
             .onChange(of: tapCount) {
-                if tapFlags.didTapStatus || tapFlags.didTapFollowUp {
+                if tapFlags.didTapStatus || tapFlags.didTapFollowUp || tapFlags.didTapAddTime || tapFlags.didTapEditTask {
                     tapFlags.didTapStatus = false
                     tapFlags.didTapFollowUp = false
+                    tapFlags.didTapAddTime = false
+                    tapFlags.didTapEditTask = false
                 } else {
                     showingEdit = true
                 }
@@ -290,6 +306,8 @@ private struct ActivityEntryRow: View {
             }
             .contextMenu {
                 if let task = entry.task {
+                    Button("Edit Task…") { editingTask = task }
+                    Divider()
                     if task.status != .completed {
                         Button("Mark Complete") { task.markCompleted() }
                     }
@@ -316,6 +334,46 @@ private struct ActivityEntryRow: View {
                     onRemove: task.status == .followUpPending ? { task.clearFollowUp() } : nil
                 )
             }
+        }
+        .onChange(of: showingAddTime) { _, isShowing in
+            if !isShowing, let task = entry.task,
+               task.status == .todo, !task.timeEntries.isEmpty {
+                task.status = .started
+                task.updatedAt = Date()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var editTaskIconView: some View {
+        if let task = entry.task {
+            Button {
+                tapFlags.didTapEditTask = true
+                editingTask = task
+            } label: {
+                Image(systemName: "pencil")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AppTheme.mutedText)
+            }
+            .buttonStyle(.plain)
+            .help("Edit task")
+        }
+    }
+
+    @ViewBuilder
+    private var addTimeIconView: some View {
+        if let task = entry.task,
+           task.status == .todo || task.status == .started {
+            Button {
+                tapFlags.didTapAddTime = true
+                showingAddTime = true
+            } label: {
+                Image(systemName: "plus.circle")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AppTheme.mutedText)
+            }
+            .buttonStyle(.plain)
+            .help("Log time")
         }
     }
 

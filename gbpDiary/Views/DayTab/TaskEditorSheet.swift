@@ -14,12 +14,9 @@ struct TaskEditorSheet: View {
 
     @State private var summary = ""
     @State private var notes = ""
-    @State private var status: TaskStatus = .todo
     @State private var selectedProject: Project?
     @State private var selectedAssignee: Person?
     @State private var scheduledDate: Date?
-    @State private var followUpEnabled = false
-    @State private var followUpDate: Date?
     @State private var tagsText = ""
     @State private var showingLogTime = false
     @State private var showingDeleteConfirm = false
@@ -30,13 +27,12 @@ struct TaskEditorSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    taskSection
-                    statusSection
-                    scheduleSection
-                    followUpSection
+                    summarySection
                     projectSection
                     assigneeSection
                     tagsSection
+                    scheduleSection
+                    notesSection
                     if let t = task {
                         timeLogSection(t)
                     }
@@ -68,7 +64,11 @@ struct TaskEditorSheet: View {
             }
         }
         .onAppear {
-            if task != nil { populateFromTask() }
+            if task != nil {
+                populateFromTask()
+            } else {
+                selectedAssignee = people.first(where: { $0.name == "Greg Poole" })
+            }
         }
         .sheet(isPresented: $showingLogTime) {
             if let t = task {
@@ -82,91 +82,25 @@ struct TaskEditorSheet: View {
 
     // MARK: - Sections
 
-    private var taskSection: some View {
+    private var summarySection: some View {
         GroupBox("Task") {
-            VStack(alignment: .leading, spacing: 8) {
-                TextField("Summary", text: $summary)
-                    .textFieldStyle(.plain)
-                Divider()
-                ZStack(alignment: .topLeading) {
-                    if notes.isEmpty {
-                        Text("Notes (optional)")
-                            .foregroundStyle(.tertiary)
-                            .allowsHitTesting(false)
-                            .padding(.top, 2)
-                    }
-                    TextEditor(text: $notes)
-                        .scrollContentBackground(.hidden)
-                        .frame(minHeight: 60)
+            TextField("Summary", text: $summary)
+                .textFieldStyle(.plain)
+        }
+    }
+
+    private var notesSection: some View {
+        GroupBox("Notes") {
+            ZStack(alignment: .topLeading) {
+                if notes.isEmpty {
+                    Text("Optional notes…")
+                        .foregroundStyle(.tertiary)
+                        .allowsHitTesting(false)
+                        .padding(.top, 2)
                 }
-            }
-        }
-    }
-
-    private var statusSection: some View {
-        GroupBox("Status") {
-            HStack(spacing: 6) {
-                statusCapsule(for: .todo,      label: "To Do")
-                statusCapsule(for: .started,   label: "Started")
-                statusCapsule(for: .completed, label: "Completed")
-                statusCapsule(for: .cancelled, label: "Cancelled")
-            }
-        }
-    }
-
-    private func statusCapsule(for s: TaskStatus, label: String) -> some View {
-        let isActive = status == s
-        let color: Color = switch s {
-        case .completed:       AppTheme.completed
-        case .started:         AppTheme.started
-        case .cancelled, .todo, .followUpPending: Color.secondary
-        }
-        return Button(label) { status = s }
-            .buttonStyle(.plain)
-            .font(.caption)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(isActive ? color : Color.secondary.opacity(0.12), in: Capsule())
-            .foregroundStyle(isActive ? Color.white : Color.primary)
-    }
-
-    private var scheduleSection: some View {
-        GroupBox("Schedule") {
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle("Schedule for a day", isOn: Binding(
-                    get: { scheduledDate != nil },
-                    set: { if $0 { scheduledDate = defaultDate } else { scheduledDate = nil } }
-                ))
-                if scheduledDate != nil {
-                    DatePicker("Date",
-                               selection: Binding(
-                                   get: { scheduledDate ?? defaultDate },
-                                   set: { scheduledDate = $0 }
-                               ),
-                               displayedComponents: .date)
-                }
-            }
-        }
-    }
-
-    private var followUpSection: some View {
-        GroupBox("Follow-up") {
-            VStack(alignment: .leading, spacing: 6) {
-                Toggle("Has follow-up date", isOn: $followUpEnabled)
-                    .onChange(of: followUpEnabled) { _, on in
-                        if on && followUpDate == nil {
-                            followUpDate = Calendar.current.date(byAdding: .day, value: 1,
-                                to: Calendar.current.startOfDay(for: .now))
-                        }
-                    }
-                if followUpEnabled {
-                    DatePicker("Date",
-                               selection: Binding(
-                                   get: { followUpDate ?? Date() },
-                                   set: { followUpDate = $0 }
-                               ),
-                               displayedComponents: .date)
-                }
+                TextEditor(text: $notes)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 60)
             }
         }
     }
@@ -230,6 +164,25 @@ struct TaskEditorSheet: View {
         }
     }
 
+    private var scheduleSection: some View {
+        GroupBox("Schedule") {
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Schedule for a day", isOn: Binding(
+                    get: { scheduledDate != nil },
+                    set: { if $0 { scheduledDate = defaultDate } else { scheduledDate = nil } }
+                ))
+                if scheduledDate != nil {
+                    DatePicker("Date",
+                               selection: Binding(
+                                   get: { scheduledDate ?? defaultDate },
+                                   set: { scheduledDate = $0 }
+                               ),
+                               displayedComponents: .date)
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private func timeLogSection(_ t: Task) -> some View {
         GroupBox {
@@ -254,13 +207,16 @@ struct TaskEditorSheet: View {
                                     .lineLimit(1)
                             }
                             Spacer(minLength: 0)
+                            Button {
+                                modelContext.delete(entry)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .bold))
+                                    .foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
                         }
                         .padding(.vertical, 2)
-                        .contextMenu {
-                            Button("Delete", role: .destructive) {
-                                modelContext.delete(entry)
-                            }
-                        }
                     }
                 }
                 Button("Add Entry…") { showingLogTime = true }
@@ -288,12 +244,9 @@ struct TaskEditorSheet: View {
         guard let t = task else { return }
         summary = t.summary
         notes = t.notes ?? ""
-        status = t.status == .followUpPending ? .completed : t.status
         selectedProject = t.project
         selectedAssignee = t.assignee
         scheduledDate = t.scheduledAt
-        followUpEnabled = t.followUpAt != nil
-        followUpDate = t.followUpAt
         tagsText = t.tags.joined(separator: ", ")
     }
 
@@ -320,12 +273,6 @@ struct TaskEditorSheet: View {
             t.assignee = selectedAssignee
             t.tags = tags
             t.updatedAt = Date()
-            if followUpEnabled, let date = followUpDate {
-                t.setFollowUp(date: date)
-            } else {
-                t.clearFollowUp()
-                t.status = status
-            }
         } else {
             let newTask = Task(summary: trimmedSummary)
             newTask.notes = notes.isEmpty ? nil : notes
@@ -334,11 +281,6 @@ struct TaskEditorSheet: View {
             newTask.assignee = selectedAssignee
             newTask.tags = tags
             modelContext.insert(newTask)
-            if followUpEnabled, let date = followUpDate {
-                newTask.setFollowUp(date: date)
-            } else {
-                newTask.status = status
-            }
             onTaskCreated?(newTask)
         }
         dismiss()
