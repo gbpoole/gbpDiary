@@ -99,10 +99,19 @@ struct ImportedNoteBlock: Decodable {
     var groupId: UUID?
 }
 
+struct ImportedNoteAttachment: Decodable {
+    var id: UUID
+    var ref: String
+    var fileName: String?
+    var kind: AttachmentKind?
+}
+
 struct ImportedNote: Decodable {
     var id: UUID
     var content: String?
     var blocks: [ImportedNoteBlock]?
+    var attachments: [ImportedNoteAttachment]?
+    var tags: [String]?
     var dayRecordId: UUID?
     var sourcePath: String?
     var createdAt: String?
@@ -113,6 +122,7 @@ struct ImportedNote: Decodable {
 struct ImportedDayRecord: Decodable {
     var id: UUID
     var date: String
+    var tags: [String]?
     var createdAt: String?
     var updatedAt: String?
     var sourceContext: ImportedSourceContext?
@@ -129,6 +139,7 @@ struct ImportedFocusBlock: Decodable {
     var projectId: UUID?
     var assigneePersonId: UUID?
     var dayRecordId: UUID?
+    var tags: [String]?
     var sourceContext: ImportedSourceContext?
 }
 

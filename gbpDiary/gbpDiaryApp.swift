@@ -9,6 +9,7 @@ import AppKit
 @main
 struct gbpDiaryApp: App {
     @State private var didRunBundleImport = false
+    @State private var minutesEditorContext = MinutesEditorContext()
 
     var sharedModelContainer: ModelContainer = {
         let isUITesting = ProcessInfo.processInfo.arguments.contains("-ui-testing")
@@ -44,6 +45,7 @@ struct gbpDiaryApp: App {
     var body: some Scene {
         WindowGroup {
             ContentView()
+                .environment(minutesEditorContext)
                 .onAppear {
                     sweepOrphanedAttachments()
                     runBundleImportIfRequested()

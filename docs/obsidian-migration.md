@@ -20,6 +20,7 @@ The tool scans markdown files, ignores `.obsidian`, and emits:
 - `documents`
 - `notes`
 - `dayRecords`
+- `focusBlocks`
 - `tasks`
 - `diagnostics`
 
@@ -41,6 +42,10 @@ occurrence index.
 - Task state/date stamps use `✅ YYYY-MM-DD` for completion, `🚫 YYYY-MM-DD` for cancellation, and `⏳ YYYY-MM-DD` for scheduled dates.
 - Task inline fields include `duration::`, `follow_up::`, `followed_up::`, `minutes::`, `who::`, and `project::`.
 - Task hashtags are imported as task tags and removed from the task summary.
+- Note, diary, and minutes hashtags are copied into metadata tags and preserved in note text.
+- Minutes tags are imported onto their linked `Note`; diary tags are imported onto both the day note and `DayRecord.focusTags`.
+- Obsidian image embeds in notes (`![[image.png]]` and `![alt](image.png)`) are converted into image blocks with `Attachment` records.
+- Note image files are resolved relative to the note, the vault root, or the sibling folder convention `NOTE.md` → `NOTE/image.png`.
 - Timesheet entries are completed tasks with `duration::` metadata.
 - Dataview/meta-bind code blocks are generated UI and are stripped from imported note bodies.
 - Meeting `Outstanding Previous Tasks` sections are derived views, not imported records.
@@ -69,18 +74,20 @@ the app after the import attempt so the validation can run from a shell.
 2. People
 3. Projects
 4. Project relationships: parent, teams, institutions
-5. Notes
+5. Notes, note tags, and note image attachments
 6. Minutes and linked `Note`
-7. Documents with attachment references preserved in the description
-8. Tasks and task hierarchy
-9. Derived meeting `DayEntry` records
-10. Diagnostics review
+7. Documents with copied attachments
+8. Focus blocks
+9. Tasks and task hierarchy
+10. Derived meeting `DayEntry` records
+11. Diagnostics review
 
 ## Diagnostics To Resolve Before Live Import
 
 - `unresolved-link`: a wikilink could not be matched to the expected entity type.
 - Missing or invalid dates for meetings/day records.
 - Missing attachment files referenced by documents.
+- Missing image files referenced by note image embeds.
 - Empty task summaries after stripping inline metadata.
 - Duplicate source identities.
 

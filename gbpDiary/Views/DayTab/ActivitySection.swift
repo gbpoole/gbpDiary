@@ -221,9 +221,16 @@ struct ActivitySection: View {
     }
 }
 
+private final class StandaloneTapFlags { var didTapMinutes = false }
+
 private struct StandaloneMeetingRow: View {
     let minutes: Minutes
     var onTap: (() -> Void)? = nil
+
+    @Environment(MinutesEditorContext.self) private var editorContext
+    @Environment(\.modelContext) private var modelContext
+    @State private var tapFlags = StandaloneTapFlags()
+    @State private var tapCount = 0
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
@@ -236,11 +243,26 @@ private struct StandaloneMeetingRow: View {
                 Text(minutes.summary ?? "Meeting")
                     .font(.subheadline)
                     .foregroundStyle(AppTheme.text)
-                Spacer(minLength: 0)
-                Chip(label: minutes.meetingAt.formatted(date: .omitted, time: .shortened),
-                     color: AppTheme.project)
-                if let d = minutes.duration {
-                    Chip(label: d.displayString, color: AppTheme.duration)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                HStack(spacing: 4) {
+                    minutesIcon
+                        .frame(width: 24, alignment: .center)
+                    Group {
+                        if let project = minutes.projects.first {
+                            Chip(label: project.name, color: AppTheme.project)
+                        }
+                    }
+                    .frame(width: 110, alignment: .leading)
+                    Chip(label: minutes.meetingAt.formatted(date: .omitted, time: .shortened),
+                         color: AppTheme.project)
+                        .frame(width: 76, alignment: .leading)
+                    Group {
+                        if let d = minutes.duration {
+                            Chip(label: d.displayString, color: AppTheme.duration)
+                        }
+                    }
+                    .frame(width: 46, alignment: .leading)
                 }
             }
             .padding(.horizontal, 8)
@@ -248,11 +270,51 @@ private struct StandaloneMeetingRow: View {
             .background(AppTheme.cardRaised.opacity(0.45))
             .clipShape(RoundedRectangle(cornerRadius: 5))
             .contentShape(Rectangle())
-            .onTapGesture { onTap?() }
+            .simultaneousGesture(TapGesture().onEnded { tapCount += 1 })
+            .onChange(of: tapCount) {
+                if tapFlags.didTapMinutes {
+                    tapFlags.didTapMinutes = false
+                } else {
+                    onTap?()
+                }
+            }
             .padding(.trailing)
         }
         .padding(.leading)
         .padding(.vertical, 1)
+    }
+
+    @ViewBuilder
+    private var minutesIcon: some View {
+        if minutes.note == nil {
+            Button {
+                tapFlags.didTapMinutes = true
+                let note = Note(content: "")
+                modelContext.insert(note)
+                minutes.note = note
+                minutes.updatedAt = Date()
+                editorContext.open(note: note, title: minutes.summary ?? "Meeting")
+            } label: {
+                Image(systemName: "note.text.badge.plus")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AppTheme.mutedText)
+            }
+            .buttonStyle(.plain)
+            .help("Add minutes")
+        } else {
+            Button {
+                tapFlags.didTapMinutes = true
+                if let note = minutes.note {
+                    editorContext.open(note: note, title: minutes.summary ?? "Meeting")
+                }
+            } label: {
+                Image(systemName: "note.text")
+                    .font(.system(size: 12))
+                    .foregroundStyle(AppTheme.accent)
+            }
+            .buttonStyle(.plain)
+            .help("Open minutes")
+        }
     }
 }
 
@@ -292,22 +354,23 @@ private struct CompletedTaskActivityRow: View {
     }
 }
 
+private final class UnspecifiedActivityTapFlags { var didTapStatus = false; var didTapFollowUp = false }
+
 private struct UnspecifiedActivityRow: View {
     @Environment(\.modelContext) private var modelContext
     var entry: TaskTimeEntry
 
     @State private var showingEdit = false
+    @State private var showingFollowUpPicker = false
+    @State private var tapFlags = UnspecifiedActivityTapFlags()
+    @State private var tapCount = 0
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
             Color.clear.frame(width: 16, height: 1)
 
             HStack(alignment: .center, spacing: 6) {
-                Image(systemName: "circle.dotted")
-                    .font(.system(size: 12))
-                    .foregroundStyle(AppTheme.mutedText)
-                    .frame(width: 18)
-                    .padding(.leading, 2)
+                statusIconView
 
                 if let task = entry.task {
                     Text(task.summary)
@@ -325,28 +388,138 @@ private struct UnspecifiedActivityRow: View {
                         .lineLimit(1)
                 }
 
-                Spacer(minLength: 0)
-                Chip(label: entry.date.formatted(date: .omitted, time: .shortened),
-                     color: AppTheme.project)
-                Chip(label: entry.duration.displayString, color: AppTheme.duration)
+                Spacer(minLength: 8)
+                HStack(spacing: 4) {
+                    followUpIconView
+                        .frame(width: 24, alignment: .center)
+                    Group {
+                        if let project = entry.task?.project {
+                            Chip(label: project.name, color: AppTheme.project)
+                        }
+                    }
+                    .frame(width: 110, alignment: .leading)
+                    Chip(label: entry.date.formatted(date: .omitted, time: .shortened),
+                         color: AppTheme.project)
+                        .frame(width: 76, alignment: .leading)
+                    Chip(label: entry.duration.displayString, color: AppTheme.duration)
+                        .frame(width: 46, alignment: .leading)
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(AppTheme.cardRaised.opacity(0.45))
             .clipShape(RoundedRectangle(cornerRadius: 5))
             .contentShape(Rectangle())
-            .onTapGesture { showingEdit = true }
+            .simultaneousGesture(TapGesture().onEnded { tapCount += 1 })
+            .onChange(of: tapCount) {
+                if tapFlags.didTapStatus || tapFlags.didTapFollowUp {
+                    tapFlags.didTapStatus = false
+                    tapFlags.didTapFollowUp = false
+                } else {
+                    showingEdit = true
+                }
+            }
             .padding(.trailing)
             .sheet(isPresented: $showingEdit) {
                 LogTimeSheet(existingEntry: entry)
             }
             .contextMenu {
-                Button("Delete", role: .destructive) {
-                    modelContext.delete(entry)
+                if let task = entry.task {
+                    if task.status != .completed {
+                        Button("Mark Complete") { task.markCompleted() }
+                    }
+                    if task.status == .todo || task.status == .cancelled {
+                        Button("Mark Started") { task.status = .started; task.updatedAt = Date() }
+                    }
+                    if task.status == .completed || task.status == .cancelled || task.status == .followUpPending {
+                        Button("Reopen") {
+                            if task.status == .cancelled { task.unmarkCancelled() } else { task.unmarkCompleted() }
+                        }
+                    }
+                    Divider()
                 }
+                Button("Delete Entry", role: .destructive) { modelContext.delete(entry) }
             }
         }
         .padding(.leading)
         .padding(.vertical, 1)
+        .sheet(isPresented: $showingFollowUpPicker) {
+            if let task = entry.task {
+                FollowUpDateSheet(
+                    initialDate: task.followUpAt ?? Calendar.current.date(byAdding: .day, value: 1, to: .now)!,
+                    onSave: { date in task.setFollowUp(date: date) },
+                    onRemove: task.status == .followUpPending ? { task.clearFollowUp() } : nil
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var followUpIconView: some View {
+        if let task = entry.task,
+           task.status == .started || task.status == .followUpPending {
+            Button {
+                tapFlags.didTapFollowUp = true
+                showingFollowUpPicker = true
+            } label: {
+                Image(systemName: task.status == .followUpPending ? "clock.fill" : "clock.badge")
+                    .font(.system(size: 12))
+                    .foregroundStyle(task.status == .followUpPending ? AppTheme.followUp : AppTheme.mutedText)
+            }
+            .buttonStyle(.plain)
+            .help(task.status == .followUpPending ? "Edit follow-up date" : "Set follow-up date")
+        }
+    }
+
+    @ViewBuilder
+    private var statusIconView: some View {
+        if let task = entry.task {
+            Button {
+                tapFlags.didTapStatus = true
+                toggleStatus(task)
+            } label: {
+                Image(systemName: taskStatusIcon(task))
+                    .font(.system(size: 12))
+                    .foregroundStyle(taskStatusColor(task))
+                    .frame(width: 18)
+            }
+            .buttonStyle(.plain)
+        } else {
+            Image(systemName: "circle.dotted")
+                .font(.system(size: 12))
+                .foregroundStyle(AppTheme.mutedText)
+                .frame(width: 18)
+                .padding(.leading, 2)
+        }
+    }
+
+    private func toggleStatus(_ task: Task) {
+        switch task.status {
+        case .todo:            task.status = .started; task.updatedAt = Date()
+        case .started:         task.markCompleted()
+        case .completed:       task.markCancelled()
+        case .followUpPending: task.markCancelled()
+        case .cancelled:       task.unmarkCancelled()
+        }
+    }
+
+    private func taskStatusIcon(_ task: Task) -> String {
+        switch task.status {
+        case .todo:            return "circle"
+        case .started:         return "play.circle.fill"
+        case .completed:       return "checkmark.circle.fill"
+        case .cancelled:       return "xmark.circle.fill"
+        case .followUpPending: return "arrow.clockwise.circle.fill"
+        }
+    }
+
+    private func taskStatusColor(_ task: Task) -> Color {
+        switch task.status {
+        case .todo:            return AppTheme.mutedText
+        case .started:         return AppTheme.started
+        case .completed:       return AppTheme.completed
+        case .cancelled:       return AppTheme.mutedText
+        case .followUpPending: return AppTheme.followUp
+        }
     }
 }

@@ -93,6 +93,43 @@ struct ObsidianBundleImporterTests {
         #expect(FileManager.default.fileExists(atPath: attachments.first?.fileURL.path ?? "") == true)
     }
 
+    @Test func importBundle_copiesNoteImageAttachmentsAndImportsTags() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("obsidian-note-image-importer-test-\(UUID().uuidString)")
+        let vault = tempDir.appendingPathComponent("Vault")
+        let imageDir = vault.appendingPathComponent("Diary/Note")
+        try FileManager.default.createDirectory(at: imageDir, withIntermediateDirectories: true)
+        let sourceFile = imageDir.appendingPathComponent("plot.png")
+        try Data("png".utf8).write(to: sourceFile)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let dayRecordId = UUID()
+        let noteId = UUID()
+        let attachmentId = UUID()
+        let json = noteImageFixture(vaultPath: vault.path, dayRecordId: dayRecordId, noteId: noteId, attachmentId: attachmentId)
+        let bundle = try JSONDecoder().decode(ObsidianImportBundle.self, from: Data(json.utf8))
+
+        let report = try ObsidianBundleImporter(context: context).importBundle(bundle)
+
+        #expect(report.notes == 1)
+        #expect(report.dayRecords == 1)
+        #expect(report.attachments == 1)
+
+        let notes = try context.fetch(FetchDescriptor<Note>())
+        let dayRecords = try context.fetch(FetchDescriptor<DayRecord>())
+        let attachments = try context.fetch(FetchDescriptor<gbpDiary.Attachment>())
+
+        #expect(notes.first?.tags == ["milestone", "weekly"])
+        #expect(notes.first?.content.contains("#milestone") == true)
+        #expect(notes.first?.blocks.map(\.kind) == [.text, .image, .text])
+        #expect(notes.first?.blocks[1].attachmentId == attachments.first?.id)
+        #expect(notes.first?.attachments.first?.kind == .image)
+        #expect(dayRecords.first?.focusTags == ["diary-tag"])
+        #expect(FileManager.default.fileExists(atPath: attachments.first?.fileURL.path ?? "") == true)
+    }
+
     private var fixtureJSON: String {
         """
         {
@@ -152,6 +189,31 @@ struct ObsidianBundleImporterTests {
           ],
           "focusBlocks": [
             {"id": "00000000-0000-5000-8000-000000000015", "summary": "Apply for access", "duration": {"value": 1.5, "unit": "h", "hoursNormalized": 1.5}, "slot": "allDay", "sortOrder": 10, "taskId": "00000000-0000-5000-8000-000000000016", "projectId": "00000000-0000-5000-8000-000000000012", "assigneePersonId": "00000000-0000-5000-8000-000000000011", "dayRecordId": "00000000-0000-5000-8000-000000000014"}
+          ],
+          "tasks": []
+        }
+        """
+    }
+
+    private func noteImageFixture(vaultPath: String, dayRecordId: UUID, noteId: UUID, attachmentId: UUID) -> String {
+        """
+        {
+          "schemaVersion": 1,
+          "generatedAt": "2026-06-12T00:00:00",
+          "vaultPath": "\(vaultPath)",
+          "counts": {},
+          "summary": {},
+          "diagnostics": [],
+          "institutions": [],
+          "people": [],
+          "projects": [],
+          "minutes": [],
+          "documents": [],
+          "dayRecords": [
+            {"id": "\(dayRecordId.uuidString)", "date": "2026-03-02", "tags": ["diary-tag"]}
+          ],
+          "notes": [
+            {"id": "\(noteId.uuidString)", "content": "Before #milestone\\n\\n![[plot.png]]\\n\\nAfter", "tags": ["milestone", "weekly"], "dayRecordId": "\(dayRecordId.uuidString)", "sourcePath": "Diary/Note.md", "sourceContext": {"sourceRecordId": "Diary/Note.md"}, "attachments": [{"id": "\(attachmentId.uuidString)", "ref": "Diary/Note/plot.png", "fileName": "plot.png", "kind": "image"}], "blocks": [{"kind": "text", "textContent": "Before #milestone"}, {"kind": "image", "attachmentId": "\(attachmentId.uuidString)"}, {"kind": "text", "textContent": "After"}]}
           ],
           "tasks": []
         }

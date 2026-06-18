@@ -15,6 +15,7 @@ struct EntryRowView: View {
     var onDropExternalOntoMeetingTask: ((String, Task) -> Bool)? = nil
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(MinutesEditorContext.self) private var editorContext
     @State private var editingMinutes: Minutes?
     @State private var showingDeleteConfirm = false
     @State private var summaryDraft = ""
@@ -35,7 +36,10 @@ struct EntryRowView: View {
         .alert("Delete Meeting?", isPresented: $showingDeleteConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
-                if let m = entry.minutes { modelContext.delete(m) }
+                if let m = entry.minutes {
+                    if let note = m.note { editorContext.remove(note: note) }
+                    modelContext.delete(m)
+                }
                 modelContext.delete(entry)
             }
         } message: {
@@ -76,6 +80,18 @@ struct EntryRowView: View {
                     isEntryFocused: isEntryFocused,
                     isCollapsed: isCollapsed,
                     onToggleCollapse: nil,
+                    onAddMinutes: {
+                        guard let m = entry.minutes else { return }
+                        let note = Note(content: "")
+                        modelContext.insert(note)
+                        m.note = note
+                        m.updatedAt = Date()
+                        editorContext.open(note: note, title: m.summary ?? "Meeting")
+                    },
+                    onOpenMinutes: {
+                        guard let note = entry.minutes?.note else { return }
+                        editorContext.open(note: note, title: entry.minutes?.summary ?? "Meeting")
+                    },
                     onEdit: { minutes in editingMinutes = minutes },
                     onDelete: { showingDeleteConfirm = true },
                     inlineText: { binding in
@@ -165,8 +181,10 @@ struct EntryRowView: View {
         }
         .onAppear {
             summaryDraft = entry.inlineSummary
-            guard let minutes = entry.minutes, minutes.note == nil else { return }
-            let note = Note(content: minutes.minutesContent ?? "")
+            guard let minutes = entry.minutes,
+                  minutes.note == nil,
+                  let legacy = minutes.minutesContent, !legacy.isEmpty else { return }
+            let note = Note(content: legacy)
             modelContext.insert(note)
             minutes.note = note
             minutes.minutesContent = nil

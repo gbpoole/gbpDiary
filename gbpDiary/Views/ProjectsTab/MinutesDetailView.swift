@@ -15,6 +15,7 @@ struct MinutesDetailView: View {
     @State private var summaryDebouncer = Debouncer()
     @State private var durationText = ""
     @State private var durationError = false
+    @Environment(MinutesEditorContext.self) private var editorContext
     @State private var showingDeleteConfirm = false
     @State private var isDeleted = false
     @State private var isConfirmed = false
@@ -58,7 +59,6 @@ struct MinutesDetailView: View {
                 attendeesSection
                 durationSection
                 timeSection
-                notesSection
             }
             .padding()
         }
@@ -112,8 +112,9 @@ struct MinutesDetailView: View {
     }
 
     private func ensureNoteExists() {
-        guard minutes.note == nil else { return }
-        let note = Note(content: minutes.minutesContent ?? "")
+        guard minutes.note == nil,
+              let legacy = minutes.minutesContent, !legacy.isEmpty else { return }
+        let note = Note(content: legacy)
         modelContext.insert(note)
         minutes.note = note
         minutes.minutesContent = nil
@@ -129,7 +130,10 @@ struct MinutesDetailView: View {
         // not called on a cascade-deleted object during sheet dismissal.
         let note = minutes.note
         minutes.note = nil
-        if let note { modelContext.delete(note) }
+        if let note {
+            editorContext.remove(note: note)
+            modelContext.delete(note)
+        }
         let minutesId = minutes.id
         if let entries = try? modelContext.fetch(FetchDescriptor<DayEntry>()) {
             for entry in entries where entry.minutes?.id == minutesId {
@@ -285,6 +289,19 @@ struct MinutesDetailView: View {
             if !isDeleted, let note = minutes.note {
                 NoteEditingArea(note: note)
                     .padding(.horizontal, -12)
+            } else if !isDeleted {
+                Button("Add minutes") {
+                    let note = Note(content: "")
+                    modelContext.insert(note)
+                    minutes.note = note
+                    minutes.updatedAt = Date()
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 3)
+                .background(AppTheme.accent.opacity(0.15), in: Capsule())
+                .foregroundStyle(AppTheme.accent)
             }
         }
     }

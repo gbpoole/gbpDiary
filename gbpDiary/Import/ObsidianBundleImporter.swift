@@ -104,6 +104,7 @@ struct ObsidianBundleImporter {
             let record = dayRecords[imported.id] ?? DayRecord(date: date, id: imported.id)
             if dayRecords[imported.id] == nil { context.insert(record); dayRecords[imported.id] = record }
             record.date = calendar.startOfDay(for: date)
+            record.focusTags = imported.tags ?? []
             applyDates(created: imported.createdAt, updated: imported.updatedAt, to: record)
             report.dayRecords += 1
         }
@@ -113,7 +114,10 @@ struct ObsidianBundleImporter {
             if notes[imported.id] == nil { context.insert(note); notes[imported.id] = note }
             note.content = imported.content ?? ""
             note.blocks = imported.blocks?.map(makeNoteBlock) ?? [NoteBlock.text(imported.content ?? "")]
+            note.tags = imported.tags ?? []
             note.dayRecord = imported.dayRecordId.flatMap { dayRecords[$0] }
+            note.attachments = importNoteAttachments(imported, note: note, existing: &attachments, vaultPath: bundle.vaultPath)
+            report.attachments += note.attachments.count
             applyDates(created: imported.createdAt, updated: imported.updatedAt, to: note)
             report.notes += 1
         }
@@ -190,6 +194,7 @@ struct ObsidianBundleImporter {
             }
             backingTask.summary = imported.summary
             backingTask.notes = emptyToNil(imported.rawText).flatMap { $0 == imported.summary ? nil : $0 }
+            backingTask.tags = imported.tags ?? []
             backingTask.project = imported.projectId.flatMap { projects[$0] }
             backingTask.assignee = imported.assigneePersonId.flatMap { people[$0] }
             backingTask.originDay = block.dayRecord
@@ -308,6 +313,48 @@ struct ObsidianBundleImporter {
         }
     }
 
+    private func importNoteAttachments(
+        _ imported: ImportedNote,
+        note: Note,
+        existing: inout [UUID: Attachment],
+        vaultPath: String?
+    ) -> [Attachment] {
+        guard let refs = imported.attachments, !refs.isEmpty else { return [] }
+        return refs.compactMap { ref in
+            guard let sourceURL = resolveAttachment(ref.ref, documentSource: imported.sourceContext?.sourceRecordId ?? imported.sourcePath, vaultPath: vaultPath) else {
+                return nil
+            }
+            let attachment = existing[ref.id] ?? Attachment(
+                fileName: ref.fileName ?? sourceURL.lastPathComponent,
+                fileURL: sourceURL,
+                kind: ref.kind ?? attachmentKind(for: sourceURL),
+                id: ref.id
+            )
+            if existing[ref.id] == nil { context.insert(attachment); existing[ref.id] = attachment }
+            do {
+                if attachment.fileURL == sourceURL || !FileManager.default.fileExists(atPath: attachment.fileURL.path) {
+                    let dest = AttachmentStorage.attachmentsDirectory
+                        .appendingPathComponent(ref.id.uuidString)
+                        .appendingPathExtension(sourceURL.pathExtension)
+                    if FileManager.default.fileExists(atPath: dest.path) {
+                        try? FileManager.default.removeItem(at: dest)
+                    }
+                    attachment.fileURL = try AttachmentStorage.store(from: sourceURL, fileId: ref.id)
+                }
+                attachment.fileName = ref.fileName ?? sourceURL.lastPathComponent
+                attachment.kind = ref.kind ?? attachmentKind(for: sourceURL)
+                attachment.fileSizeBytes = (try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
+                attachment.note = note
+                if attachment.kind == .image {
+                    attachment.sourceImageWidth = AttachmentStorage.capSource(at: attachment.fileURL)
+                }
+                return attachment
+            } catch {
+                return nil
+            }
+        }
+    }
+
     private func resolveAttachment(_ ref: String, documentSource: String?, vaultPath: String?) -> URL? {
         let rawURL = URL(fileURLWithPath: ref)
         var candidates: [URL] = rawURL.path.hasPrefix("/") ? [rawURL] : []
@@ -315,7 +362,9 @@ struct ObsidianBundleImporter {
             let vaultURL = URL(fileURLWithPath: vaultPath)
             candidates.append(vaultURL.appendingPathComponent(ref))
             if let documentSource {
-                candidates.append(vaultURL.appendingPathComponent(documentSource).deletingLastPathComponent().appendingPathComponent(ref))
+                let sourceURL = vaultURL.appendingPathComponent(documentSource)
+                candidates.append(sourceURL.deletingLastPathComponent().appendingPathComponent(ref))
+                candidates.append(sourceURL.deletingPathExtension().appendingPathComponent(ref))
             }
         }
         return candidates.first { FileManager.default.fileExists(atPath: $0.path) }

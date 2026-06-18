@@ -31,8 +31,11 @@ class ObsidianImportBundleTests(unittest.TestCase):
             (vault / "CMS/Projects").mkdir(parents=True)
             (vault / "CMS/Minutes/Foo").mkdir(parents=True)
 
+            (vault / "CMS/Minutes/Foo/2025-08-20_14.28").mkdir(parents=True)
+            (vault / "CMS/Minutes/Foo/2025-08-20_14.28/plot.png").write_bytes(b"png")
+
             (vault / "CMS/People/Greg Poole.md").write_text(
-                "---\ntype:\n  - person\nEmail: \"greg@example.com\"\n---\n",
+                "---\ntype:\n  - person\ntags:\n  - collaborator\nEmail: \"greg@example.com\"\n---\n",
                 encoding="utf-8",
             )
             (vault / "CMS/People/Owen Cole.md").write_text(
@@ -48,12 +51,12 @@ class ObsidianImportBundleTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (vault / "CMS/Minutes/Foo/2025-08-20_14.28.md").write_text(
-                "---\ntype:\n  - meeting\nProject:\n  - \"[[CMS/Projects/Foo|Foo]]\"\nDate: 2025-08-20 14:28\nDuration: 1h\nAttendees:\n  - \"[[CMS/People/Greg Poole|Greg Poole]]\"\nSummary: Status update\n---\n\n## Notes\n- Useful note\n## New Tasks\n- [ ] ( who::[[CMS/People/Greg Poole|Greg Poole]] ) Do thing [project::[[CMS/Projects/Foo|Foo]]]\n",
+                "---\ntype:\n  - meeting\ntags:\n  - weekly\nProject:\n  - \"[[CMS/Projects/Foo|Foo]]\"\nDate: 2025-08-20 14:28\nDuration: 1h\nAttendees:\n  - \"[[CMS/People/Greg Poole|Greg Poole]]\"\nSummary: Status update\n---\n\n## Notes\n- Useful #milestone note\n\n![[plot.png]]\n\nAfter image.\n## New Tasks\n- [ ] ( who::[[CMS/People/Greg Poole|Greg Poole]] ) Do thing [project::[[CMS/Projects/Foo|Foo]]]\n",
                 encoding="utf-8",
             )
             (vault / "Diary").mkdir()
             (vault / "Diary/2025-08-21-Thursday.md").write_text(
-                "---\ncreated: 2025-08-21 09:00\n---\n- [x] Timesheet focus (duration:: 1.5 h) #timesheet ✅ 2025-08-21\n    - [ ] Nested task\n- [?] Follow up focus (follow_up:: 2025-08-28)\n- [x] Apply for access to Nectar and OzSTAR projects (who::[[CMS/People/Owen Cole.md|Owen Cole]]) (project::[[CMS/Projects/YWang_2026A.md|YWang_2026A]]) ✅ 2026-03-02\n",
+                "---\ncreated: 2025-08-21 09:00\ntags:\n  - diary-tag\n---\n- [x] Timesheet focus (duration:: 1.5 h) #timesheet ✅ 2025-08-21\n    - [ ] Nested task\n- [?] Follow up focus (follow_up:: 2025-08-28)\n- [x] Apply for access to Nectar and OzSTAR projects (who::[[CMS/People/Owen Cole.md|Owen Cole]]) (project::[[CMS/Projects/YWang_2026A.md|YWang_2026A]]) ✅ 2026-03-02\n",
                 encoding="utf-8",
             )
 
@@ -65,13 +68,24 @@ class ObsidianImportBundleTests(unittest.TestCase):
             self.assertEqual(bundle["counts"]["focusBlocks"], 3)
             self.assertEqual(bundle["counts"]["tasks"], 2)
             self.assertEqual(bundle["people"][0]["email"], "greg@example.com")
+            self.assertEqual(bundle["people"][0]["tags"], ["collaborator"])
             self.assertEqual(bundle["projects"][0]["description"], "Test project")
             self.assertEqual(bundle["minutes"][0]["duration"]["hoursNormalized"], 1.0)
+            minutes_note = next(note for note in bundle["notes"] if note["sourceContext"]["sourceSection"] == "Notes")
+            self.assertEqual(minutes_note["tags"], ["milestone", "weekly"])
+            self.assertIn("#milestone", minutes_note["content"])
+            self.assertEqual([block["kind"] for block in minutes_note["blocks"]], ["text", "image", "text"])
+            self.assertEqual(len(minutes_note["attachments"]), 1)
+            self.assertEqual(minutes_note["attachments"][0]["ref"], "CMS/Minutes/Foo/2025-08-20_14.28/plot.png")
+            self.assertEqual(minutes_note["blocks"][1]["attachmentId"], minutes_note["attachments"][0]["id"])
+            diary_record = next(record for record in bundle["dayRecords"] if record["date"] == "2025-08-21")
+            self.assertEqual(diary_record["tags"], ["diary-tag", "timesheet"])
             self.assertEqual(bundle["tasks"][0]["summary"], "Do thing")
             nested = next(task for task in bundle["tasks"] if task["summary"] == "Nested task")
             self.assertIsNotNone(nested["dayRecordId"])
             timesheet = next(block for block in bundle["focusBlocks"] if block["summary"] == "Timesheet focus")
             self.assertEqual(timesheet["duration"]["hoursNormalized"], 1.5)
+            self.assertEqual(timesheet["tags"], ["timesheet"])
             owen = next(block for block in bundle["focusBlocks"] if block["summary"] == "Apply for access to Nectar and OzSTAR projects")
             owen_person = next(person for person in bundle["people"] if person["name"] == "Owen Cole")
             ywang_project = next(project for project in bundle["projects"] if project["name"] == "YWang_2026A")

@@ -15,6 +15,7 @@ enum AppTab: String, CaseIterable {
 
 struct ContentView: View {
     @State private var selectedTab: AppTab = .diary
+    @Environment(MinutesEditorContext.self) private var editorContext
 
     var body: some View {
         Group {
@@ -30,6 +31,13 @@ struct ContentView: View {
             case .timesheet:     TimesheetView()
             }
         }
+        .inspector(isPresented: Binding(
+            get: { editorContext.activeNote != nil },
+            set: { if !$0 { editorContext.close() } }
+        )) {
+            MinutesInspectorView()
+        }
+        .inspectorColumnWidth(min: 320, ideal: 480, max: 700)
         .kanagawaAppBackground()
         .toolbar {
             #if os(macOS)

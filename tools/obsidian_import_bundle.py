@@ -55,6 +55,9 @@ COMPLETION_STAMP_RE = re.compile(r"\s*✅\s*(?P<date>\d{4}-\d{2}-\d{2})\s*")
 CANCELLED_STAMP_RE = re.compile(r"\s*🚫\s*(?P<date>\d{4}-\d{2}-\d{2})\s*")
 SCHEDULED_STAMP_RE = re.compile(r"\s*⏳\s*(?P<date>\d{4}-\d{2}-\d{2})\s*")
 TAG_RE = re.compile(r"(^|\s)#(?P<tag>[A-Za-z0-9_/-]+)(?=\s|$)")
+OBSIDIAN_IMAGE_RE = re.compile(r"!\[\[(?P<target>[^\]]+)\]\]")
+MARKDOWN_IMAGE_RE = re.compile(r"!\[[^\]]*\]\((?P<target>[^)]+)\)")
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".heic", ".tif", ".tiff", ".webp"}
 
 
 def stable_uuid(kind: str, key: str) -> str:
@@ -212,6 +215,78 @@ def parse_followed_up(raw: Any) -> list[str]:
 
 def normalize_tag(raw: str) -> str:
     return re.sub(r"_+", "_", re.sub(r"\s+", "_", raw.strip().lstrip("#"))).strip("_")
+
+
+def merge_tags(*groups: list[str]) -> list[str]:
+    tags = {normalize_tag(tag) for group in groups for tag in group}
+    return sorted(tag for tag in tags if tag and tag.lower() not in STRUCTURAL_TAGS)
+
+
+def frontmatter_tags(frontmatter: dict[str, Any]) -> list[str]:
+    return merge_tags(
+        as_list(first_field(frontmatter, "tags")),
+        as_list(first_field(frontmatter, "type")),
+    )
+
+
+def markdown_tags(markdown: str) -> list[str]:
+    return merge_tags([match.group("tag") for match in TAG_RE.finditer(markdown)])
+
+
+def image_target(raw: str) -> str:
+    text = clean_scalar(raw)
+    text = text.split("|", 1)[0].split("#", 1)[0].split("^", 1)[0].strip()
+    return text.replace("\\", "/")
+
+
+def is_image_ref(ref: str) -> bool:
+    return Path(image_target(ref)).suffix.lower() in IMAGE_EXTENSIONS
+
+
+def resolve_note_image(ref: str, source: SourceFile, vault: Path) -> Path | None:
+    target = image_target(ref)
+    if not target or not is_image_ref(target):
+        return None
+    raw = Path(target)
+    candidates: list[Path] = []
+    if raw.is_absolute():
+        candidates.append(raw)
+    candidates.extend([
+        source.path.parent / target,
+        source.path.with_suffix("") / target,
+        vault / target,
+    ])
+    return next((candidate for candidate in candidates if candidate.exists()), None)
+
+
+def note_blocks_and_attachments(source: SourceFile, markdown: str, vault: Path, diagnostics: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    blocks: list[dict[str, Any]] = []
+    attachments: list[dict[str, Any]] = []
+    cursor = 0
+    matches = sorted(
+        list(OBSIDIAN_IMAGE_RE.finditer(markdown)) + list(MARKDOWN_IMAGE_RE.finditer(markdown)),
+        key=lambda match: match.start(),
+    )
+
+    def append_text(value: str) -> None:
+        if value:
+            blocks.append({"kind": "text", "textContent": value.strip("\n")})
+
+    for match in matches:
+        append_text(markdown[cursor:match.start()])
+        target = image_target(match.group("target"))
+        resolved = resolve_note_image(target, source, vault)
+        if resolved:
+            ref = resolved.relative_to(vault).as_posix() if resolved.is_relative_to(vault) else resolved.as_posix()
+            attachment_id = stable_uuid("noteAttachment", f"{source.rel_path}:{target}")
+            attachments.append({"id": attachment_id, "ref": ref, "fileName": resolved.name, "kind": "image"})
+            blocks.append({"kind": "image", "attachmentId": attachment_id})
+        else:
+            diagnostics.append({"severity": "warning", "code": "unresolved-image", "source": source.rel_path, "value": target})
+            append_text(match.group(0))
+        cursor = match.end()
+    append_text(markdown[cursor:])
+    return (blocks or [{"kind": "text", "textContent": markdown}], attachments)
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -491,7 +566,7 @@ def build_bundle(vault: Path) -> dict[str, Any]:
         created = parse_date(first_field(fm, "created", "createdAt"), source.rel_path)
         updated = parse_date(first_field(fm, "updated", "updatedAt"), source.rel_path) or created
         basename = Path(source.rel_path).stem
-        type_tags = [t for t in as_list(first_field(fm, "type", "tags")) if t.lower() not in STRUCTURAL_TAGS]
+        type_tags = frontmatter_tags(fm)
 
         if kind == "institution":
             institutions.append({
@@ -531,11 +606,15 @@ def build_bundle(vault: Path) -> dict[str, Any]:
         elif kind == "minutes":
             source_sections = sections(strip_generated_blocks(source.body))
             note_text = source_sections.get("notes", "").strip()
+            note_tags = merge_tags(type_tags, markdown_tags(note_text))
+            note_blocks, note_attachments = note_blocks_and_attachments(source, note_text, vault, diagnostics)
             note_id = stable_uuid("note", f"{source.rel_path}:minutes-note")
             notes.append({
                 "id": note_id,
                 "content": note_text,
-                "blocks": [{"kind": "text", "textContent": note_text}],
+                "blocks": note_blocks,
+                "attachments": note_attachments,
+                "tags": note_tags,
                 "sourcePath": source.rel_path,
                 "createdAt": created,
                 "updatedAt": updated,
@@ -571,21 +650,26 @@ def build_bundle(vault: Path) -> dict[str, Any]:
             date = parse_date(first_field(fm, "date"), source.rel_path)
             if date:
                 day_id = stable_uuid("dayRecord", date[:10])
+                note_text = strip_generated_blocks(source.body)
+                note_tags = merge_tags(type_tags, markdown_tags(note_text))
                 if day_id not in day_record_ids:
                     day_records.append({
                         "id": day_id,
                         "date": date[:10],
+                        "tags": note_tags,
                         "createdAt": created,
                         "updatedAt": updated,
                         "sourceContext": source_context(source),
                     })
                     day_record_ids.add(day_id)
-                note_text = strip_generated_blocks(source.body)
                 if note_text.strip():
+                    note_blocks, note_attachments = note_blocks_and_attachments(source, note_text, vault, diagnostics)
                     notes.append({
                         "id": stable_uuid("note", f"{source.rel_path}:day-note"),
                         "content": note_text,
-                        "blocks": [{"kind": "text", "textContent": note_text}],
+                        "blocks": note_blocks,
+                        "attachments": note_attachments,
+                        "tags": note_tags,
                         "dayRecordId": day_id,
                         "sourcePath": source.rel_path,
                         "createdAt": created,
@@ -605,6 +689,7 @@ def build_bundle(vault: Path) -> dict[str, Any]:
                 day_records.append({
                     "id": task["dayRecordId"],
                     "date": diary_date[:10],
+                    "tags": merge_tags(type_tags, task.get("tags") or []),
                     "createdAt": created,
                     "updatedAt": updated,
                     "sourceContext": source_context(source, task.get("section")),
@@ -624,6 +709,7 @@ def build_bundle(vault: Path) -> dict[str, Any]:
                     "projectId": task.get("projectId"),
                     "assigneePersonId": task.get("assigneePersonId"),
                     "dayRecordId": task.get("dayRecordId"),
+                    "tags": task.get("tags") or [],
                     "sourceContext": task.get("sourceContext"),
                 })
                 continue

@@ -5,8 +5,9 @@ struct MinutesListView: View {
     @Query(sort: \Minutes.meetingAt, order: .reverse) private var allMinutes: [Minutes]
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Environment(\.modelContext) private var modelContext
+    @Environment(MinutesEditorContext.self) private var editorContext
 
-    @State private var selectedMinutes: Minutes?
+    @State private var editingMinutes: Minutes?
     @State private var showingAdd = false
     @State private var projectFilter: Project? = nil
 
@@ -27,8 +28,20 @@ struct MinutesListView: View {
                 Button { showingAdd = true } label: { Image(systemName: "plus") }
             }
         }
-        .sheet(item: $selectedMinutes) { MinutesDetailView(minutes: $0, asSheet: true) }
+        .sheet(item: $editingMinutes) { MinutesDetailView(minutes: $0, asSheet: true) }
         .sheet(isPresented: $showingAdd) { MinutesEditorSheet(minutes: nil, project: nil) }
+    }
+
+    private func openInspector(for minutes: Minutes) {
+        if let note = minutes.note {
+            editorContext.open(note: note, title: minutes.summary ?? "Meeting")
+        } else {
+            let note = Note(content: "")
+            modelContext.insert(note)
+            minutes.note = note
+            minutes.updatedAt = Date()
+            editorContext.open(note: note, title: minutes.summary ?? "Meeting")
+        }
     }
 
     private var filterBar: some View {
@@ -58,7 +71,8 @@ struct MinutesListView: View {
             TableColumn("Date") { minutes in
                 Text(minutes.meetingAt, format: .dateTime.weekday(.abbreviated).day().month(.abbreviated).year())
                     .lineLimit(1)
-                    .onTapGesture { selectedMinutes = minutes }
+                    .onTapGesture { openInspector(for: minutes) }
+                    .contextMenu { editMenuItem(minutes) }
             }
             .width(160)
             TableColumn("Time") { minutes in
@@ -70,7 +84,8 @@ struct MinutesListView: View {
                 Text(minutes.summary ?? "")
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                    .onTapGesture { selectedMinutes = minutes }
+                    .onTapGesture { openInspector(for: minutes) }
+                    .contextMenu { editMenuItem(minutes) }
             }
             TableColumn("Projects") { minutes in
                 Text(minutes.projects.map(\.name).joined(separator: ", "))
@@ -95,8 +110,14 @@ struct MinutesListView: View {
                     Text(s).foregroundStyle(.secondary).font(.callout).lineLimit(1)
                 }
             }
-            .onTapGesture { selectedMinutes = minutes }
+            .onTapGesture { openInspector(for: minutes) }
+            .contextMenu { editMenuItem(minutes) }
         }
     }
     #endif
+
+    @ViewBuilder
+    private func editMenuItem(_ minutes: Minutes) -> some View {
+        Button("Edit meeting info…") { editingMinutes = minutes }
+    }
 }
