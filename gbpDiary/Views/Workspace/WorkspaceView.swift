@@ -6,6 +6,14 @@ import SwiftData
 struct WorkspaceView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(WorkspaceModel.self) private var workspace
+    @Query private var allAttachments: [Attachment]
+    @Query private var allNotes: [Note]
+
+    // Image attachments referenced by no note and not attached to a document.
+    private var unusedImageCount: Int {
+        let referenced = AttachmentUsageScanner.referencedIDs(inContents: allNotes.map(\.content))
+        return allAttachments.filter { $0.kind == .image && $0.document == nil && !referenced.contains($0.id) }.count
+    }
 
     var body: some View {
         @Bindable var workspace = workspace
@@ -16,7 +24,9 @@ struct WorkspaceView: View {
             )) {
                 Section("Browse") {
                     ForEach(WorkspaceCategory.allCases) { cat in
-                        Label(cat.rawValue, systemImage: cat.systemImage).tag(cat)
+                        Label(cat.rawValue, systemImage: cat.systemImage)
+                            .badge(cat == .images ? unusedImageCount : 0)
+                            .tag(cat)
                     }
                 }
             }
@@ -46,6 +56,7 @@ struct WorkspaceView: View {
         case .institutions: InstitutionsView()
         case .meetings:     MinutesListView()
         case .documents:    DocumentsListView()
+        case .images:       ImageLibraryView()
         case .tags:         TagsView()
         case .timesheet:    TimesheetView()
 

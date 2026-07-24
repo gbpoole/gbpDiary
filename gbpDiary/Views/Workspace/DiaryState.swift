@@ -6,4 +6,6 @@ import Foundation
 @Observable final class DiaryState {
     var currentDate: Date = Calendar.current.startOfDay(for: Date())
     var mode: DiaryMode = .day
+    // Set to request the day view scroll to a specific note; cleared once consumed.
+    var scrollTargetNoteId: UUID? = nil
 }

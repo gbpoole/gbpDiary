@@ -11,6 +11,7 @@ enum WorkspaceTab: Hashable, Identifiable {
     case institutions
     case meetings
     case documents
+    case images
     case tags
     case timesheet
 
@@ -32,6 +33,7 @@ enum WorkspaceTab: Hashable, Identifiable {
         case .institutions, .institution: .institutions
         case .meetings, .minutes:        .meetings
         case .documents, .document:      .documents
+        case .images:                    .images
         case .tags:                      .tags
         case .timesheet:                 .timesheet
         }
@@ -47,6 +49,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     case institutions = "Institutions"
     case meetings     = "Meetings"
     case documents    = "Documents"
+    case images       = "Images"
     case tags         = "Tags"
     case timesheet    = "Timesheet"
 
@@ -61,6 +64,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         case .institutions: "building.2"
         case .meetings:     "person.3.sequence"
         case .documents:    "doc"
+        case .images:       "photo.on.rectangle"
         case .tags:         "tag"
         case .timesheet:    "clock"
         }
@@ -76,6 +80,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         case .institutions: .institutions
         case .meetings:     .meetings
         case .documents:    .documents
+        case .images:       .images
         case .tags:         .tags
         case .timesheet:    .timesheet
         }
@@ -149,6 +154,37 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     }
 
     func activate(_ id: UUID) { activeId = id }
+
+    /// Activate an existing tab already showing this destination, else open it in a new tab.
+    func focusOrOpen(_ tab: WorkspaceTab) {
+        if let existing = tabs.first(where: { $0.current == tab }) {
+            activeId = existing.id
+        } else {
+            openInNewTab(tab)
+        }
+    }
+
+    /// Focus a Diary tab on the given date and request a scroll to `noteId`. Reuses an existing
+    /// Diary tab if one is open, otherwise navigates the active tab to the Diary.
+    func focusDiary(date: Date, scrollTo noteId: UUID?) {
+        let target = tabs.first { $0.current == .diary } ?? active
+        if target.current != .diary { target.navigate(to: .diary) }
+        activeId = target.id
+        target.diaryState.mode = .day
+        target.diaryState.currentDate = Calendar.current.startOfDay(for: date)
+        target.diaryState.scrollTargetNoteId = noteId
+    }
+
+    /// Navigate to the container that holds a note (its day, meeting, or project).
+    func reveal(note: Note) {
+        if let day = note.dayRecord {
+            focusDiary(date: day.date, scrollTo: note.id)
+        } else if let minutes = note.minutes {
+            focusOrOpen(.minutes(minutes.persistentModelID))
+        } else if let project = note.project {
+            focusOrOpen(.project(project.persistentModelID))
+        }
+    }
 
     func closeTab(_ id: UUID) {
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }

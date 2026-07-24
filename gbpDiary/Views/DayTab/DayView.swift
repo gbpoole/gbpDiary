@@ -20,6 +20,7 @@ struct DayPageContent: View {
     var onShowBanner: (BannerMessage) -> Void = { _ in }
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(DiaryState.self) private var diaryState: DiaryState?
     @State private var showingAddTask = false
     @State private var activityMeetingTrigger = false
     @State private var activityLogTimeTrigger = false
@@ -112,28 +113,32 @@ struct DayPageContent: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                if showActionBar {
-                    DayActionBar(items: actionItems)
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    if showActionBar {
+                        DayActionBar(items: actionItems)
+                    }
+                    ActivitySection(
+                        dayRecord: dayRecord,
+                        date: date,
+                        todayEntries: todayTimeEntries,
+                        meetings: dayMeetings,
+                        completedTasks: activityCompletedTasks,
+                        findOrCreateDayRecord: findOrCreateDayRecord,
+                        logTimeTrigger: $activityLogTimeTrigger,
+                        focusBlockTrigger: $activityFocusBlockTrigger,
+                        meetingTrigger: $activityMeetingTrigger
+                    )
+                    newTasksSection
+                    completedTasksSection
+                    notesSection
+                    if showTaskSections { sidebarSections }
                 }
-                ActivitySection(
-                    dayRecord: dayRecord,
-                    date: date,
-                    todayEntries: todayTimeEntries,
-                    meetings: dayMeetings,
-                    completedTasks: activityCompletedTasks,
-                    findOrCreateDayRecord: findOrCreateDayRecord,
-                    logTimeTrigger: $activityLogTimeTrigger,
-                    focusBlockTrigger: $activityFocusBlockTrigger,
-                    meetingTrigger: $activityMeetingTrigger
-                )
-                newTasksSection
-                completedTasksSection
-                notesSection
-                if showTaskSections { sidebarSections }
+                .padding(.vertical, 8)
             }
-            .padding(.vertical, 8)
+            .onAppear { scrollToTargetIfNeeded(proxy) }
+            .onChange(of: diaryState?.scrollTargetNoteId) { scrollToTargetIfNeeded(proxy) }
         }
         .background(AppTheme.background)
         .sheet(isPresented: $showingAddTask) {
@@ -253,6 +258,14 @@ struct DayPageContent: View {
         )
         .padding(.horizontal)
         .padding(.vertical, 2)
+        .id(note.id)
+    }
+
+    private func scrollToTargetIfNeeded(_ proxy: ScrollViewProxy) {
+        guard let target = diaryState?.scrollTargetNoteId,
+              dayNotes.contains(where: { $0.id == target }) else { return }
+        withAnimation { proxy.scrollTo(target, anchor: .top) }
+        diaryState?.scrollTargetNoteId = nil
     }
 
     private func notesDropZone(belowIndex: Int) -> some View {
