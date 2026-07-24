@@ -266,34 +266,32 @@ def resolve_note_image(ref: str, source: SourceFile, vault: Path) -> Path | None
     return next((candidate for candidate in candidates if candidate.exists()), None)
 
 
-def note_blocks_and_attachments(source: SourceFile, markdown: str, vault: Path, diagnostics: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    blocks: list[dict[str, Any]] = []
+def note_markdown_and_attachments(source: SourceFile, markdown: str, vault: Path, diagnostics: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
+    """Rewrite Obsidian/markdown image links into managed `attachment://<uuid>` refs and collect
+    the referenced attachments. Notes are plain markdown in the app; images are resolved by id."""
     attachments: list[dict[str, Any]] = []
+    parts: list[str] = []
     cursor = 0
     matches = sorted(
         list(OBSIDIAN_IMAGE_RE.finditer(markdown)) + list(MARKDOWN_IMAGE_RE.finditer(markdown)),
         key=lambda match: match.start(),
     )
 
-    def append_text(value: str) -> None:
-        if value:
-            blocks.append({"kind": "text", "textContent": value.strip("\n")})
-
     for match in matches:
-        append_text(markdown[cursor:match.start()])
+        parts.append(markdown[cursor:match.start()])
         target = image_target(match.group("target"))
         resolved = resolve_note_image(target, source, vault)
         if resolved:
             ref = resolved.relative_to(vault).as_posix() if resolved.is_relative_to(vault) else resolved.as_posix()
             attachment_id = stable_uuid("noteAttachment", f"{source.rel_path}:{target}")
-            attachments.append({"id": attachment_id, "ref": ref, "fileName": resolved.name, "kind": "image"})
-            blocks.append({"kind": "image", "attachmentId": attachment_id})
+            attachments.append({"id": attachment_id, "ref": ref, "fileName": resolved.name, "kind": "image", "displayName": resolved.stem})
+            parts.append(f"![{resolved.stem}](attachment://{attachment_id})")
         else:
             diagnostics.append({"severity": "warning", "code": "unresolved-image", "source": source.rel_path, "value": target})
-            append_text(match.group(0))
+            parts.append(match.group(0))
         cursor = match.end()
-    append_text(markdown[cursor:])
-    return (blocks or [{"kind": "text", "textContent": markdown}], attachments)
+    parts.append(markdown[cursor:])
+    return ("".join(parts), attachments)
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -616,12 +614,11 @@ def build_bundle(vault: Path) -> dict[str, Any]:
             source_sections = sections(strip_generated_blocks(source.body))
             note_text = source_sections.get("notes", "").strip()
             note_tags = merge_tags(type_tags, markdown_tags(note_text))
-            note_blocks, note_attachments = note_blocks_and_attachments(source, note_text, vault, diagnostics)
+            note_content, note_attachments = note_markdown_and_attachments(source, note_text, vault, diagnostics)
             note_id = stable_uuid("note", f"{source.rel_path}:minutes-note")
             notes.append({
                 "id": note_id,
-                "content": note_text,
-                "blocks": note_blocks,
+                "content": note_content,
                 "attachments": note_attachments,
                 "tags": note_tags,
                 "sourcePath": source.rel_path,
@@ -672,11 +669,10 @@ def build_bundle(vault: Path) -> dict[str, Any]:
                     })
                     day_record_ids.add(day_id)
                 if note_text.strip():
-                    note_blocks, note_attachments = note_blocks_and_attachments(source, note_text, vault, diagnostics)
+                    note_content, note_attachments = note_markdown_and_attachments(source, note_text, vault, diagnostics)
                     notes.append({
                         "id": stable_uuid("note", f"{source.rel_path}:day-note"),
-                        "content": note_text,
-                        "blocks": note_blocks,
+                        "content": note_content,
                         "attachments": note_attachments,
                         "tags": note_tags,
                         "dayRecordId": day_id,

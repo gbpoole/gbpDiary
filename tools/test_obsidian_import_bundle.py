@@ -78,10 +78,11 @@ class ObsidianImportBundleTests(unittest.TestCase):
             minutes_note = next(note for note in bundle["notes"] if note["sourceContext"]["sourceSection"] == "Notes")
             self.assertEqual(minutes_note["tags"], ["milestone", "weekly"])
             self.assertIn("#milestone", minutes_note["content"])
-            self.assertEqual([block["kind"] for block in minutes_note["blocks"]], ["text", "image", "text"])
+            self.assertNotIn("blocks", minutes_note)
             self.assertEqual(len(minutes_note["attachments"]), 1)
             self.assertEqual(minutes_note["attachments"][0]["ref"], "CMS/Minutes/Foo/2025-08-20_14.28/plot.png")
-            self.assertEqual(minutes_note["blocks"][1]["attachmentId"], minutes_note["attachments"][0]["id"])
+            # The image link is rewritten to an inline attachment:// ref in the markdown content.
+            self.assertIn(f"attachment://{minutes_note['attachments'][0]['id']}", minutes_note["content"])
             diary_record = next(record for record in bundle["dayRecords"] if record["date"] == "2025-08-21")
             self.assertEqual(diary_record["tags"], ["diary-tag", "timesheet"])
             self.assertEqual(bundle["tasks"][0]["summary"], "Do thing")
