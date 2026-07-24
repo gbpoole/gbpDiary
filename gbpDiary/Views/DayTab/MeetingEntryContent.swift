@@ -1,8 +1,5 @@
 import SwiftUI
 
-// Flag class lets buttons set state synchronously before .onChange fires.
-private final class MeetingTapFlags { var didTapMinutesAction = false }
-
 struct MeetingEntryContent<InlineText: View>: View {
     let summaryBinding: Binding<String>
     let minutes: Minutes?
@@ -11,12 +8,8 @@ struct MeetingEntryContent<InlineText: View>: View {
     var onToggleCollapse: (() -> Void)? = nil
     var onAddMinutes: (() -> Void)? = nil
     var onOpenMinutes: (() -> Void)? = nil
-    let onEdit: (Minutes) -> Void
     var onDelete: (() -> Void)? = nil
     @ViewBuilder var inlineText: (Binding<String>) -> InlineText
-
-    @State private var tapFlags = MeetingTapFlags()
-    @State private var editTapCount = 0
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
@@ -52,15 +45,6 @@ struct MeetingEntryContent<InlineText: View>: View {
         }
         .padding(.horizontal)
         .padding(.vertical, 5)
-        .contentShape(Rectangle())
-        .simultaneousGesture(TapGesture().onEnded { editTapCount += 1 })
-        .onChange(of: editTapCount) {
-            if tapFlags.didTapMinutesAction {
-                tapFlags.didTapMinutesAction = false
-            } else if let m = minutes {
-                onEdit(m)
-            }
-        }
     }
 
     @ViewBuilder
@@ -68,7 +52,6 @@ struct MeetingEntryContent<InlineText: View>: View {
         if minutes.note == nil {
             if let onAddMinutes {
                 Button("Add minutes") {
-                    tapFlags.didTapMinutesAction = true
                     onAddMinutes()
                 }
                 .buttonStyle(.plain)
@@ -82,7 +65,6 @@ struct MeetingEntryContent<InlineText: View>: View {
             }
         } else if let onOpenMinutes {
             Button("Minutes") {
-                tapFlags.didTapMinutesAction = true
                 onOpenMinutes()
             }
             .buttonStyle(.plain)

@@ -5,7 +5,7 @@ struct MinutesListView: View {
     @Query(sort: \Minutes.meetingAt, order: .reverse) private var allMinutes: [Minutes]
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Environment(\.modelContext) private var modelContext
-    @Environment(MinutesEditorContext.self) private var editorContext
+    @Environment(WorkspaceModel.self) private var workspace
 
     @State private var editingMinutes: Minutes?
     @State private var showingAdd = false
@@ -33,15 +33,7 @@ struct MinutesListView: View {
     }
 
     private func openInspector(for minutes: Minutes) {
-        if let note = minutes.note {
-            editorContext.open(note: note, title: minutes.summary ?? "Meeting")
-        } else {
-            let note = Note(content: "")
-            modelContext.insert(note)
-            minutes.note = note
-            minutes.updatedAt = Date()
-            editorContext.open(note: note, title: minutes.summary ?? "Meeting")
-        }
+        workspace.openInNewTab(.minutes(minutes.persistentModelID))
     }
 
     private var filterBar: some View {

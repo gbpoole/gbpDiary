@@ -15,7 +15,8 @@ struct MinutesDetailView: View {
     @State private var summaryDebouncer = Debouncer()
     @State private var durationText = ""
     @State private var durationError = false
-    @Environment(MinutesEditorContext.self) private var editorContext
+    @FocusState private var customDurationFocused: Bool
+    @Environment(WorkspaceModel.self) private var workspace
     @State private var showingDeleteConfirm = false
     @State private var isDeleted = false
     @State private var isConfirmed = false
@@ -54,12 +55,10 @@ struct MinutesDetailView: View {
 
     @ViewBuilder private var coreContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                summarySection
-                projectsSection
-                attendeesSection
-                durationSection
-                timeSection
+            VStack(alignment: .leading, spacing: 12) {
+                summaryField
+                metadataHeader
+                notesSection
             }
             .padding()
         }
@@ -113,8 +112,10 @@ struct MinutesDetailView: View {
     }
 
     private func ensureNoteExists() {
-        guard minutes.note == nil,
-              let legacy = minutes.minutesContent, !legacy.isEmpty else { return }
+        guard minutes.note == nil else { return }
+        // Migrate legacy plain-text minutes if present, otherwise start an empty markdown note
+        // so the minutes editor is always available in the meeting tab.
+        let legacy = minutes.minutesContent ?? ""
         let note = Note(content: legacy)
         modelContext.insert(note)
         minutes.note = note
@@ -126,13 +127,11 @@ struct MinutesDetailView: View {
         guard !isDeleted else { return }
         isDeleted = true
         summaryDebouncer.cancel()
-        // Explicitly detach and delete the note before deleting minutes so that
-        // NoteEditingArea's monitor closures (which reference note.blocks) are
-        // not called on a cascade-deleted object during sheet dismissal.
+        // Close any open tab for this meeting, then detach and delete its note.
+        workspace.closeEntity(minutes.persistentModelID)
         let note = minutes.note
         minutes.note = nil
         if let note {
-            editorContext.remove(note: note)
             modelContext.delete(note)
         }
         let minutesId = minutes.id
@@ -149,87 +148,136 @@ struct MinutesDetailView: View {
         dismiss()
     }
 
-    private var timeSection: some View {
-        GroupBox("Time") {
-            DatePicker("", selection: $minutes.meetingAt, displayedComponents: [.hourAndMinute])
-                .labelsHidden()
-        }
-    }
-
-    private var summarySection: some View {
-        GroupBox("Summary") {
-            TextField("One-line summary", text: $summaryDraft)
-                .textFieldStyle(.plain)
-                .onChange(of: summaryDraft) { _, newValue in
-                    summaryDebouncer.schedule(delay: 1.0) {
-                        minutes.summary = newValue.isEmpty ? nil : newValue
-                        minutes.updatedAt = Date()
-                    }
+    // Prominent title field.
+    private var summaryField: some View {
+        TextField("Meeting summary", text: $summaryDraft)
+            .textFieldStyle(.plain)
+            .font(.title2.weight(.semibold))
+            .onChange(of: summaryDraft) { _, newValue in
+                summaryDebouncer.schedule(delay: 1.0) {
+                    minutes.summary = newValue.isEmpty ? nil : newValue
+                    minutes.updatedAt = Date()
                 }
+            }
+    }
+
+    // Compact metadata block: projects, time, duration, attendees.
+    private var metadataHeader: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            metaRow("Projects")  { projectsField }
+            metaRow("Time")      { timeField }
+            metaRow("Duration")  { durationPicker }
+            metaRow("Attendees") { attendeesField }
+        }
+        .padding(10)
+        .background(AppTheme.cardRaised.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private func metaRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 66, alignment: .leading)
+            content()
+            Spacer(minLength: 0)
         }
     }
 
-    private var durationSection: some View {
-        GroupBox("Duration") {
-            durationPicker
-        }
+    private var timeField: some View {
+        DatePicker("", selection: $minutes.meetingAt, displayedComponents: [.hourAndMinute])
+            .labelsHidden()
+    }
+
+    // A non-preset duration is currently set (shown highlighted in the custom chip).
+    private var customIsActive: Bool {
+        guard let d = minutes.duration else { return false }
+        return !durationPresets.contains { abs($0.hours - d.hoursNormalized) < 0.01 }
+    }
+
+    // Lenient parse: accepts "2.5h"/"1d"/"1w", and a bare number ("2") as hours. nil if not usable.
+    private func parseLooseDuration(_ text: String) -> Duration? {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return nil }
+        if let d = Duration.parse(t) { return d }
+        if let value = Double(t), value > 0 { return Duration(value: value, unit: .h) }
+        return nil
     }
 
     private var durationPicker: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                ForEach(durationPresets) { preset in
-                    Button(preset.label) {
-                        minutes.duration = Duration(value: preset.hours, unit: .h)
-                        minutes.updatedAt = Date()
-                        durationText = ""
-                        durationError = false
-                    }
-                    .buttonStyle(.plain)
-                    .font(.caption)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(isPresetActive(preset) ? Color.accentColor : Color.secondary.opacity(0.12), in: Capsule())
-                    .foregroundStyle(isPresetActive(preset) ? Color.white : Color.primary)
+        FlowLayout(spacing: 6) {
+            ForEach(durationPresets) { preset in
+                Button(preset.label) {
+                    minutes.duration = Duration(value: preset.hours, unit: .h)
+                    minutes.updatedAt = Date()
+                    durationText = ""
+                    durationError = false
                 }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(isPresetActive(preset) ? Color.accentColor : Color.secondary.opacity(0.12), in: Capsule())
+                .foregroundStyle(isPresetActive(preset) ? Color.white : Color.primary)
             }
-            HStack(spacing: 6) {
-                TextField("Custom (e.g. 2.5h)", text: $durationText)
-                    .textFieldStyle(.plain)
-                    .font(.caption)
-                    .onChange(of: durationText) { _, newVal in
-                        let trimmed = newVal.trimmingCharacters(in: .whitespaces)
-                        if trimmed.isEmpty {
-                            durationError = false
-                        } else if let d = Duration.parse(trimmed) {
-                            durationError = false
-                            minutes.duration = d
-                            minutes.updatedAt = Date()
-                        } else {
-                            durationError = true
-                        }
-                    }
-                if durationError {
-                    Image(systemName: "exclamationmark.circle.fill")
-                        .foregroundStyle(.red)
+
+            customChip
+
+            if minutes.duration != nil {
+                Button {
+                    minutes.duration = nil
+                    minutes.updatedAt = Date()
+                    durationText = ""
+                    durationError = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
                         .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                if minutes.duration != nil {
-                    Button("Clear") {
-                        minutes.duration = nil
-                        minutes.updatedAt = Date()
-                        durationText = ""
-                        durationError = false
-                    }
-                    .buttonStyle(.plain)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
+                .buttonStyle(.plain)
+                .help("Clear duration")
             }
         }
     }
 
-    private var attendeesSection: some View {
+    // Custom duration entered inline as a chip. Highlights when a non-preset value is active,
+    // turns red on unparseable input (but tolerates a bare number as hours).
+    private var customChip: some View {
+        let fill: Color = durationError ? Color.red.opacity(0.18)
+            : (customIsActive ? Color.accentColor : Color.secondary.opacity(0.12))
+        let fg: Color = durationError ? .red : (customIsActive ? .white : .primary)
+        return HStack(spacing: 3) {
+            TextField("custom", text: $durationText)
+                .textFieldStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(fg)
+                .fixedSize()
+                .focused($customDurationFocused)
+                .onSubmit { customDurationFocused = false }
+                .onChange(of: durationText) { _, newVal in
+                    let trimmed = newVal.trimmingCharacters(in: .whitespaces)
+                    if trimmed.isEmpty {
+                        durationError = false
+                    } else if let d = parseLooseDuration(trimmed) {
+                        durationError = false
+                        minutes.duration = d
+                        minutes.updatedAt = Date()
+                    } else {
+                        durationError = true
+                    }
+                }
+            if durationError {
+                Image(systemName: "exclamationmark.circle.fill")
+                    .foregroundStyle(.red)
+                    .font(.caption2)
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(fill, in: Capsule())
+    }
+
+    private var attendeesField: some View {
         let projectFilters: [PickerFilter<Person>] = minutes.projects.map { project in
             PickerFilter(
                 id: "project:\(project.id.uuidString)",
@@ -252,37 +300,33 @@ struct MinutesDetailView: View {
                 }
             }
         let allFilters = projectFilters + institutionFilters
-        return GroupBox("Attendees") {
-            FuzzyPickerField(
-                allItems: allPeople,
-                selected: Binding(
-                    get: { minutes.attendees },
-                    set: { minutes.attendees = $0; minutes.updatedAt = Date() }
-                ),
-                label: \.name,
-                chipColor: AppTheme.person,
-                tapArea: true,
-                emptyLabel: "None selected — tap to add attendees",
-                filters: allFilters.isEmpty ? nil : allFilters,
-                defaultFilterId: projectFilters.first?.id
-            )
-        }
+        return FuzzyPickerField(
+            allItems: allPeople,
+            selected: Binding(
+                get: { minutes.attendees },
+                set: { minutes.attendees = $0; minutes.updatedAt = Date() }
+            ),
+            label: \.name,
+            chipColor: AppTheme.person,
+            tapArea: true,
+            emptyLabel: "None selected — tap to add attendees",
+            filters: allFilters.isEmpty ? nil : allFilters,
+            defaultFilterId: projectFilters.first?.id
+        )
     }
 
-    private var projectsSection: some View {
-        GroupBox("Projects") {
-            FuzzyPickerField(
-                allItems: allProjects,
-                selected: Binding(
-                    get: { minutes.projects },
-                    set: { minutes.projects = $0; minutes.updatedAt = Date() }
-                ),
-                label: \.name,
-                chipColor: AppTheme.project,
-                tapArea: true,
-                emptyLabel: "None selected — tap to link projects"
-            )
-        }
+    private var projectsField: some View {
+        FuzzyPickerField(
+            allItems: allProjects,
+            selected: Binding(
+                get: { minutes.projects },
+                set: { minutes.projects = $0; minutes.updatedAt = Date() }
+            ),
+            label: \.name,
+            chipColor: AppTheme.project,
+            tapArea: true,
+            emptyLabel: "None selected — tap to link projects"
+        )
     }
 
     private var notesSection: some View {

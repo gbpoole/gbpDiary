@@ -15,7 +15,7 @@ struct EntryRowView: View {
     var onDropExternalOntoMeetingTask: ((String, Task) -> Bool)? = nil
 
     @Environment(\.modelContext) private var modelContext
-    @Environment(MinutesEditorContext.self) private var editorContext
+    @Environment(WorkspaceModel.self) private var workspace
     @State private var editingMinutes: Minutes?
     @State private var showingDeleteConfirm = false
     @State private var summaryDraft = ""
@@ -37,7 +37,7 @@ struct EntryRowView: View {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
                 if let m = entry.minutes {
-                    if let note = m.note { editorContext.remove(note: note) }
+                    workspace.closeEntity(m.persistentModelID)
                     modelContext.delete(m)
                 }
                 modelContext.delete(entry)
@@ -86,13 +86,12 @@ struct EntryRowView: View {
                         modelContext.insert(note)
                         m.note = note
                         m.updatedAt = Date()
-                        editorContext.open(note: note, title: m.summary ?? "Meeting")
+                        workspace.openInNewTab(.minutes(m.persistentModelID))
                     },
                     onOpenMinutes: {
-                        guard let note = entry.minutes?.note else { return }
-                        editorContext.open(note: note, title: entry.minutes?.summary ?? "Meeting")
+                        guard let m = entry.minutes else { return }
+                        workspace.openInNewTab(.minutes(m.persistentModelID))
                     },
-                    onEdit: { minutes in editingMinutes = minutes },
                     onDelete: { showingDeleteConfirm = true },
                     inlineText: { binding in
                         InlineEditableSingleLineText(

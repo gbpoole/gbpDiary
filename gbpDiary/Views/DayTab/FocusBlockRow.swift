@@ -128,7 +128,7 @@ private struct MeetingActivityRow: View {
     var minutes: Minutes
     var onTap: (() -> Void)? = nil
 
-    @Environment(MinutesEditorContext.self) private var editorContext
+    @Environment(WorkspaceModel.self) private var workspace
     @Environment(\.modelContext) private var modelContext
     @State private var tapFlags = MeetingActivityTapFlags()
     @State private var tapCount = 0
@@ -193,7 +193,7 @@ private struct MeetingActivityRow: View {
                 modelContext.insert(note)
                 minutes.note = note
                 minutes.updatedAt = Date()
-                editorContext.open(note: note, title: minutes.summary ?? "Meeting")
+                workspace.openInNewTab(.minutes(minutes.persistentModelID))
             } label: {
                 Image(systemName: "note.text.badge.plus")
                     .font(.system(size: 12))
@@ -205,7 +205,7 @@ private struct MeetingActivityRow: View {
             Button {
                 tapFlags.didTapMinutes = true
                 if let note = minutes.note {
-                    editorContext.open(note: note, title: minutes.summary ?? "Meeting")
+                    workspace.openInNewTab(.minutes(minutes.persistentModelID))
                 }
             } label: {
                 Image(systemName: "note.text")
