@@ -29,6 +29,11 @@ struct MarkdownDocumentEditor: View {
     @State private var draft = ""
     @State private var showingImageImporter = false
     @State private var debouncer = Debouncer()
+    @State private var previewDraft = ""
+    @State private var previewDebouncer = Debouncer()
+    @State private var editingImageID: UUID?
+    @State private var chipRefresh = 0
+    @State private var sourceHeight: CGFloat = 120
     #if os(macOS)
     @State private var escapeMonitor = EscapeKeyMonitor()
     #endif
@@ -50,6 +55,7 @@ struct MarkdownDocumentEditor: View {
         .background(AppTheme.cardRaised.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
         .onAppear {
             draft = note.content
+            previewDraft = note.content
             if startInEdit { beginEditing() }
             #if os(macOS)
             escapeMonitor.action = {
@@ -69,6 +75,11 @@ struct MarkdownDocumentEditor: View {
         .fileImporter(isPresented: $showingImageImporter,
                       allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
             if case .success(let urls) = result { insertImages(from: urls) }
+        }
+        .sheet(item: Binding(get: { editingImageID.flatMap { id in note.attachments.first { $0.id == id } } },
+                             set: { if $0 == nil { editingImageID = nil } })) { attachment in
+            NoteImageEditSheet(attachment: attachment, onRemove: { removeImage(attachment.id) })
+                .onDisappear { chipRefresh += 1 }  // refresh chips in case the display name changed
         }
         .contextMenu {
             #if os(macOS)
@@ -180,31 +191,43 @@ struct MarkdownDocumentEditor: View {
         }
     }
 
+    @ViewBuilder
     private var sourceEditor: some View {
-        TextEditor(text: $draft)
-            .font(.system(.body, design: .monospaced))
-            .frame(minHeight: 120)
-            .scrollContentBackground(.hidden)
-            .padding(6)
-            .background(AppTheme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-            .onChange(of: draft) { _, newValue in
-                debouncer.schedule(delay: 1.0) {
-                    note.content = newValue
-                    note.updatedAt = Date()
-                }
+        Group {
+            #if os(macOS)
+            ImageChipTextEditor(text: $draft, height: $sourceHeight, attachments: note.attachments,
+                                refreshToken: chipRefresh) { editingImageID = $0 }
+                .frame(height: sourceHeight)
+            #else
+            TextEditor(text: $draft)
+                .font(.system(.body, design: .monospaced))
+                .frame(minHeight: 120)
+                .scrollContentBackground(.hidden)
+            #endif
+        }
+        .padding(6)
+        .background(AppTheme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+        .onChange(of: draft) { _, newValue in
+            // Persist on a longer debounce; refresh the live preview on a shorter one so typing
+            // doesn't re-parse/re-render the Textual preview (and re-decode images) every keystroke.
+            debouncer.schedule(delay: 1.0) {
+                note.content = newValue
+                note.updatedAt = Date()
             }
+            previewDebouncer.schedule(delay: 0.3) { previewDraft = newValue }
+        }
     }
 
     @ViewBuilder
     private var previewBody: some View {
-        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if previewDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             Text(placeholder)
                 .foregroundStyle(.tertiary)
                 .font(.body)
                 .frame(maxWidth: .infinity, alignment: .leading)
         } else {
             StructuredText(
-                markdown: NotePreviewMarkdown.render(draft, resolve: fileURL(forAttachmentID:)),
+                markdown: NotePreviewMarkdown.render(previewDraft, resolve: fileURL(forAttachmentID:)),
                 syntaxExtensions: [.math]
             )
             .textual.textSelection(.enabled)
@@ -217,6 +240,7 @@ struct MarkdownDocumentEditor: View {
 
     private func beginEditing() {
         draft = note.content
+        previewDraft = note.content
         isEditing = true
     }
 
@@ -239,6 +263,19 @@ struct MarkdownDocumentEditor: View {
 
     private func fileURL(forAttachmentID id: UUID) -> URL? {
         note.attachments.first { $0.id == id }?.fileURL
+    }
+
+    // Remove an image ref from the note markdown and delete its attachment/file.
+    private func removeImage(_ id: UUID) {
+        let pattern = "!\\[[^\\]]*\\]\\(attachment://\(id.uuidString)\\)"
+        draft = draft.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+        note.content = draft
+        if let att = note.attachments.first(where: { $0.id == id }) {
+            AttachmentStorage.delete(at: att.fileURL)
+            modelContext.delete(att)
+        }
+        note.updatedAt = Date()
+        editingImageID = nil
     }
 
     private func insertImages(from urls: [URL]) {
