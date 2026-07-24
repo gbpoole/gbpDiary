@@ -195,9 +195,18 @@ struct MarkdownDocumentEditor: View {
     private var sourceEditor: some View {
         Group {
             #if os(macOS)
-            ImageChipTextEditor(text: $draft, height: $sourceHeight, attachments: note.attachments,
-                                refreshToken: chipRefresh) { editingImageID = $0 }
-                .frame(height: sourceHeight)
+            ImageChipTextEditor(
+                text: $draft, height: $sourceHeight, attachments: note.attachments,
+                refreshToken: chipRefresh,
+                onInsertImageFiles: { urls, idx in insertRefs(urls.compactMap(makeImageRef), at: idx) },
+                onInsertImageData: { data, idx in
+                    if let ref = makeImageRef(fromPNG: data, displayName: "Pasted image") {
+                        insertRefs([ref], at: idx)
+                    }
+                },
+                onTapImage: { editingImageID = $0 }
+            )
+            .frame(height: sourceHeight)
             #else
             TextEditor(text: $draft)
                 .font(.system(.body, design: .monospaced))
@@ -278,26 +287,54 @@ struct MarkdownDocumentEditor: View {
         editingImageID = nil
     }
 
-    private func insertImages(from urls: [URL]) {
-        var appended = ""
-        for url in urls {
-            let needsScope = url.startAccessingSecurityScopedResource()
-            defer { if needsScope { url.stopAccessingSecurityScopedResource() } }
-            let id = UUID()
-            guard let stored = try? AttachmentStorage.store(from: url, fileId: id) else { continue }
-            let displayName = url.deletingPathExtension().lastPathComponent
-            let attachment = Attachment(fileName: url.lastPathComponent, fileURL: stored, kind: .image, id: id)
-            attachment.displayName = displayName
-            attachment.fileSizeBytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { $0 }
-            attachment.note = note
-            modelContext.insert(attachment)
-            appended += "\n\n" + AttachmentRef.markdown(for: id, displayName: displayName)
-        }
-        guard !appended.isEmpty else { return }
-        draft = (draft.isEmpty ? "" : draft) + appended
+    // Create an Attachment for a source image file and return its markdown ref (no draft mutation).
+    private func makeImageRef(from url: URL) -> String? {
+        let needsScope = url.startAccessingSecurityScopedResource()
+        defer { if needsScope { url.stopAccessingSecurityScopedResource() } }
+        let id = UUID()
+        guard let stored = try? AttachmentStorage.store(from: url, fileId: id) else { return nil }
+        let displayName = url.deletingPathExtension().lastPathComponent
+        let attachment = Attachment(fileName: url.lastPathComponent, fileURL: stored, kind: .image, id: id)
+        attachment.displayName = displayName
+        attachment.fileSizeBytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { $0 }
+        attachment.note = note
+        modelContext.insert(attachment)
+        return AttachmentRef.markdown(for: id, displayName: displayName)
+    }
+
+    // Create an Attachment from raw PNG data (pasted/dropped image) and return its markdown ref.
+    private func makeImageRef(fromPNG png: Data, displayName: String) -> String? {
+        let id = UUID()
+        let dest = AttachmentStorage.attachmentsDirectory
+            .appendingPathComponent(id.uuidString).appendingPathExtension("png")
+        guard (try? png.write(to: dest)) != nil else { return nil }
+        let attachment = Attachment(fileName: dest.lastPathComponent, fileURL: dest, kind: .image, id: id)
+        attachment.displayName = displayName
+        attachment.fileSizeBytes = png.count
+        attachment.note = note
+        modelContext.insert(attachment)
+        return AttachmentRef.markdown(for: id, displayName: displayName)
+    }
+
+    // Insert refs into `draft` at a UTF-16 index, separated from surrounding text by blank lines.
+    // Changing draft (with lastMarkdown unchanged in the editor) forces the chip editor to rebuild.
+    private func insertRefs(_ refs: [String], at index: Int) {
+        guard !refs.isEmpty else { return }
+        let joined = refs.joined(separator: "\n\n")
+        let ns = draft as NSString
+        let idx = max(0, min(index, ns.length))
+        var prefix = "", suffix = ""
+        if idx > 0, ns.substring(with: NSRange(location: idx - 1, length: 1)) != "\n" { prefix = "\n\n" }
+        if idx < ns.length, ns.substring(with: NSRange(location: idx, length: 1)) != "\n" { suffix = "\n\n" }
+        draft = ns.replacingCharacters(in: NSRange(location: idx, length: 0), with: prefix + joined + suffix)
         note.content = draft
         note.updatedAt = Date()
         isEditing = true
+    }
+
+    // Toolbar / file-importer path: append at the end.
+    private func insertImages(from urls: [URL]) {
+        insertRefs(urls.compactMap(makeImageRef), at: (draft as NSString).length)
     }
 
     #if os(macOS)
@@ -306,24 +343,9 @@ struct MarkdownDocumentEditor: View {
     }
 
     private func pasteImageFromClipboard() {
-        guard let image = NSPasteboard.general.readObjects(forClasses: [NSImage.self], options: nil)?.first as? NSImage,
-              let tiff = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff),
-              let png = bitmap.representation(using: .png, properties: [:]) else { return }
-        let id = UUID()
-        let dest = AttachmentStorage.attachmentsDirectory
-            .appendingPathComponent(id.uuidString).appendingPathExtension("png")
-        guard (try? png.write(to: dest)) != nil else { return }
-        let displayName = "Pasted image"
-        let attachment = Attachment(fileName: dest.lastPathComponent, fileURL: dest, kind: .image, id: id)
-        attachment.displayName = displayName
-        attachment.fileSizeBytes = png.count
-        attachment.note = note
-        modelContext.insert(attachment)
-        draft = (draft.isEmpty ? "" : draft) + "\n\n" + AttachmentRef.markdown(for: id, displayName: displayName)
-        note.content = draft
-        note.updatedAt = Date()
-        isEditing = true
+        guard let png = NSPasteboard.general.imagePNGData(),
+              let ref = makeImageRef(fromPNG: png, displayName: "Pasted image") else { return }
+        insertRefs([ref], at: (draft as NSString).length)
     }
     #endif
 }

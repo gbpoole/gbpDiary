@@ -3,6 +3,18 @@ import SwiftUI
 #if os(macOS)
 import AppKit
 import ImageIO
+import UniformTypeIdentifiers
+
+extension NSPasteboard {
+    // PNG data for a pasted/dropped raw image (e.g. a screenshot), or nil if none.
+    func imagePNGData() -> Data? {
+        guard let image = NSImage(pasteboard: self),
+              let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
+        return png
+    }
+}
 
 // An NSTextView-backed markdown editor that renders managed image refs
 // `![name](attachment://<uuid>)` as atomic, non-editable image chips (thumbnail + name). All other
@@ -16,6 +28,10 @@ struct ImageChipTextEditor: NSViewRepresentable {
     var attachments: [Attachment]
     /// Bump to force a chip rebuild (e.g. after a display name is edited) without a text change.
     var refreshToken: Int
+    /// Dropped/pasted image files → create attachments and insert refs at the given UTF-16 index.
+    var onInsertImageFiles: ([URL], Int) -> Void
+    /// Dropped/pasted raw image data (e.g. a screenshot) → insert a ref at the given UTF-16 index.
+    var onInsertImageData: (Data, Int) -> Void
     var onTapImage: (UUID) -> Void
 
     static let minHeight: CGFloat = 120
@@ -49,6 +65,8 @@ struct ImageChipTextEditor: NSViewRepresentable {
         tv.font = Self.bodyFont
         tv.typingAttributes = Self.textAttributes
         tv.onTapImage = onTapImage
+        tv.onInsertImageFiles = onInsertImageFiles
+        tv.onInsertImageData = onInsertImageData
         tv.onWidthChange = { [weak coordinator = context.coordinator] in coordinator?.scheduleHeightPush() }
         context.coordinator.textView = tv
         context.coordinator.apply(markdown: text, into: tv)
@@ -58,6 +76,8 @@ struct ImageChipTextEditor: NSViewRepresentable {
     func updateNSView(_ tv: ChipTextView, context: Context) {
         context.coordinator.parent = self
         tv.onTapImage = onTapImage
+        tv.onInsertImageFiles = onInsertImageFiles
+        tv.onInsertImageData = onInsertImageData
         // Only rebuild on an external text change or an explicit refresh — never while the user is
         // typing (textDidChange keeps lastMarkdown in sync so this comparison is false then).
         if text != context.coordinator.lastMarkdown || refreshToken != context.coordinator.lastRefresh {
@@ -263,6 +283,8 @@ final class ImageRefAttachment: NSTextAttachment {
 final class ChipTextView: NSTextView {
     var onTapImage: ((UUID) -> Void)?
     var onWidthChange: (() -> Void)?
+    var onInsertImageFiles: (([URL], Int) -> Void)?
+    var onInsertImageData: ((Data, Int) -> Void)?
     private var lastWidth: CGFloat = 0
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -270,6 +292,56 @@ final class ChipTextView: NSTextView {
         if abs(newSize.width - lastWidth) > 0.5 {
             lastWidth = newSize.width
             onWidthChange?()   // content reflows at the new width → re-measure height
+        }
+    }
+
+    // MARK: - Image paste
+
+    override func paste(_ sender: Any?) {
+        let pb = NSPasteboard.general
+        let index = selectedRange().location
+        if let urls = ChipTextView.imageFileURLs(from: pb), !urls.isEmpty {
+            onInsertImageFiles?(urls, index); return
+        }
+        if let data = pb.imagePNGData() {
+            onInsertImageData?(data, index); return
+        }
+        super.paste(sender)
+    }
+
+    // MARK: - Image drag & drop
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        ChipTextView.hasDroppableImage(sender.draggingPasteboard) ? .copy : super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        ChipTextView.hasDroppableImage(sender.draggingPasteboard) ? .copy : super.draggingUpdated(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let pb = sender.draggingPasteboard
+        let point = convert(sender.draggingLocation, from: nil)
+        let index = characterIndexForInsertion(at: point)
+        if let urls = ChipTextView.imageFileURLs(from: pb), !urls.isEmpty {
+            onInsertImageFiles?(urls, index); return true
+        }
+        if let data = pb.imagePNGData() {
+            onInsertImageData?(data, index); return true
+        }
+        return super.performDragOperation(sender)
+    }
+
+    private static func hasDroppableImage(_ pb: NSPasteboard) -> Bool {
+        if let urls = imageFileURLs(from: pb), !urls.isEmpty { return true }
+        return pb.canReadItem(withDataConformingToTypes: [UTType.image.identifier])
+    }
+
+    private static func imageFileURLs(from pb: NSPasteboard) -> [URL]? {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        guard let urls = pb.readObjects(forClasses: [NSURL.self], options: options) as? [URL] else { return nil }
+        return urls.filter { url in
+            (try? url.resourceValues(forKeys: [.contentTypeKey]).contentType?.conforms(to: .image)) == true
         }
     }
 
