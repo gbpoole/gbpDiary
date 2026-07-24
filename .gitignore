@@ -49,3 +49,7 @@ Config.local.swift
 
 # Claude Code local settings (machine-specific)
 .claude/settings.local.json
+
+# Python bytecode
+__pycache__/
+*.pyc
