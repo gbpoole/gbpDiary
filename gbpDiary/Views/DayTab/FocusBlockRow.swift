@@ -38,7 +38,7 @@ struct FocusBlockRow: View {
             }
         }
         .sheet(item: $selectedMeetingMinutes) { m in
-            MinutesDetailView(minutes: m, asSheet: true)
+            MinutesDetailView(minutes: m, asSheet: true).presentationSizing(.fitted)
         }
     }
 

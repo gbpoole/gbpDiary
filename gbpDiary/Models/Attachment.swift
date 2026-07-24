@@ -15,9 +15,8 @@ enum AttachmentKind: String, Codable {
     var fileSizeBytes: Int?
     var createdAt: Date
 
-    var renderURL: URL?          // points to {uuid}_r{width}.png; nil for non-images
-    var renderWidth: Int?        // current render pixel width
-    var sourceImageWidth: Int?   // pixel width of the capped source file
+    var displayName: String?           // user-facing name shown on screen / used as markdown alt text
+    var attachmentDescription: String? // optional longer description of the image's contents/relevance
 
     var document: Document?
     var note: Note?

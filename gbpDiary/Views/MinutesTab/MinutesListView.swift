@@ -28,7 +28,7 @@ struct MinutesListView: View {
                 Button { showingAdd = true } label: { Image(systemName: "plus") }
             }
         }
-        .sheet(item: $editingMinutes) { MinutesDetailView(minutes: $0, asSheet: true) }
+        .sheet(item: $editingMinutes) { MinutesDetailView(minutes: $0, asSheet: true).presentationSizing(.fitted) }
         .sheet(isPresented: $showingAdd) { MinutesEditorSheet(minutes: nil, project: nil) }
     }
 

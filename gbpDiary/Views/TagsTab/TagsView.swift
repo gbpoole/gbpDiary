@@ -141,11 +141,8 @@ struct TagDetailSheet: View {
         if let date = note.dayRecord?.date {
             return date.formatted(.dateTime.month(.abbreviated).day().year())
         }
-        for block in note.blocks where block.kind == .text {
-            let line = block.textContent
-                .split(separator: "\n", omittingEmptySubsequences: true)
-                .first
-                .map { String($0).trimmingCharacters(in: .whitespaces) } ?? ""
+        for rawLine in note.content.split(separator: "\n", omittingEmptySubsequences: true) {
+            let line = String(rawLine).trimmingCharacters(in: .whitespaces)
             if !line.isEmpty { return String(line.prefix(40)) }
         }
         return "Note"

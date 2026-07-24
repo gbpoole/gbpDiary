@@ -112,8 +112,7 @@ struct ObsidianBundleImporter {
         for imported in bundle.notes {
             let note = notes[imported.id] ?? Note(content: imported.content ?? "", id: imported.id)
             if notes[imported.id] == nil { context.insert(note); notes[imported.id] = note }
-            note.content = imported.content ?? ""
-            note.blocks = imported.blocks?.map(makeNoteBlock) ?? [NoteBlock.text(imported.content ?? "")]
+            note.content = markdownForImportedNote(imported)
             note.tags = imported.tags ?? []
             note.dayRecord = imported.dayRecordId.flatMap { dayRecords[$0] }
             note.attachments = importNoteAttachments(imported, note: note, existing: &attachments, vaultPath: bundle.vaultPath)
@@ -240,12 +239,19 @@ struct ObsidianBundleImporter {
         return result
     }
 
-    private func makeNoteBlock(_ imported: ImportedNoteBlock) -> NoteBlock {
-        var block = imported.kind == .image
-            ? NoteBlock.image(imported.attachmentId ?? UUID(), alignment: imported.alignment ?? .center)
-            : NoteBlock.text(imported.textContent ?? "")
-        block.groupId = imported.groupId
-        return block
+    // Notes are plain markdown. If a bundle still carries legacy block arrays, flatten them into
+    // markdown: text blocks contribute their text; image blocks contribute a managed image ref
+    // `![](attachment://<uuid>)`. Otherwise fall back to the bundle's markdown `content`.
+    private func markdownForImportedNote(_ imported: ImportedNote) -> String {
+        guard let blocks = imported.blocks, !blocks.isEmpty else { return imported.content ?? "" }
+        return blocks.map { block -> String in
+            if block.kind == .image, let attId = block.attachmentId {
+                return AttachmentRef.markdown(for: attId, displayName: nil)
+            }
+            return block.textContent ?? ""
+        }
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n\n")
     }
 
     private func assignTaskParents(_ importedTasks: [ImportedTask], tasks: [UUID: Task]) {
@@ -304,9 +310,6 @@ struct ObsidianBundleImporter {
                 attachment.kind = attachmentKind(for: sourceURL)
                 attachment.fileSizeBytes = (try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
                 attachment.document = document
-                if attachment.kind == .image {
-                    attachment.sourceImageWidth = AttachmentStorage.capSource(at: attachment.fileURL)
-                }
                 return attachment
             } catch {
                 return nil
@@ -346,8 +349,9 @@ struct ObsidianBundleImporter {
                 attachment.kind = ref.kind ?? attachmentKind(for: sourceURL)
                 attachment.fileSizeBytes = (try? sourceURL.resourceValues(forKeys: [.fileSizeKey]).fileSize)
                 attachment.note = note
-                if attachment.kind == .image {
-                    attachment.sourceImageWidth = AttachmentStorage.capSource(at: attachment.fileURL)
+                if attachment.displayName == nil {
+                    attachment.displayName = attachment.fileName
+                        .replacingOccurrences(of: ".\(sourceURL.pathExtension)", with: "")
                 }
                 return attachment
             } catch {

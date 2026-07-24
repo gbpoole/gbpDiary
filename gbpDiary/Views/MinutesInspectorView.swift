@@ -38,7 +38,7 @@ struct MinutesInspectorView: View {
                 .background(AppTheme.background)
                 Divider()
                 ScrollView {
-                    NoteEditingArea(note: note)
+                    MarkdownDocumentEditor(note: note)
                         .padding(.vertical, 4)
                 }
             }

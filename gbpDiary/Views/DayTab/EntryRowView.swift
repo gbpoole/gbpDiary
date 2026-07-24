@@ -119,7 +119,7 @@ struct EntryRowView: View {
                     }
                 }
                 .padding(.trailing)
-                .sheet(item: $editingMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
+                .sheet(item: $editingMinutes) { m in MinutesDetailView(minutes: m, asSheet: true).presentationSizing(.fitted) }
                 .dropDestination(for: String.self) { items, _ in
                     guard let str = items.first else { return false }
                     return onDropOntoEntry?(str) ?? false
@@ -131,7 +131,7 @@ struct EntryRowView: View {
             if showNotes, let minutes = entry.minutes, let note = minutes.note {
                 HStack(alignment: .top, spacing: 6) {
                     Color.clear.frame(width: 16)
-                    NoteEditingArea(note: note)
+                    MarkdownDocumentEditor(note: note)
                         .padding(.leading, Self.indentStep)
                 }
                 .padding(.leading)

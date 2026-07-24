@@ -20,8 +20,6 @@ struct DayPageContent: View {
     var onShowBanner: (BannerMessage) -> Void = { _ in }
 
     @Environment(\.modelContext) private var modelContext
-    @FocusState private var focusedEntryId: UUID?
-    @State private var pendingFocusId: UUID?
     @State private var showingAddTask = false
     @State private var activityMeetingTrigger = false
     @State private var activityLogTimeTrigger = false
@@ -29,9 +27,7 @@ struct DayPageContent: View {
     @State private var editingTask: Task?
     @State private var editingNote: Note?
     @State private var notesDropTargetIndex: Int?
-    @State private var pendingFocusNoteId: UUID?
-    @State private var selectedBlockId: UUID?
-    @State private var pendingBlockDeletion: (() -> Void)?
+    @State private var newlyAddedNoteId: UUID?
 
     @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allTimeEntries: [TaskTimeEntry]
 
@@ -39,13 +35,6 @@ struct DayPageContent: View {
         let cal = Calendar.current
         return allTimeEntries.filter { cal.isDate($0.date, inSameDayAs: date) }
     }
-    #if os(macOS)
-    @State private var deleteMonitor = DeleteKeyMonitor()
-    @State private var returnMonitor = ReturnKeyMonitor()
-    @State private var focusClearMonitor = FocusClearMonitor()
-    @State private var escapeMonitor = EscapeKeyMonitor()
-    @State private var shiftArrowMonitor = ShiftArrowMonitor()
-    #endif
 
     private var dayStart: Date { DayTaskFiltering.dayBounds(for: date).dayStart }
     private var dayEnd: Date { DayTaskFiltering.dayBounds(for: date).dayEnd }
@@ -160,68 +149,10 @@ struct DayPageContent: View {
         .sheet(item: $editingNote) { n in
             NoteEditorSheet(note: n)
         }
-        .onChange(of: pendingFocusId) { _, newId in
-            if let id = newId {
-                focusedEntryId = id
-                pendingFocusId = nil
-            }
-        }
         .onAppear {
             migrateOldNotes()
             migrateDayNote()
-            migrateNoteBlocks()
         }
-        #if os(macOS)
-        .onAppear {
-            deleteMonitor.start()
-            returnMonitor.start()
-            focusClearMonitor.captureId = { focusedEntryId }
-            focusClearMonitor.captureSelectedId = { selectedBlockId }
-            focusClearMonitor.action = {
-                focusedEntryId = nil
-                selectedBlockId = nil
-            }
-            focusClearMonitor.start()
-            escapeMonitor.action = {
-                if let focused = focusedEntryId {
-                    focusedEntryId = nil
-                    selectedBlockId = focused  // keep block ring visible
-                    return true
-                } else if selectedBlockId != nil {
-                    selectedBlockId = nil
-                    return true
-                }
-                return false
-            }
-            escapeMonitor.start()
-            shiftArrowMonitor.start()
-        }
-        .onDisappear {
-            deleteMonitor.stop()
-            returnMonitor.stop()
-            focusClearMonitor.stop()
-            escapeMonitor.stop()
-            shiftArrowMonitor.stop()
-        }
-        .onChange(of: focusedEntryId) { _, newId in
-            if let newId { selectedBlockId = newId }
-            updateDeleteAction(for: newId)
-        }
-        .onChange(of: selectedBlockId) { _, newId in
-            updateDeleteAction(for: focusedEntryId)
-            updateReturnAction(for: newId)
-            updateShiftArrowActions(for: newId)
-        }
-        .alert("Delete Block?", isPresented: Binding(
-            get: { pendingBlockDeletion != nil },
-            set: { if !$0 { pendingBlockDeletion = nil } }
-        )) {
-            Button("Delete", role: .destructive) { pendingBlockDeletion?(); pendingBlockDeletion = nil }
-            Button("Cancel", role: .cancel) { pendingBlockDeletion = nil }
-        } message: {
-            Text("This block will be permanently deleted.")
-        }
-        #endif
     }
 
     // MARK: - Sections
@@ -310,57 +241,18 @@ struct DayPageContent: View {
         )
         note.dayRecord = record
         modelContext.insert(note)
-        pendingFocusNoteId = note.id
+        newlyAddedNoteId = note.id
     }
 
     private func noteRow(note: Note, index: Int) -> some View {
-        let count = dayNotes.count
-        return DayNoteRow(
+        MarkdownDocumentEditor(
             note: note,
-            focusedEntryId: $focusedEntryId,
-            selectedBlockId: $selectedBlockId,
-            consumeLastClearedSelectedBlockId: {
-                focusClearMonitor.consumeLastClearedSelectedId()
-            },
-            onMoveToPrevious: index > 0 ? {
-                let prev = dayNotes[index - 1]
-                if let last = prev.blocks.last {
-                    if last.kind == .image { selectedBlockId = last.id }
-                    else { pendingFocusId = last.id }
-                }
-            } : nil,
-            onMoveToNext: index < count - 1 ? {
-                let next = dayNotes[index + 1]
-                if let first = next.blocks.first {
-                    if first.kind == .image { selectedBlockId = first.id }
-                    else { pendingFocusId = first.id }
-                }
-            } : nil,
             onEdit: { editingNote = note },
-            onHeaderButtonTap: {
-                guard let savedId = focusClearMonitor.consumeLastClearedId() else { return }
-                focusedEntryId = savedId
-            },
-            onDelete: {
-                let i = dayNotes.firstIndex(where: { $0.id == note.id })
-                if let i, i > 0 {
-                    let prev = dayNotes[i - 1]
-                    if let lastBlock = prev.blocks.last {
-                        if lastBlock.kind == .text {
-                            pendingFocusId = lastBlock.id
-                        } else {
-                            selectedBlockId = lastBlock.id
-                        }
-                    }
-                }
-                modelContext.delete(note)
-            }
+            onDelete: { modelContext.delete(note) },
+            startInEdit: newlyAddedNoteId == note.id
         )
-        .onAppear {
-            guard pendingFocusNoteId == note.id else { return }
-            pendingFocusNoteId = nil
-            pendingFocusId = note.blocks.first(where: { $0.kind == .text })?.id
-        }
+        .padding(.horizontal)
+        .padding(.vertical, 2)
     }
 
     private func notesDropZone(belowIndex: Int) -> some View {
@@ -392,42 +284,6 @@ struct DayPageContent: View {
         for (i, n) in reordered.enumerated() { n.sortOrder = i }
     }
 
-    // Converts Note.content + image attachments → NoteBlock array on first open.
-    // Also strips any legacy inline image links that may still be in content.
-    private func migrateNoteBlocks() {
-        for note in dayRecord?.noteItems ?? [] {
-            // Strip leftover inline image links regardless of block migration state
-            let stripped = note.content
-                .replacingOccurrences(
-                    of: #"\n?!\[[^\]]*\]\([^)]+\)"#,
-                    with: "", options: .regularExpression
-                )
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-
-            // Already has blocks — just clean up legacy inline links if needed
-            if !note.blocks.isEmpty {
-                if stripped != note.content {
-                    note.content = stripped
-                    note.updatedAt = Date()
-                }
-                continue
-            }
-
-            // Build blocks from legacy content + image attachments
-            var blocks: [NoteBlock] = [.text(stripped)]
-            let images = note.attachments
-                .filter { $0.kind == .image }
-                .sorted { $0.createdAt < $1.createdAt }
-            for img in images {
-                blocks.append(.image(img.id))
-                blocks.append(.text(""))
-            }
-            note.blocks = blocks
-            note.content = ""
-            note.updatedAt = Date()
-        }
-    }
-
     private func migrateDayNote() {
         guard let record = dayRecord,
               let text = record.notes,
@@ -455,233 +311,6 @@ struct DayPageContent: View {
         noteEntries.forEach { modelContext.delete($0) }
     }
 
-    #if os(macOS)
-    private func updateDeleteAction(for focusId: UUID?) {
-        // Selected block (no text focus) → confirm-then-delete
-        if focusId == nil, let selId = selectedBlockId {
-            for note in dayNotes {
-                if let idx = note.blocks.firstIndex(where: { $0.id == selId }) {
-                    switch note.blocks[idx].kind {
-                    case .image:
-                        guard let attId = note.blocks[idx].attachmentId,
-                              let att = note.attachments.first(where: { $0.id == attId }) else { break }
-                        deleteMonitor.action = {
-                            guard !(NSApp.keyWindow?.firstResponder is NSTextView) else { return false }
-                            pendingBlockDeletion = {
-                                var blocks = note.blocks
-                                guard blocks.indices.contains(idx), blocks[idx].kind == .image else { return }
-                                blocks.remove(at: idx)
-                                let prev = idx - 1, next = idx
-                                if blocks.indices.contains(prev), blocks.indices.contains(next),
-                                   blocks[prev].kind == .text, blocks[next].kind == .text {
-                                    let merged = [blocks[prev].textContent.trimmingCharacters(in: .newlines),
-                                                  blocks[next].textContent.trimmingCharacters(in: .newlines)]
-                                        .filter { !$0.isEmpty }.joined(separator: "\n\n")
-                                    blocks[prev].textContent = merged
-                                    blocks.remove(at: next)
-                                }
-                                note.blocks = blocks
-                                if let r = att.renderURL { AttachmentStorage.delete(at: r) }
-                                AttachmentStorage.delete(at: att.fileURL)
-                                modelContext.delete(att)
-                                note.attachments.removeAll { $0.id == att.id }
-                                note.updatedAt = Date()
-                                selectedBlockId = nil
-                            }
-                            return true
-                        }
-                    case .text:
-                        let blockId = note.blocks[idx].id
-                        deleteMonitor.action = {
-                            guard !(NSApp.keyWindow?.firstResponder is NSTextView) else { return false }
-                            let content = note.blocks.first(where: { $0.id == blockId })?.textContent ?? ""
-                            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                makeDeleteTextBlockClosure(note: note, blockId: blockId)()
-                            } else {
-                                pendingBlockDeletion = makeDeleteTextBlockClosure(note: note, blockId: blockId)
-                            }
-                            return true
-                        }
-                    }
-                    return
-                }
-            }
-        }
-        guard let focusId else { deleteMonitor.action = nil; return }
-        if let task = newTasks.first(where: { $0.id == focusId }) {
-            deleteMonitor.action = {
-                guard task.isInlineSummaryEmpty else { return false }
-                let idx = newTasks.firstIndex(where: { $0.id == focusId })
-                if let i = idx, i > 0 { pendingFocusId = newTasks[i - 1].id }
-                modelContext.delete(task)
-                return true
-            }
-        } else if let note = dayNotes.first(where: { n in
-            n.blocks.contains(where: { $0.id == focusId })
-        }), let idx = note.blocks.firstIndex(where: { $0.id == focusId }),
-           note.blocks[idx].kind == .text {
-            let blockId = note.blocks[idx].id
-            deleteMonitor.action = {
-                // Check live NSTextView content; backing store lags by up to 2s (debouncer)
-                let isEmpty: Bool
-                if let tv = NSApp.keyWindow?.firstResponder as? NSTextView {
-                    isEmpty = tv.string.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                } else {
-                    isEmpty = note.blocks.first(where: { $0.id == blockId })?
-                        .textContent.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true
-                }
-                guard isEmpty else { return false }
-                makeDeleteTextBlockClosure(note: note, blockId: blockId)()
-                return true
-            }
-        } else {
-            deleteMonitor.action = nil
-        }
-    }
-
-    private func makeDeleteTextBlockClosure(note: Note, blockId: UUID) -> () -> Void {
-        return {
-            var blocks = note.blocks
-            guard let idx = blocks.firstIndex(where: { $0.id == blockId }),
-                  blocks[idx].kind == .text else { return }
-            let prevBlock = idx > 0 ? blocks[idx - 1] : nil
-            let nextBlock = idx < blocks.count - 1 ? blocks[idx + 1] : nil
-            blocks.remove(at: idx)
-            let wasLastBlock = blocks.isEmpty
-            if wasLastBlock { blocks = [.text("")] }
-            note.blocks = blocks
-            note.updatedAt = Date()
-            selectedBlockId = nil
-            // When the last text block is removed keep the note alive with an empty sentinel
-            // block — consistent with NoteEditingArea. The note can be deleted via context menu.
-            if !wasLastBlock, let prev = prevBlock {
-                if prev.kind == .text { pendingFocusId = prev.id }
-                else { selectedBlockId = prev.id }
-            } else if !wasLastBlock, let next = nextBlock {
-                if next.kind == .text { pendingFocusId = next.id }
-                else { selectedBlockId = next.id }
-            }
-        }
-    }
-
-    private func updateReturnAction(for selId: UUID?) {
-        guard let selId else { returnMonitor.action = nil; return }
-        for note in dayNotes {
-            if let idx = note.blocks.firstIndex(where: { $0.id == selId }) {
-                switch note.blocks[idx].kind {
-                case .image:
-                    returnMonitor.action = {
-                        var blocks = note.blocks
-                        // Split the group at this image: subsequent same-gid images get a new gid
-                        // so deleting the inserted text block later won't reform the original group.
-                        if let gid = blocks[idx].groupId {
-                            let newGid = UUID()
-                            for i in (idx + 1)..<blocks.count where blocks[i].groupId == gid {
-                                blocks[i].groupId = newGid
-                            }
-                            NoteBlock.cleanupGroupIds(in: &blocks)
-                        }
-                        let newBlock = NoteBlock.text("")
-                        blocks.insert(newBlock, at: idx + 1)
-                        note.blocks = blocks
-                        note.updatedAt = Date()
-                        pendingFocusId = newBlock.id
-                        return true
-                    }
-                case .text:
-                    returnMonitor.action = {
-                        pendingFocusId = selId
-                        return true
-                    }
-                }
-                return
-            }
-        }
-        returnMonitor.action = nil
-    }
-
-    private func updateShiftArrowActions(for selId: UUID?) {
-        guard let selId else {
-            shiftArrowMonitor.actionUp    = nil; shiftArrowMonitor.actionDown  = nil
-            shiftArrowMonitor.actionLeft  = nil; shiftArrowMonitor.actionRight = nil
-            shiftArrowMonitor.actionPlainUp    = nil; shiftArrowMonitor.actionPlainDown  = nil
-            shiftArrowMonitor.actionPlainLeft  = nil; shiftArrowMonitor.actionPlainRight = nil
-            return
-        }
-        for (noteIdx, note) in dayNotes.enumerated() {
-            if note.blocks.contains(where: { $0.id == selId }) {
-                shiftArrowMonitor.actionUp = {
-                    guard let updated = NoteBlock.shiftUp(blocks: note.blocks, selId: selId) else { return false }
-                    note.blocks = updated; note.updatedAt = Date(); return true
-                }
-                shiftArrowMonitor.actionDown = {
-                    guard let updated = NoteBlock.shiftDown(blocks: note.blocks, selId: selId) else { return false }
-                    note.blocks = updated; note.updatedAt = Date(); return true
-                }
-                shiftArrowMonitor.actionLeft = {
-                    guard let updated = NoteBlock.shiftLeft(blocks: note.blocks, selId: selId) else { return false }
-                    note.blocks = updated; note.updatedAt = Date(); return true
-                }
-                shiftArrowMonitor.actionRight = {
-                    guard let updated = NoteBlock.shiftRight(blocks: note.blocks, selId: selId) else { return false }
-                    note.blocks = updated; note.updatedAt = Date(); return true
-                }
-
-                // Plain ↑/↓: move highlight between visual rows (groups count as one row).
-                shiftArrowMonitor.actionPlainUp = {
-                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }) else { return false }
-                    let blocks = note.blocks
-                    var prevIdx = idx - 1
-                    if let gid = blocks[idx].groupId {
-                        var groupStart = idx
-                        while groupStart > 0 && blocks[groupStart - 1].groupId == gid { groupStart -= 1 }
-                        prevIdx = groupStart - 1
-                    }
-                    if prevIdx >= 0 { selectedBlockId = blocks[prevIdx].id; return true }
-                    if noteIdx > 0, let last = dayNotes[noteIdx - 1].blocks.last {
-                        selectedBlockId = last.id; return true
-                    }
-                    return false
-                }
-                shiftArrowMonitor.actionPlainDown = {
-                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }) else { return false }
-                    let blocks = note.blocks
-                    var nextIdx = idx + 1
-                    if let gid = blocks[idx].groupId {
-                        var groupEnd = idx
-                        while groupEnd < blocks.count - 1 && blocks[groupEnd + 1].groupId == gid { groupEnd += 1 }
-                        nextIdx = groupEnd + 1
-                    }
-                    if nextIdx < blocks.count { selectedBlockId = blocks[nextIdx].id; return true }
-                    if noteIdx < dayNotes.count - 1, let first = dayNotes[noteIdx + 1].blocks.first {
-                        selectedBlockId = first.id; return true
-                    }
-                    return false
-                }
-                // Plain ←/→: move highlight within the same image group only.
-                shiftArrowMonitor.actionPlainLeft = {
-                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }),
-                          idx > 0,
-                          let gid = note.blocks[idx].groupId,
-                          note.blocks[idx - 1].groupId == gid else { return false }
-                    selectedBlockId = note.blocks[idx - 1].id; return true
-                }
-                shiftArrowMonitor.actionPlainRight = {
-                    guard let idx = note.blocks.firstIndex(where: { $0.id == selId }),
-                          idx < note.blocks.count - 1,
-                          let gid = note.blocks[idx].groupId,
-                          note.blocks[idx + 1].groupId == gid else { return false }
-                    selectedBlockId = note.blocks[idx + 1].id; return true
-                }
-                return
-            }
-        }
-        shiftArrowMonitor.actionUp    = nil; shiftArrowMonitor.actionDown  = nil
-        shiftArrowMonitor.actionLeft  = nil; shiftArrowMonitor.actionRight = nil
-        shiftArrowMonitor.actionPlainUp    = nil; shiftArrowMonitor.actionPlainDown  = nil
-        shiftArrowMonitor.actionPlainLeft  = nil; shiftArrowMonitor.actionPlainRight = nil
-    }
-    #endif
 }
 
 // MARK: - Day tab root view

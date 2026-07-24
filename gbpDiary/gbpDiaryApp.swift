@@ -62,9 +62,7 @@ struct gbpDiaryApp: App {
         let known: Set<URL>
         do {
             let attachments = try context.fetch(FetchDescriptor<Attachment>())
-            var urls = Set(attachments.map(\.fileURL))
-            for att in attachments { if let r = att.renderURL { urls.insert(r) } }
-            known = urls
+            known = Set(attachments.map(\.fileURL))
         } catch { return }
         let dir = AttachmentStorage.attachmentsDirectory
         guard let files = try? FileManager.default.contentsOfDirectory(

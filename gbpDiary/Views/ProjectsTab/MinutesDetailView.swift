@@ -43,9 +43,10 @@ struct MinutesDetailView: View {
             NavigationStack {
                 coreContent
             }
-            #if os(macOS)
-            .frame(minWidth: 500, minHeight: 500)
-            #endif
+            .frame(
+                minWidth: 500, idealWidth: 960, maxWidth: .infinity,
+                minHeight: 500, idealHeight: 700, maxHeight: .infinity
+            )
         } else {
             coreContent
         }
@@ -287,7 +288,7 @@ struct MinutesDetailView: View {
     private var notesSection: some View {
         GroupBox("Minutes") {
             if !isDeleted, let note = minutes.note {
-                NoteEditingArea(note: note)
+                MarkdownDocumentEditor(note: note)
                     .padding(.horizontal, -12)
             } else if !isDeleted {
                 Button("Add minutes") {

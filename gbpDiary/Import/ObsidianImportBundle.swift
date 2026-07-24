@@ -91,11 +91,18 @@ struct ImportedDocument: Decodable {
     var sourceContext: ImportedSourceContext?
 }
 
+// Legacy block DTO — still decoded for backward compatibility with older bundles, then flattened
+// into markdown by the importer (see markdownForImportedNote). New bundles should emit markdown
+// `content` directly with inline `attachment://<uuid>` image refs.
+enum ImportedNoteBlockKind: String, Decodable {
+    case text
+    case image
+}
+
 struct ImportedNoteBlock: Decodable {
-    var kind: NoteBlockKind
+    var kind: ImportedNoteBlockKind
     var textContent: String?
     var attachmentId: UUID?
-    var alignment: ImageAlignment?
     var groupId: UUID?
 }
 

@@ -74,7 +74,7 @@ struct ProjectDetailView: View {
 
         .sheet(isPresented: $showingEditProject) { ProjectEditorSheet(project: project) }
         .sheet(isPresented: $showingAddMinutes) { MinutesEditorSheet(minutes: nil, project: project) }
-        .sheet(item: $selectedMinutes) { m in MinutesDetailView(minutes: m, asSheet: true) }
+        .sheet(item: $selectedMinutes) { m in MinutesDetailView(minutes: m, asSheet: true).presentationSizing(.fitted) }
         .sheet(isPresented: $showingAddDocument) { DocumentEditorSheet(document: nil) }
         .sheet(item: $selectedDocument) { doc in DocumentDetailView(document: doc, asSheet: true) }
         .sheet(item: $editingTask) { t in TaskEditorSheet(task: t, defaultDate: Date()) }
@@ -230,7 +230,7 @@ struct ProjectDetailView: View {
             } else {
                 ForEach(projectNotes) { note in
                     VStack(alignment: .leading, spacing: 2) {
-                        let preview = note.blocks.first(where: { $0.kind == .text })?.textContent ?? note.content
+                        let preview = note.content
                         Text(preview.isEmpty ? "Empty note" : preview)
                             .lineLimit(3)
                             .foregroundStyle(preview.isEmpty ? .tertiary : .primary)

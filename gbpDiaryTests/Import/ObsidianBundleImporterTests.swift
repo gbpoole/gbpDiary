@@ -124,8 +124,13 @@ struct ObsidianBundleImporterTests {
 
         #expect(notes.first?.tags == ["milestone", "weekly"])
         #expect(notes.first?.content.contains("#milestone") == true)
-        #expect(notes.first?.blocks.map(\.kind) == [.text, .image, .text])
-        #expect(notes.first?.blocks[1].attachmentId == attachments.first?.id)
+        // Legacy block arrays flatten into markdown with an inline managed image ref.
+        let noteContent = notes.first?.content ?? ""
+        #expect(noteContent.contains("After"))
+        if let attId = attachments.first?.id {
+            #expect(noteContent.contains(AttachmentRef.url(for: attId)))
+            #expect(AttachmentRef.referencedIDs(in: noteContent) == [attId])
+        }
         #expect(notes.first?.attachments.first?.kind == .image)
         #expect(dayRecords.first?.focusTags == ["diary-tag"])
         #expect(FileManager.default.fileExists(atPath: attachments.first?.fileURL.path ?? "") == true)

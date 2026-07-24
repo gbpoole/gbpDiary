@@ -1,0 +1,292 @@
+import SwiftUI
+import SwiftData
+import Textual
+import UniformTypeIdentifiers
+#if os(macOS)
+import AppKit
+#endif
+
+// Adaptive markdown editor for a single `Note`.
+//
+// - When not editing: shows the rendered markdown preview (tap to edit).
+// - When editing on a wide layout (Mac / iPad): source editor and live preview side by side.
+// - When editing on a narrow layout (iPhone): source editor with an edit/preview toggle.
+//
+// Images are inserted as managed refs `![name](attachment://<uuid>)` — never file paths. The
+// file is copied into the app container via `AttachmentStorage` and linked to the note.
+struct MarkdownDocumentEditor: View {
+    @Bindable var note: Note
+    var placeholder: String = "Write in markdown…"
+    var onEdit: (() -> Void)? = nil      // pencil → NoteEditorSheet (project/tags); hidden if nil
+    var onDelete: (() -> Void)? = nil    // context-menu Delete; hidden if nil
+    var startInEdit: Bool = false
+
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.horizontalSizeClass) private var hSizeClass
+
+    @State private var isEditing = false
+    @State private var narrowShowsPreview = false
+    @State private var draft = ""
+    @State private var showingImageImporter = false
+    @State private var debouncer = Debouncer()
+    #if os(macOS)
+    @State private var escapeMonitor = EscapeKeyMonitor()
+    #endif
+
+    private var isWide: Bool { hSizeClass != .compact }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            header
+            if isEditing {
+                editingBody
+            } else {
+                previewBody
+                    .contentShape(Rectangle())
+                    .onTapGesture { beginEditing() }
+            }
+        }
+        .padding(10)
+        .background(AppTheme.cardRaised.opacity(0.4), in: RoundedRectangle(cornerRadius: 8))
+        .onAppear {
+            draft = note.content
+            if startInEdit { beginEditing() }
+            #if os(macOS)
+            escapeMonitor.action = {
+                guard isEditing else { return false }
+                exitEditing()
+                return true
+            }
+            escapeMonitor.start()
+            #endif
+        }
+        .onDisappear {
+            commit()
+            #if os(macOS)
+            escapeMonitor.stop()
+            #endif
+        }
+        .fileImporter(isPresented: $showingImageImporter,
+                      allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
+            if case .success(let urls) = result { insertImages(from: urls) }
+        }
+        .contextMenu {
+            #if os(macOS)
+            if pasteboardHasImage {
+                Button { pasteImageFromClipboard() } label: { Label("Paste Image", systemImage: "doc.on.clipboard") }
+            }
+            #endif
+            if let onEdit { Button { onEdit() } label: { Label("Edit Tags & Project…", systemImage: "pencil") } }
+            if let onDelete {
+                Divider()
+                Button(role: .destructive) { onDelete() } label: { Label("Delete Note", systemImage: "trash") }
+            }
+        }
+    }
+
+    // MARK: - Header (chips + controls)
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                projectLine
+                Spacer(minLength: 6)
+                Button { showingImageImporter = true } label: {
+                    Image(systemName: "photo.badge.plus").font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(AppTheme.action)
+                .help("Insert image")
+                if isEditing {
+                    Button { exitEditing() } label: {
+                        Image(systemName: "checkmark.circle").font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(AppTheme.action)
+                    .help("Done editing")
+                }
+            }
+            tagsLine
+        }
+    }
+
+    // Project chip when set; otherwise a tap-to-edit placeholder (only when editing is supported).
+    @ViewBuilder
+    private var projectLine: some View {
+        if let project = note.project {
+            Chip(label: project.name, color: AppTheme.project)
+                .modifier(EditTapModifier(onEdit: onEdit))
+        } else if onEdit != nil {
+            metadataPlaceholder("No project set — click to edit")
+        }
+    }
+
+    // Tag chips when present; otherwise a tap-to-edit placeholder (only when editing is supported).
+    @ViewBuilder
+    private var tagsLine: some View {
+        if !note.tags.isEmpty {
+            HStack(spacing: 4) {
+                ForEach(note.tags, id: \.self) { tag in
+                    Chip(label: tag, color: AppTheme.tag)
+                }
+            }
+            .modifier(EditTapModifier(onEdit: onEdit))
+        } else if onEdit != nil {
+            metadataPlaceholder("No tags set — click to edit")
+        }
+    }
+
+    private func metadataPlaceholder(_ text: String) -> some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(.tertiary)
+            .contentShape(Rectangle())
+            .onTapGesture { onEdit?() }
+    }
+
+    // Makes a set chip/chips tappable to re-open the project/tags editor, when one is available.
+    private struct EditTapModifier: ViewModifier {
+        let onEdit: (() -> Void)?
+        func body(content: Content) -> some View {
+            if let onEdit {
+                content.contentShape(Rectangle()).onTapGesture { onEdit() }
+            } else {
+                content
+            }
+        }
+    }
+
+    // MARK: - Editing body (adaptive)
+
+    @ViewBuilder
+    private var editingBody: some View {
+        if isWide {
+            HStack(alignment: .top, spacing: 10) {
+                sourceEditor
+                    .frame(maxWidth: .infinity)
+                Divider()
+                previewBody
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                Picker("", selection: $narrowShowsPreview) {
+                    Text("Edit").tag(false)
+                    Text("Preview").tag(true)
+                }
+                .pickerStyle(.segmented)
+                if narrowShowsPreview { previewBody } else { sourceEditor }
+            }
+        }
+    }
+
+    private var sourceEditor: some View {
+        TextEditor(text: $draft)
+            .font(.system(.body, design: .monospaced))
+            .frame(minHeight: 120)
+            .scrollContentBackground(.hidden)
+            .padding(6)
+            .background(AppTheme.background.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+            .onChange(of: draft) { _, newValue in
+                debouncer.schedule(delay: 1.0) {
+                    note.content = newValue
+                    note.updatedAt = Date()
+                }
+            }
+    }
+
+    @ViewBuilder
+    private var previewBody: some View {
+        if draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Text(placeholder)
+                .foregroundStyle(.tertiary)
+                .font(.body)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            StructuredText(
+                markdown: NotePreviewMarkdown.render(draft, resolve: fileURL(forAttachmentID:)),
+                syntaxExtensions: [.math]
+            )
+            .textual.textSelection(.enabled)
+            .textual.structuredTextStyle(.gitHub)
+            .font(.body)
+        }
+    }
+
+    // MARK: - Actions
+
+    private func beginEditing() {
+        draft = note.content
+        isEditing = true
+    }
+
+    private func exitEditing() {
+        commit()
+        isEditing = false
+        #if os(macOS)
+        // Resign first responder so the caret leaves the source editor immediately.
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        #endif
+    }
+
+    private func commit() {
+        debouncer.cancel()
+        if note.content != draft {
+            note.content = draft
+            note.updatedAt = Date()
+        }
+    }
+
+    private func fileURL(forAttachmentID id: UUID) -> URL? {
+        note.attachments.first { $0.id == id }?.fileURL
+    }
+
+    private func insertImages(from urls: [URL]) {
+        var appended = ""
+        for url in urls {
+            let needsScope = url.startAccessingSecurityScopedResource()
+            defer { if needsScope { url.stopAccessingSecurityScopedResource() } }
+            let id = UUID()
+            guard let stored = try? AttachmentStorage.store(from: url, fileId: id) else { continue }
+            let displayName = url.deletingPathExtension().lastPathComponent
+            let attachment = Attachment(fileName: url.lastPathComponent, fileURL: stored, kind: .image, id: id)
+            attachment.displayName = displayName
+            attachment.fileSizeBytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize).flatMap { $0 }
+            attachment.note = note
+            modelContext.insert(attachment)
+            appended += "\n\n" + AttachmentRef.markdown(for: id, displayName: displayName)
+        }
+        guard !appended.isEmpty else { return }
+        draft = (draft.isEmpty ? "" : draft) + appended
+        note.content = draft
+        note.updatedAt = Date()
+        isEditing = true
+    }
+
+    #if os(macOS)
+    private var pasteboardHasImage: Bool {
+        NSPasteboard.general.canReadObject(forClasses: [NSImage.self], options: nil)
+    }
+
+    private func pasteImageFromClipboard() {
+        guard let image = NSPasteboard.general.readObjects(forClasses: [NSImage.self], options: nil)?.first as? NSImage,
+              let tiff = image.tiffRepresentation,
+              let bitmap = NSBitmapImageRep(data: tiff),
+              let png = bitmap.representation(using: .png, properties: [:]) else { return }
+        let id = UUID()
+        let dest = AttachmentStorage.attachmentsDirectory
+            .appendingPathComponent(id.uuidString).appendingPathExtension("png")
+        guard (try? png.write(to: dest)) != nil else { return }
+        let displayName = "Pasted image"
+        let attachment = Attachment(fileName: dest.lastPathComponent, fileURL: dest, kind: .image, id: id)
+        attachment.displayName = displayName
+        attachment.fileSizeBytes = png.count
+        attachment.note = note
+        modelContext.insert(attachment)
+        draft = (draft.isEmpty ? "" : draft) + "\n\n" + AttachmentRef.markdown(for: id, displayName: displayName)
+        note.content = draft
+        note.updatedAt = Date()
+        isEditing = true
+    }
+    #endif
+}

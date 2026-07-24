@@ -21,6 +21,7 @@ struct ActivitySection: View {
     @State private var showingAddFocusBlock = false
     @State private var showingLogTime = false
     @State private var selectedMeetingMinutes: Minutes?
+    @State private var isNewMeeting = false
     @State private var editorDayRecord: DayRecord?
     @State private var isUnspecifiedCollapsed = false
 
@@ -73,7 +74,7 @@ struct ActivitySection: View {
             }
 
             ForEach(standaloneMeetings, id: \.id) { minutes in
-                StandaloneMeetingRow(minutes: minutes, onTap: { selectedMeetingMinutes = minutes })
+                StandaloneMeetingRow(minutes: minutes, onTap: { isNewMeeting = false; selectedMeetingMinutes = minutes })
             }
 
             ForEach(completedTasks) { task in
@@ -132,7 +133,7 @@ struct ActivitySection: View {
 
         Color.clear
             .sheet(item: $selectedMeetingMinutes) { m in
-                MinutesDetailView(minutes: m, asSheet: true, isNew: true)
+                MinutesDetailView(minutes: m, asSheet: true, isNew: isNewMeeting).presentationSizing(.fitted)
             }
     }
 
@@ -166,6 +167,7 @@ struct ActivitySection: View {
         entry.minutes = meeting
         entry.dayRecord = record
         modelContext.insert(entry)
+        isNewMeeting = true
         selectedMeetingMinutes = meeting
     }
 
