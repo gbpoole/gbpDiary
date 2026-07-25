@@ -33,6 +33,7 @@ struct MarkdownDocumentEditor: View {
     @State private var previewDraft = ""
     @State private var previewDebouncer = Debouncer()
     @State private var editingImageID: UUID?
+    @State private var showingDeleteConfirm = false
     @State private var chipRefresh = 0
     @State private var sourceHeight: CGFloat = 120
     @State private var autoFocusPending = false
@@ -87,6 +88,12 @@ struct MarkdownDocumentEditor: View {
             NoteImageEditSheet(attachment: attachment, onRemove: { removeImage(attachment.id) })
                 .onDisappear { chipRefresh += 1 }  // refresh chips in case the display name changed
         }
+        .alert("Delete Note?", isPresented: $showingDeleteConfirm) {
+            Button("Delete", role: .destructive) { onDelete?() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently deletes the note and its content.")
+        }
         .contextMenu {
             #if os(macOS)
             if pasteboardHasImage {
@@ -103,11 +110,18 @@ struct MarkdownDocumentEditor: View {
 
     // MARK: - Header (chips + controls)
 
+    // Compact labeled metadata block, matching the meeting minutes metadata header. Insert-image
+    // and Done controls sit at the top-right.
     private var header: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                projectLine
-                Spacer(minLength: 6)
+        VStack(alignment: .leading, spacing: 7) {
+            metaRow("Project") { projectLine }
+            metaRow("Tags")    { tagsLine }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)  // fill so chip vs placeholder width doesn't resize the card
+        .padding(10)
+        .background(AppTheme.cardRaised.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(alignment: .topTrailing) {
+            HStack(spacing: 8) {
                 Button { showingImageImporter = true } label: {
                     Image(systemName: "photo.badge.plus").font(.system(size: 12))
                 }
@@ -122,9 +136,31 @@ struct MarkdownDocumentEditor: View {
                     .foregroundStyle(AppTheme.action)
                     .help("Done editing")
                 }
+                if onDelete != nil {
+                    Button { showingDeleteConfirm = true } label: {
+                        Image(systemName: "trash").font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(AppTheme.action)
+                    .help("Delete note")
+                }
             }
-            tagsLine
+            .padding(8)
         }
+    }
+
+    private func metaRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
+        // Center-aligned with a fixed min height (≈ chip height) so switching between a chip and the
+        // placeholder text doesn't change the row height or shift it vertically.
+        HStack(alignment: .center, spacing: 8) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 66, alignment: .leading)
+            content()
+            Spacer(minLength: 0)
+        }
+        .frame(minHeight: 22)
     }
 
     // Project chip when set; otherwise a tap-to-edit placeholder (only when editing is supported).
@@ -134,7 +170,9 @@ struct MarkdownDocumentEditor: View {
             Chip(label: project.name, color: AppTheme.project)
                 .modifier(EditTapModifier(onEdit: onEdit))
         } else if onEdit != nil {
-            metadataPlaceholder("No project set — click to edit")
+            metadataPlaceholder("None set — click to edit")
+        } else {
+            Text("—").font(.caption).foregroundStyle(.tertiary)
         }
     }
 
@@ -149,14 +187,17 @@ struct MarkdownDocumentEditor: View {
             }
             .modifier(EditTapModifier(onEdit: onEdit))
         } else if onEdit != nil {
-            metadataPlaceholder("No tags set — click to edit")
+            metadataPlaceholder("None set — click to edit")
+        } else {
+            Text("—").font(.caption).foregroundStyle(.tertiary)
         }
     }
 
     private func metadataPlaceholder(_ text: String) -> some View {
+        // Match the meeting minutes header's empty picker label: accent-colored, callout size.
         Text(text)
-            .font(.caption)
-            .foregroundStyle(.tertiary)
+            .font(.callout)
+            .foregroundStyle(AppTheme.accent)
             .contentShape(Rectangle())
             .onTapGesture { onEdit?() }
     }
