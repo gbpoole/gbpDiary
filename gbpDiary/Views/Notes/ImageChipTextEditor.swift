@@ -32,6 +32,8 @@ struct ImageChipTextEditor: NSViewRepresentable {
     var onInsertImageFiles: ([URL], Int) -> Void
     /// Dropped/pasted raw image data (e.g. a screenshot) → insert a ref at the given UTF-16 index.
     var onInsertImageData: (Data, Int) -> Void
+    /// When true, focus the editor with the caret at the start once it appears.
+    var startFocused: Bool = false
     var onTapImage: (UUID) -> Void
 
     static let minHeight: CGFloat = 120
@@ -70,6 +72,13 @@ struct ImageChipTextEditor: NSViewRepresentable {
         tv.onWidthChange = { [weak coordinator = context.coordinator] in coordinator?.scheduleHeightPush() }
         context.coordinator.textView = tv
         context.coordinator.apply(markdown: text, into: tv)
+        if startFocused {
+            DispatchQueue.main.async { [weak tv] in
+                guard let tv, let window = tv.window else { return }
+                window.makeFirstResponder(tv)
+                tv.setSelectedRange(NSRange(location: 0, length: 0))
+            }
+        }
         return tv
     }
 

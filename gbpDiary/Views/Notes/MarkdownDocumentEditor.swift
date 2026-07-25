@@ -20,6 +20,7 @@ struct MarkdownDocumentEditor: View {
     var onEdit: (() -> Void)? = nil      // pencil → NoteEditorSheet (project/tags); hidden if nil
     var onDelete: (() -> Void)? = nil    // context-menu Delete; hidden if nil
     var startInEdit: Bool = false
+    var onStartedEditing: (() -> Void)? = nil   // called once if startInEdit opens edit mode
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var hSizeClass
@@ -34,6 +35,7 @@ struct MarkdownDocumentEditor: View {
     @State private var editingImageID: UUID?
     @State private var chipRefresh = 0
     @State private var sourceHeight: CGFloat = 120
+    @State private var autoFocusPending = false
     #if os(macOS)
     @State private var escapeMonitor = EscapeKeyMonitor()
     #endif
@@ -56,7 +58,11 @@ struct MarkdownDocumentEditor: View {
         .onAppear {
             draft = note.content
             previewDraft = note.content
-            if startInEdit { beginEditing() }
+            if startInEdit {
+                beginEditing()
+                autoFocusPending = true
+                onStartedEditing?()
+            }
             #if os(macOS)
             escapeMonitor.action = {
                 guard isEditing else { return false }
@@ -204,6 +210,7 @@ struct MarkdownDocumentEditor: View {
                         insertRefs([ref], at: idx)
                     }
                 },
+                startFocused: autoFocusPending,
                 onTapImage: { editingImageID = $0 }
             )
             .frame(height: sourceHeight)
@@ -256,6 +263,7 @@ struct MarkdownDocumentEditor: View {
     private func exitEditing() {
         commit()
         isEditing = false
+        autoFocusPending = false
         #if os(macOS)
         // Resign first responder so the caret leaves the source editor immediately.
         NSApp.keyWindow?.makeFirstResponder(nil)

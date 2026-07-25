@@ -41,26 +41,36 @@ struct MinutesDetailView: View {
 
     var body: some View {
         if asSheet {
+            // Metadata-only sheet — size it to the compact content, not the full editor.
             NavigationStack {
                 coreContent
             }
-            .frame(
-                minWidth: 500, idealWidth: 960, maxWidth: .infinity,
-                minHeight: 500, idealHeight: 700, maxHeight: .infinity
-            )
+            .frame(minWidth: 420, idealWidth: 460, maxWidth: 560)
+            .fixedSize(horizontal: false, vertical: true)
         } else {
             coreContent
         }
     }
 
     @ViewBuilder private var coreContent: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                summaryField
-                metadataHeader
-                notesSection
+        Group {
+            if asSheet {
+                // No inner ScrollView and no trailing spacer, so the sheet hugs its content height.
+                VStack(alignment: .leading, spacing: 12) {
+                    summaryField
+                    metadataHeader
+                }
+                .padding()
+            } else {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        summaryField
+                        metadataHeader
+                        notesSection
+                    }
+                    .padding()
+                }
             }
-            .padding()
         }
         .navigationTitle(isNew ? "New Meeting" : "Edit Meeting")
         .toolbar {
@@ -80,6 +90,8 @@ struct MinutesDetailView: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isNew ? "Add" : "Done") {
                         isConfirmed = true
+                        // A new meeting opens in its own tab, ready to edit the minutes.
+                        if isNew { workspace.openMinutesForEditing(minutes.persistentModelID) }
                         dismiss()
                     }
                     .keyboardShortcut(.defaultAction)
@@ -166,15 +178,17 @@ struct MinutesDetailView: View {
         VStack(alignment: .leading, spacing: 7) {
             metaRow("Projects")  { projectsField }
             metaRow("Time")      { timeField }
-            metaRow("Duration")  { durationPicker }
+            metaRow("Duration", alignment: .center) { durationPicker }
             metaRow("Attendees") { attendeesField }
         }
         .padding(10)
         .background(AppTheme.cardRaised.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private func metaRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+    private func metaRow<Content: View>(_ label: String,
+                                        alignment: VerticalAlignment = .firstTextBaseline,
+                                        @ViewBuilder content: () -> Content) -> some View {
+        HStack(alignment: alignment, spacing: 8) {
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -205,6 +219,8 @@ struct MinutesDetailView: View {
     }
 
     private var durationPicker: some View {
+        // The clear button flows right after the chips. Its vertical padding matches the chips so
+        // it lines up, and the row's .center alignment keeps chips from shifting when it appears.
         FlowLayout(spacing: 6) {
             ForEach(durationPresets) { preset in
                 Button(preset.label) {
@@ -220,9 +236,7 @@ struct MinutesDetailView: View {
                 .background(isPresetActive(preset) ? Color.accentColor : Color.secondary.opacity(0.12), in: Capsule())
                 .foregroundStyle(isPresetActive(preset) ? Color.white : Color.primary)
             }
-
             customChip
-
             if minutes.duration != nil {
                 Button {
                     minutes.duration = nil
@@ -233,6 +247,7 @@ struct MinutesDetailView: View {
                     Image(systemName: "xmark.circle.fill")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
                 }
                 .buttonStyle(.plain)
                 .help("Clear duration")
@@ -332,8 +347,12 @@ struct MinutesDetailView: View {
     private var notesSection: some View {
         GroupBox("Minutes") {
             if !isDeleted, let note = minutes.note {
-                MarkdownDocumentEditor(note: note)
-                    .padding(.horizontal, -12)
+                MarkdownDocumentEditor(
+                    note: note,
+                    startInEdit: workspace.autoEditMinutesId == minutes.persistentModelID,
+                    onStartedEditing: { workspace.autoEditMinutesId = nil }
+                )
+                .padding(.horizontal, -12)
             } else if !isDeleted {
                 Button("Add minutes") {
                     let note = Note(content: "")

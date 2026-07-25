@@ -134,6 +134,8 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
 @Observable final class WorkspaceModel {
     private(set) var tabs: [WorkspaceTabState]
     var activeId: UUID
+    /// A minutes tab that should open straight into minutes-edit mode (e.g. a just-created meeting).
+    var autoEditMinutesId: PersistentIdentifier?
 
     init() {
         let first = WorkspaceTabState(.diary)
@@ -154,6 +156,12 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     }
 
     func activate(_ id: UUID) { activeId = id }
+
+    /// Open a meeting in a new tab that jumps straight into editing its minutes.
+    func openMinutesForEditing(_ id: PersistentIdentifier) {
+        autoEditMinutesId = id
+        openInNewTab(.minutes(id))
+    }
 
     /// Activate an existing tab already showing this destination, else open it in a new tab.
     func focusOrOpen(_ tab: WorkspaceTab) {

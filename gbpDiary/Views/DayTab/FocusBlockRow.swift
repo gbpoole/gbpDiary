@@ -108,7 +108,7 @@ struct FocusBlockRow: View {
     private var meetingRows: some View {
         ForEach(meetings, id: \.id) { entry in
             if let minutes = entry.minutes {
-                MeetingActivityRow(minutes: minutes, onTap: { selectedMeetingMinutes = minutes })
+                MeetingActivityRow(minutes: minutes)
             }
         }
     }
@@ -122,16 +122,10 @@ struct FocusBlockRow: View {
     }
 }
 
-private final class MeetingActivityTapFlags { var didTapMinutes = false }
-
 private struct MeetingActivityRow: View {
     var minutes: Minutes
-    var onTap: (() -> Void)? = nil
 
     @Environment(WorkspaceModel.self) private var workspace
-    @Environment(\.modelContext) private var modelContext
-    @State private var tapFlags = MeetingActivityTapFlags()
-    @State private var tapCount = 0
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
@@ -146,8 +140,6 @@ private struct MeetingActivityRow: View {
                     .foregroundStyle(AppTheme.text)
                 Spacer(minLength: 8)
                 HStack(spacing: 4) {
-                    minutesIcon
-                        .frame(width: 24, alignment: .center)
                     Group {
                         if let project = minutes.projects.first {
                             Chip(label: project.name, color: AppTheme.project)
@@ -170,51 +162,11 @@ private struct MeetingActivityRow: View {
             .background(AppTheme.cardRaised.opacity(0.45))
             .clipShape(RoundedRectangle(cornerRadius: 5))
             .contentShape(Rectangle())
-            .simultaneousGesture(TapGesture().onEnded { tapCount += 1 })
-            .onChange(of: tapCount) {
-                if tapFlags.didTapMinutes {
-                    tapFlags.didTapMinutes = false
-                } else {
-                    onTap?()
-                }
-            }
+            .onTapGesture { workspace.openInNewTab(.minutes(minutes.persistentModelID)) }
             .padding(.trailing)
         }
         .padding(.leading)
         .padding(.vertical, 1)
-    }
-
-    @ViewBuilder
-    private var minutesIcon: some View {
-        if minutes.note == nil {
-            Button {
-                tapFlags.didTapMinutes = true
-                let note = Note(content: "")
-                modelContext.insert(note)
-                minutes.note = note
-                minutes.updatedAt = Date()
-                workspace.openInNewTab(.minutes(minutes.persistentModelID))
-            } label: {
-                Image(systemName: "note.text.badge.plus")
-                    .font(.system(size: 12))
-                    .foregroundStyle(AppTheme.action)
-            }
-            .buttonStyle(.plain)
-            .help("Add minutes")
-        } else {
-            Button {
-                tapFlags.didTapMinutes = true
-                if let note = minutes.note {
-                    workspace.openInNewTab(.minutes(minutes.persistentModelID))
-                }
-            } label: {
-                Image(systemName: "note.text")
-                    .font(.system(size: 12))
-                    .foregroundStyle(AppTheme.action)
-            }
-            .buttonStyle(.plain)
-            .help("Open minutes")
-        }
     }
 }
 

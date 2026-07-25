@@ -75,37 +75,12 @@ struct EntryRowView: View {
                 }
                 .frame(width: 20, height: 28)
                 MeetingEntryContent(
-                    summaryBinding: $summaryDraft,
                     minutes: entry.minutes,
-                    isEntryFocused: isEntryFocused,
-                    isCollapsed: isCollapsed,
-                    onToggleCollapse: nil,
-                    onAddMinutes: {
-                        guard let m = entry.minutes else { return }
-                        let note = Note(content: "")
-                        modelContext.insert(note)
-                        m.note = note
-                        m.updatedAt = Date()
-                        workspace.openInNewTab(.minutes(m.persistentModelID))
-                    },
-                    onOpenMinutes: {
+                    onOpen: {
                         guard let m = entry.minutes else { return }
                         workspace.openInNewTab(.minutes(m.persistentModelID))
                     },
-                    onDelete: { showingDeleteConfirm = true },
-                    inlineText: { binding in
-                        InlineEditableSingleLineText(
-                            placeholder: "Meeting summary",
-                            text: binding,
-                            isFocused: isEntryFocused,
-                            focusBinding: focusedEntryId,
-                            focusId: entry.id,
-                            onIndent: nil,
-                            onOutdent: nil,
-                            onMoveToPrevious: onMoveToPrevious,
-                            onMoveToNext: nextForSummary
-                        )
-                    }
+                    onDelete: { showingDeleteConfirm = true }
                 )
                 .contextMenu { deleteButton }
                 .background(Color.secondary.opacity(0.06))
