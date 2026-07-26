@@ -336,36 +336,16 @@ struct DayView: View {
 
     @State private var banner: BannerMessage? = nil
 
-    private var isToday: Bool { Calendar.current.isDateInToday(date) }
-
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(date, format: .dateTime.weekday(.wide))
-                        .font(.title2.bold())
-                        .foregroundStyle(isToday ? Color.accentColor : .primary)
-                    Text(date, format: .dateTime.day().month(.wide).year())
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.horizontal)
-                .padding(.top, 28)
-                .padding(.bottom, 6)
-
-                Divider()
-                    .padding(.horizontal)
-
-                DayPageContent(date: date, dayRecord: dayRecord, allTasks: allTasks,
-                               showTaskSections: false,
-                               onShowBanner: showBanner)
-                    .padding(.vertical)
+        // The date is shown once, in the diary bar above. DayPageContent has its own ScrollView and
+        // leads with the action bar, so the add-activity buttons sit at the top of the page.
+        DayPageContent(date: date, dayRecord: dayRecord, allTasks: allTasks,
+                       showTaskSections: false,
+                       onShowBanner: showBanner)
+            .overlay(alignment: .bottom) {
+                if let msg = banner { bannerView(msg) }
             }
-        }
-        .overlay(alignment: .bottom) {
-            if let msg = banner { bannerView(msg) }
-        }
-        .animation(.easeInOut(duration: 0.25), value: banner)
+            .animation(.easeInOut(duration: 0.25), value: banner)
     }
 
     private func showBanner(_ msg: BannerMessage) {

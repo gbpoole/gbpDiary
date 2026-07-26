@@ -31,6 +31,7 @@ enum AppTheme {
     static let text = Kanagawa.text
     static let mutedText = Kanagawa.subtext0
     static let accent = Kanagawa.yellow
+    static let today = Kanagawa.green
     static let destructive = Kanagawa.red
 
     static let project = Kanagawa.blue

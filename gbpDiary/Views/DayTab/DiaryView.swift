@@ -36,19 +36,39 @@ struct DiaryView: View {
     }
 
     private var diaryBar: some View {
-        HStack(spacing: 6) {
-            Button { stepDate(-1) } label: { Image(systemName: "chevron.left") }
-                .buttonStyle(.borderless)
-            Button { stepDate(1) } label: { Image(systemName: "chevron.right") }
-                .buttonStyle(.borderless)
+        // Green when viewing today/this week; accent otherwise, so "today" is instantly recognisable.
+        let dateColor = isCurrentPeriod ? AppTheme.today : AppTheme.accent
+        return HStack(spacing: 12) {
+            // Date stepper — a single, colour-tinted control (calendar icon + prominent date) so
+            // it reads clearly as day/week navigation, distinct from the tab back/forward above.
+            HStack(spacing: 8) {
+                Button { stepDate(-1) } label: {
+                    Image(systemName: "chevron.left").font(.system(size: 12, weight: .bold))
+                }
+                .buttonStyle(.plain)
+                Image(systemName: "calendar")
+                    .font(.system(size: 13))
+                    .foregroundStyle(dateColor)
+                Text(dateLabel)
+                    .font(AppTheme.interfaceFont(size: 16, weight: .bold))
+                    .foregroundStyle(dateColor)
+                    .lineLimit(1)
+                    .frame(width: 240, alignment: .center)   // fixed so the control doesn't jump as the date changes
+                Button { stepDate(1) } label: {
+                    Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
+            .background(dateColor.opacity(0.12), in: Capsule())
+
             Button("Today") { diary.currentDate = Calendar.current.startOfDay(for: Date()) }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
                 .disabled(isCurrentPeriod)
 
-            Text(dateLabel)
-                .font(AppTheme.interfaceFont(size: 15, weight: .semibold))
-                .foregroundStyle(AppTheme.text)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.leading, 4)
+            Spacer()
 
             Picker("", selection: Binding(get: { diary.mode }, set: { diary.mode = $0 })) {
                 ForEach(DiaryMode.allCases, id: \.self) { m in

@@ -126,13 +126,6 @@ struct ActivitySection: View {
             ForEach(completedTasks) { task in
                 CompletedTaskActivityRow(task: task)
             }
-
-            totalFooter(
-                blocks: blocks,
-                standalone: standaloneEntries,
-                meetings: standaloneMeetings,
-                completedTasks: completedTasks
-            )
         } else {
             Text("No activity logged for this day.")
                 .foregroundStyle(.tertiary)
@@ -143,12 +136,14 @@ struct ActivitySection: View {
 
         if let record = editorDayRecord {
             Color.clear
+                .frame(width: 0, height: 0)
                 .sheet(isPresented: $showingAddFocusBlock, onDismiss: { editorDayRecord = nil }) {
                     FocusBlockEditorSheet(dayRecord: record)
                 }
         }
 
         Color.clear
+            .frame(width: 0, height: 0)
             .onChange(of: logTimeTrigger.wrappedValue) { _, triggered in
                 guard triggered else { return }
                 showingLogTime = true
@@ -170,6 +165,7 @@ struct ActivitySection: View {
             }
 
         Color.clear
+            .frame(width: 0, height: 0)
             .sheet(item: $selectedMeetingMinutes) { m in
                 MinutesDetailView(minutes: m, asSheet: true, isNew: isNewMeeting).presentationSizing(.fitted)
             }
@@ -177,14 +173,36 @@ struct ActivitySection: View {
 
     // MARK: - Activity header
 
+    // Standard capacity from non-evening blocks + standalone/meeting/completed hours.
+    private var totalHours: Double {
+        let standardBlockHours = blocks.filter { !$0.isOvertime }.reduce(0.0) { $0 + $1.duration.hoursNormalized }
+        let standaloneHours = standaloneEntries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
+        let meetingHours = standaloneMeetings.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
+        let taskHours = completedTasks.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
+        return standardBlockHours + standaloneHours + meetingHours + taskHours
+    }
+    private var overtimeHours: Double {
+        blocks.filter { $0.isOvertime }.flatMap { entries(for: $0) }.reduce(0.0) { $0 + $1.duration.hoursNormalized }
+    }
+
     private var activityHeader: some View {
-        HStack {
+        HStack(spacing: 8) {
             Text("Activity")
                 .font(AppTheme.interfaceFont(size: 12, weight: .semibold))
                 .tracking(0.8)
                 .textCase(.uppercase)
                 .foregroundStyle(AppTheme.mutedText)
             Spacer()
+            if overtimeHours > 0 {
+                Text("Overtime \(Duration(value: overtimeHours, unit: .h).displayString)")
+                    .font(AppTheme.interfaceFont(size: 11, weight: .semibold))
+                    .foregroundStyle(AppTheme.accent)
+            }
+            if totalHours > 0 {
+                Text("Total \(Duration(value: totalHours, unit: .h).displayString)")
+                    .font(AppTheme.interfaceFont(size: 11, weight: .semibold))
+                    .foregroundStyle(AppTheme.mutedText)
+            }
         }
         .padding(.horizontal)
         .padding(.top, 16)
@@ -221,37 +239,6 @@ struct ActivitySection: View {
         return cal.date(bySettingHour: hour, minute: minute, second: 0, of: date) ?? date
     }
 
-    private func totalFooter(
-        blocks: [FocusBlock],
-        standalone: [TaskTimeEntry],
-        meetings: [Minutes],
-        completedTasks: [Task]
-    ) -> some View {
-        // Standard capacity from non-evening blocks; evening blocks are overtime (logged hours).
-        let standardBlockHours = blocks.filter { !$0.isOvertime }.reduce(0.0) { $0 + $1.duration.hoursNormalized }
-        let standaloneHours = standalone.reduce(0.0) { $0 + $1.duration.hoursNormalized }
-        let meetingHours   = meetings.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
-        let taskHours      = completedTasks.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
-        let total          = standardBlockHours + standaloneHours + meetingHours + taskHours
-        let overtime       = blocks.filter { $0.isOvertime }
-            .flatMap { entries(for: $0) }
-            .reduce(0.0) { $0 + $1.duration.hoursNormalized }
-        return HStack(spacing: 10) {
-            Spacer()
-            if overtime > 0 {
-                Text("Overtime: \(Duration(value: overtime, unit: .h).displayString)")
-                    .font(.caption)
-                    .foregroundStyle(AppTheme.accent)
-            }
-            if total > 0 {
-                Text("Total: \(Duration(value: total, unit: .h).displayString)")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.trailing)
-        .padding(.bottom, 4)
-    }
 }
 
 private struct StandaloneMeetingRow: View {
