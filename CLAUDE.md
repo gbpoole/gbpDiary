@@ -61,7 +61,7 @@ The Day tab renders a `DayPageContent` view with four typed sections. Meetings a
 DayPageContent
   └── ScrollView
         └── VStack
-              ├── activitySection     ActivitySection — Focus blocks + Activities + Unspecified entries
+              ├── activitySection     ActivitySection — Focus blocks (morning/afternoon/all-day/evening) + their Activities
               ├── meetingsSection     EntryRowView (kind == .meeting) per DayEntry
               ├── newTasksSection     DiaryTaskRow per Task with dayRecord == thisRecord
               ├── completedTasksSection  CompletedTaskRow for tasks completedAt in day
@@ -76,7 +76,7 @@ Old `DayEntry(kind:.note)` entries are auto-migrated into `DayRecord.notes` the 
 
 | Section | Location | Filter |
 |---------|----------|--------|
-| Activity | Inline | `dayRecord.focusBlocks` sorted by `sortOrder`; `TaskTimeEntry` objects for `focusBlock == nil` shown as Unspecified |
+| Activity | Inline | Focus blocks + standalone (out-of-range) entries interleaved by time; each entry attaches to its containing block or renders standalone (no unspecified). Evening blocks show as Overtime |
 | Notes | Inline | `dayRecord.noteItems` sorted by `sortOrder`; reorderable by drag |
 | New Tasks | Inline | `task.dayRecord == thisRecord`, parent == nil — **all statuses shown** |
 | Completed | Inline | `status == .completed && completedAt` in `[dayStart, dayEnd)`, excluding dayRecord tasks |
@@ -94,7 +94,7 @@ All use `@Query(sort: \Task.createdAt) var allTasks` filtered in-memory.
 Value types (Codable structs, not `@Model`) in `Models/ValueTypes.swift`:
 - `TaskStatus`: `todo | started | completed | cancelled | followUpPending`
 - `DayEntryKind`: `note | task | meeting`
-- `DaySlot`: `allDay | morning | afternoon` — time-of-day slot for a `FocusBlock`; morning = before noon, afternoon = noon and later
+- `DaySlot`: `allDay | morning | afternoon | evening` — time-of-day slot for a `FocusBlock`. Morning = before **12:30**, afternoon = 12:30 until an (optional) evening block's flexible start, evening = at/after that start. Evening has no standard capacity (`defaultDuration` = 0) and `isOvertime == true`. Boundaries live in `DaySlotBoundary`/`DaySlotClassifier` (`Domain/DaySlotClassifier.swift`). Focus blocks are user-defined *ranges*; `FocusBlockAssignment.containingBlock` attaches each entry to the block whose range contains its time (evening wins; morning/afternoon fall back to all-day), **without creating blocks**. Entries outside every block render standalone (see Activity section). Evening is additive (coexists with any standard structure) and has no task/project source.
 - `DurationUnit`: `h | d | w` (hours / days≈7.6h / weeks≈38h)
 - `Duration`: `value + unit + hoursNormalized`. Use `Duration.parse("1.5h")` for user input.
 - `SourceContext`: import provenance metadata (not used by UI, preserved for import pipeline)
@@ -125,11 +125,12 @@ TaskTimeEntry                (a single logged time entry; used in Activity secti
   comment   : String?
   sortOrder : Int
   task     → Task?           (no @Relationship — Task side declares the inverse)
-  focusBlock→ FocusBlock?    (nil = unspecified; no @Relationship)
+  focusBlock→ FocusBlock?    (assigned by slot via FocusBlockAssignment; no @Relationship)
 
 FocusBlock                   (a primary work block for a day; shown in Activity section)
   duration  : Duration       (explicitly entered total time)
-  slot      : DaySlot        (allDay | morning | afternoon; default allDay)
+  slot      : DaySlot        (allDay | morning | afternoon | evening; default allDay)
+  startTime : Date?          (evening block's flexible start; nil otherwise; default 18:00)
   sortOrder : Int
   task     → Task?           (backed by a task; nil if project-backed)
   project  → Project?        (backed by a project; nil if task-backed)
@@ -270,8 +271,10 @@ When a meeting `DayEntry` is created, `addMeeting()` automatically creates and l
 - `EntryRowView` — renders a meeting `DayEntry` with inline summary, minutes notes sub-area, and embedded New Tasks subtree. (Note/task DayEntry kinds are no longer rendered.)
 - `MarkdownDocumentEditor` (`Views/Notes/MarkdownDocumentEditor.swift`) — the single editor for a `Note`. Not editing → rendered markdown preview (tap to edit). Editing on a wide layout (Mac/iPad, `horizontalSizeClass != .compact`) → source `TextEditor` and live Textual preview side by side; on a narrow layout (iPhone) → source with an edit/preview segmented toggle. Shows project chip (`.blue`) + tag chips (`.teal`), an insert-image button (file importer; macOS also supports "Paste Image" from clipboard via context menu), an optional pencil (`onEdit` → NoteEditorSheet for project/tags), and a Done control. Image insertion copies the file via `AttachmentStorage`, links an `Attachment` to the note, and inserts `![name](attachment://<uuid>)`. `onEdit`/`onDelete` are optional (hidden when nil); `startInEdit` opens straight into edit mode (used for freshly-added day notes). Atomic image *chips* in the source pane are a planned enhancement — the source is currently plain markdown text.
 - `NoteEditorSheet` — sheet for editing `Note.project` and `Note.tags` (content is always edited inline). Accepts `note: Note`.
-- `ActivitySection` — top section in `DayPageContent` showing Focus blocks, their Activities, and any Unspecified time entries. "+" opens `FocusBlockEditorSheet`. Total logged time footer shown when non-empty.
-- `FocusBlockRow` — collapsible row for one `FocusBlock`. Shows source icon (folder for project-backed, checkmark for task-backed), duration chip, net unspecified time label, "+" to open `LogTimeSheet`, pencil to edit. Context menu includes delete with alert when activities exist.
+- `ActivitySection` — top section in `DayPageContent`. Renders focus blocks and standalone (out-of-range) entries interleaved chronologically (`activityItems`); `ActivityEntryRow` is reused for standalone entries at block-indent level. On appear and whenever blocks change it calls `normalizeEntries()` → `FocusBlockAssignment.containingBlock` to re-attach every entry to its containing block (or detach to standalone), so entries move as blocks are added/deleted. No blocks are auto-created; there is no Unspecified group. Footer shows Total and, separately, Overtime (evening logged hours). `FocusBlockRow` context menu has Edit + Delete.
+- `FocusBlockEditorSheet` — create/edit a `FocusBlock`. Evening is additive (always addable); when the slot is Evening a start-time picker (default 18:00) sets `startTime`; evening has no capacity.
+- `LogTimeSheet` — logs a `TaskTimeEntry`; pre-selects the slot-matching block (12:30 split; evening if present). Blocks without a task/project show just their slot name.
+- `FocusBlockRow` — collapsible row for one `FocusBlock`. Shows source icon (folder for project-backed, checkmark for task-backed), slot/duration chip, net remaining time label, "+" to open `LogTimeSheet`, pencil to edit. Context menu includes delete with alert when activities exist.
 - `FocusBlockEditorSheet` — sheet for creating or editing a `FocusBlock`. Segmented picker: Task or Project source. Duration text field with `Duration.parse(_:)` validation.
 - `LogTimeSheet` — lightweight sheet for adding a `TaskTimeEntry`. Pre-fillable with `presetTask`, `presetFocusBlock`, `presetDate`. Task picker shown when no preset task.
 - `DayTaskSidebar` — collapsible sidebar with Scheduled and Inbox sections for a given day.
@@ -386,11 +389,13 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | notesId derives a stable focus ID by bit-complementing all 16 UUID bytes; result is its own inverse and never collides with organic UUIDs | Inline task notes / meeting minutes | gbpDiaryTests/Models/DayEntryContentTests.swift | (tested indirectly via `notesAreaFocusId` usage) |
 | `entriesInRange` filters `TaskTimeEntry` objects whose `date` falls within the interval; `totalHours(entries:)` sums their `hoursNormalized` | Timesheet entry-based aggregation | gbpDiaryTests/Domain/TimesheetComputationTests.swift | `entriesInRange_filtersCorrectly`, `totalHours_entries_sumsHours` |
 | `FocusBlock.netHours` = max(0, block.duration.hoursNormalized − sum of activity durations) | Activity section | `gbpDiaryTests/Models/FocusBlockTests.swift` | `focusBlock_netHours_subtractsActivities`, `focusBlock_netHours_clampsToZero` |
-| Meeting slot classification: morning = start < noon; afternoon = end ≥ noon; meeting with no duration treated as point in time; spans-noon meeting appears in both slots | Activity section / `MeetingSlotClassifier` | `gbpDiaryTests/Domain/MeetingSlotTests.swift` | `slots_morningOnly_noDuration`, `slots_afternoonOnly_noduration`, `slots_spansNoon_morningStartLongDuration`, `slots_morningOnly_shortDurationEndsBeforeNoon`, `slots_exactlyAtNoon_isAfternoon`, `slots_endsExactlyAtNoon_spansNoon` |
+| Meeting slot classification: morning = start < 12:30; afternoon = end ≥ 12:30; no-duration meeting is a point in time; spanning-boundary meeting appears in both slots | Activity section / `MeetingSlotClassifier` | `gbpDiaryTests/Domain/MeetingSlotTests.swift` | `slots_morningOnly_noDuration`, `slots_afternoonOnly_noduration`, `slots_spansNoon_morningStartLongDuration`, `slots_morningOnly_shortDurationEndsBeforeNoon`, `slots_before1230_isMorning`, `slots_exactlyAt1230_isAfternoon`, `slots_endsExactlyAt1230_spansBoundary` |
+| Entry slot classification: before 12:30 → morning; ≥ 12:30 → afternoon; ≥ evening start → evening only when an evening block exists (flexible start); evening has no capacity and is overtime | Focus blocks / `DaySlotClassifier` | `gbpDiaryTests/Domain/DaySlotClassifierTests.swift` | `before1230_isMorning`, `atOrAfter1230_isAfternoon`, `withoutEveningBlock_lateTimeStaysAfternoon`, `withEveningBlock_afterStartIsEvening`, `flexibleEveningStart_isRespected`, `daySlot_evening_hasNoStandardCapacity_andIsOvertime` |
+| `FocusBlockAssignment.containingBlock` attaches an entry to the block whose range contains its time (evening wins; morning/afternoon fall back to all-day), or nil (standalone) when none covers it; never creates blocks | Focus blocks / activity grouping | `gbpDiaryTests/Models/FocusBlockTests.swift` | `containingBlock_matchesSlotByTime`, `containingBlock_fallsBackToAllDay`, `containingBlock_eveningWinsAfterItsStart`, `containingBlock_nilWhenOutOfRange` |
 | `Task.setDuration` stores duration; auto-completes todo and started tasks (only when completedAt == nil); does NOT overwrite existing completedAt | Task state transitions | `gbpDiaryTests/Models/TaskStateTransitionTests.swift` | `setDuration_completesTodoTaskAndStoresDuration`, `setDuration_completesStartedTask`, `setDuration_doesNotOverwriteExistingCompletedAt` |
 | `Task.loggedHoursNormalized` sums `hoursNormalized` across all `timeEntries`; returns 0 when empty. `Task.loggedDuration` returns nil when no entries, else a Duration in hours | Timesheet / Activity section | `gbpDiaryTests/Models/TaskComputedPropertyTests.swift` | `loggedHoursNormalized_sumsAllTimeEntries`, `loggedHoursNormalized_emptyEntries_returnsZero`, `loggedDuration_returnsNilWhenNoEntries`, `loggedDuration_returnsNonNilWithSummedHours` |
 | `Task.needsChevron` is true when the task has children OR a non-empty notes string; false for empty-string notes | UI expand/collapse indicator | `gbpDiaryTests/Models/TaskComputedPropertyTests.swift` | `needsChevron_trueWhenHasChildren`, `needsChevron_trueWhenHasNonEmptyNotes`, `needsChevron_falseWhenNoChildrenOrNotes`, `needsChevron_falseWhenNotesIsEmptyString` |
-| `DaySlot.defaultDuration`: allDay=1.0d (7.6h), morning=0.5d (3.8h), afternoon=0.5d (3.8h) | Focus block scheduling | `gbpDiaryTests/Models/ValueTypesTests.swift` | `daySlot_defaultDuration_allDay_isOneDay`, `daySlot_defaultDuration_morning_isHalfDay`, `daySlot_defaultDuration_afternoon_isHalfDay` |
+| `DaySlot.defaultDuration`: allDay=1.0d (7.6h), morning=0.5d (3.8h), afternoon=0.5d (3.8h), evening=0h (overtime container) | Focus block scheduling | `gbpDiaryTests/Models/ValueTypesTests.swift`, `gbpDiaryTests/Domain/DaySlotClassifierTests.swift` | `daySlot_defaultDuration_allDay_isOneDay`, `daySlot_defaultDuration_morning_isHalfDay`, `daySlot_defaultDuration_afternoon_isHalfDay`, `daySlot_evening_hasNoStandardCapacity_andIsOvertime` |
 | `notesId(for:)` is its own inverse: `notesId(notesId(x)) == x`; always produces a UUID distinct from the input | Inline notes focus management | `gbpDiaryTests/Models/DayEntryContentTests.swift` | `notesId_isOwnInverse`, `notesId_differFromSourceId` |
 | `Task.clearFollowUp()` clears `followUpAt` and reverts `.followUpPending` → `.completed`; no-op on other statuses | Task state transitions | `gbpDiaryTests/Models/TaskStateTransitionTests.swift` | `clearFollowUp_revertsToCompleted`, `clearFollowUp_noOpWhenNotFollowUpPending` |
 | Managed image refs: `AttachmentRef.url(for:)`/`markdown(for:)` produce `attachment://<uuid>` refs; `id(fromURL:)` parses them (rejecting other schemes/non-UUIDs); `referencedIDs(in:)` extracts all image-ref ids from markdown in order | Markdown notes / managed images | `gbpDiaryTests/Models/AttachmentRefTests.swift` | `url_and_id_roundTrip`, `id_fromURL_rejectsNonAttachmentSchemes`, `markdown_embedsDisplayNameAndRef`, `markdown_sanitizesClosingBracketInDisplayName`, `referencedIDs_extractsAllInOrder`, `referencedIDs_ignoresPlainLinksAndNonAttachmentImages` |

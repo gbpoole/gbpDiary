@@ -63,6 +63,8 @@ struct FocusBlockRow: View {
             .padding(.trailing)
             .contextMenu {
                 Button("Edit Focus Block…") { showingEditor = true }
+                Divider()
+                Button("Delete Focus Block", role: .destructive) { modelContext.delete(block) }
             }
             .sheet(isPresented: $showingEditor) {
                 if let record = block.dayRecord {
@@ -145,16 +147,13 @@ private struct MeetingActivityRow: View {
                             Chip(label: project.name, color: AppTheme.project)
                         }
                     }
-                    .frame(width: 110, alignment: .leading)
                     Chip(label: minutes.meetingAt.formatted(date: .omitted, time: .shortened),
                          color: AppTheme.project)
-                        .frame(width: 76, alignment: .leading)
                     Group {
                         if let d = minutes.duration {
                             Chip(label: d.displayString, color: AppTheme.duration)
                         }
                     }
-                    .frame(width: 46, alignment: .leading)
                 }
             }
             .padding(.horizontal, 8)
@@ -172,7 +171,8 @@ private struct MeetingActivityRow: View {
 
 private final class ActivityEntryTapFlags { var didTapStatus = false; var didTapFollowUp = false; var didTapAddTime = false; var didTapEditTask = false }
 
-private struct ActivityEntryRow: View {
+// Internal (not private) so the Activity section can render standalone, out-of-range entries too.
+struct ActivityEntryRow: View {
     var entry: TaskTimeEntry
 
     @Environment(\.modelContext) private var modelContext
@@ -228,12 +228,9 @@ private struct ActivityEntryRow: View {
                             Chip(label: project.name, color: AppTheme.project)
                         }
                     }
-                    .frame(width: 110, alignment: .leading)
                     Chip(label: entry.date.formatted(date: .omitted, time: .shortened),
                          color: AppTheme.project)
-                        .frame(width: 76, alignment: .leading)
                     Chip(label: entry.duration.displayString, color: AppTheme.duration)
-                        .frame(width: 46, alignment: .leading)
                 }
             }
             .padding(.horizontal, 8)

@@ -65,22 +65,29 @@ enum DaySlot: String, Codable, CaseIterable {
     case allDay
     case morning
     case afternoon
+    case evening
 
     var displayName: String {
         switch self {
         case .allDay:    "All Day"
         case .morning:   "Morning"
         case .afternoon: "Afternoon"
+        case .evening:   "Evening"
         }
     }
 
+    // Planned capacity for the slot. Evening is a pure overtime container — no standard capacity.
     var defaultDuration: Duration {
         switch self {
         case .allDay:    Duration(value: 1.0, unit: .d)
         case .morning:   Duration(value: 0.5, unit: .d)
         case .afternoon: Duration(value: 0.5, unit: .d)
+        case .evening:   Duration(value: 0.0, unit: .h)
         }
     }
+
+    // Evening time is treated as extra / overtime, not part of the standard working day.
+    var isOvertime: Bool { self == .evening }
 }
 
 // MARK: - JSON helpers for array attributes

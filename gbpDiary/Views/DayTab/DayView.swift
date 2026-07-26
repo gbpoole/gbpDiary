@@ -92,10 +92,11 @@ struct DayPageContent: View {
         DayTaskFiltering.inboxTasks(allTasks: allTasks)
     }
 
-    // Mirrors ActivitySection.canAddBlock — no more slots if allDay is taken,
-    // or both morning and afternoon are already filled.
+    // Mirrors ActivitySection.canAddBlock — evening is always addable; otherwise no more slots if
+    // allDay is taken, or both morning and afternoon are already filled.
     private var canAddFocusBlock: Bool {
         let taken = Set((dayRecord?.focusBlocks ?? []).map(\.slot))
+        if !taken.contains(.evening) { return true }
         if taken.contains(.allDay) { return false }
         return !taken.contains(.morning) || !taken.contains(.afternoon)
     }
@@ -425,13 +426,11 @@ struct DayTaskActivityRow: View {
                             Chip(label: project.name, color: AppTheme.project)
                         }
                     }
-                    .frame(width: 110, alignment: .leading)
                     Group {
                         if let dur = task.loggedDuration {
                             Chip(label: dur.displayString, color: AppTheme.duration)
                         }
                     }
-                    .frame(width: 46, alignment: .leading)
                 }
             }
             .padding(.horizontal, 8)

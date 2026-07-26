@@ -8,6 +8,8 @@ import SwiftData
     private var slotRaw: DaySlot?
     var sortOrder: Int
     var createdAt: Date
+    // Flexible wall-clock start for an evening block (nil for other slots). Default 18:00.
+    var startTime: Date?
 
     // Singular-side relationships — collection side declares @Relationship(inverse:)
     var task: Task?
@@ -23,7 +25,14 @@ import SwiftData
     }
 
     var displayLabel: String {
-        task?.summary ?? project?.name ?? "Focus block"
+        task?.summary ?? project?.name ?? slot.displayName
+    }
+
+    var isOvertime: Bool { slot.isOvertime }
+
+    // Hours logged against this block (its activities). Used as overtime for evening blocks.
+    var loggedHours: Double {
+        activities.reduce(0.0) { $0 + $1.duration.hoursNormalized }
     }
 
     var netHours: Double {

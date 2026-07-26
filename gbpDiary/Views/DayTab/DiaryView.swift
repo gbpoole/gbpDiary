@@ -18,21 +18,13 @@ struct DiaryView: View {
 
     var body: some View {
         if diary.mode == .day {
-            // Plain HStack (not a nested NavigationSplitView) since the Diary is hosted inside the
-            // workspace's NavigationSplitView; nesting split views misbehaves on macOS.
-            HStack(spacing: 0) {
-                DayTaskSidebar(date: diary.currentDate, dayRecord: dayRecord, allTasks: allTasks)
-                    .frame(width: 260)
-                    .background(AppTheme.sidebarBackground)
+            VStack(spacing: 0) {
+                diaryBar
                 Divider()
-                VStack(spacing: 0) {
-                    diaryBar
-                    Divider()
-                    DayView(date: diary.currentDate, dayRecord: dayRecord, allTasks: allTasks)
-                }
-                .frame(maxWidth: .infinity)
-                .background(AppTheme.background)
+                DayView(date: diary.currentDate, dayRecord: dayRecord, allTasks: allTasks)
             }
+            .frame(maxWidth: .infinity)
+            .background(AppTheme.background)
         } else {
             VStack(spacing: 0) {
                 diaryBar

@@ -26,6 +26,7 @@ struct FocusBlockEditorSheet: View {
         let hasHalfDay = taken.contains(.morning) || taken.contains(.afternoon)
         return DaySlot.allCases.filter { slot in
             guard !taken.contains(slot) else { return false }
+            if slot == .evening { return true }  // additive — an evening block coexists with any standard structure
             if slot == .allDay && hasHalfDay { return false }
             if (slot == .morning || slot == .afternoon) && hasAllDay { return false }
             return true
@@ -36,19 +37,27 @@ struct FocusBlockEditorSheet: View {
     @State private var selectedSlot: DaySlot = .allDay
     @State private var selectedTask: Task?
     @State private var selectedProject: Project?
+    @State private var eveningStart: Date = Date()
     @State private var showingDeleteConfirm = false
+
+    private func defaultEveningStart() -> Date {
+        Calendar.current.date(bySettingHour: 18, minute: 0, second: 0, of: dayRecord.date) ?? dayRecord.date
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    sourceSection
-                    if source == .task {
-                        taskSection
-                    } else {
-                        projectSection
-                    }
                     slotSection
+                    // Evening blocks are pure overtime containers — no task/project source.
+                    if selectedSlot != .evening {
+                        sourceSection
+                        if source == .task {
+                            taskSection
+                        } else {
+                            projectSection
+                        }
+                    }
                 }
                 .padding()
             }
@@ -118,9 +127,19 @@ struct FocusBlockEditorSheet: View {
 
     private var slotSection: some View {
         GroupBox("Time Slot") {
-            HStack(spacing: 6) {
-                ForEach(availableSlots, id: \.self) { s in
-                    capsule(label: s.displayName, isActive: selectedSlot == s) { selectedSlot = s }
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 6) {
+                    ForEach(availableSlots, id: \.self) { s in
+                        capsule(label: s.displayName, isActive: selectedSlot == s) { selectedSlot = s }
+                    }
+                }
+                if selectedSlot == .evening {
+                    HStack(spacing: 8) {
+                        Text("Starts").font(.caption).foregroundStyle(.secondary)
+                        DatePicker("", selection: $eveningStart, displayedComponents: [.hourAndMinute])
+                            .labelsHidden()
+                        Text("· overtime").font(.caption).foregroundStyle(.tertiary)
+                    }
                 }
             }
         }
@@ -139,15 +158,18 @@ struct FocusBlockEditorSheet: View {
     // MARK: - Helpers
 
     private var canSave: Bool {
-        source == .task ? selectedTask != nil : selectedProject != nil
+        if selectedSlot == .evening { return true }   // container — no source required
+        return source == .task ? selectedTask != nil : selectedProject != nil
     }
 
     private func loadExisting() {
+        eveningStart = defaultEveningStart()
         guard let block = existingBlock else {
             if let first = availableSlots.first { selectedSlot = first }
             return
         }
         selectedSlot = block.slot
+        if let start = block.startTime { eveningStart = start }
         if let t = block.task {
             source = .task
             selectedTask = t
@@ -172,7 +194,11 @@ struct FocusBlockEditorSheet: View {
 
         block.duration = duration
         block.slot = selectedSlot
-        if source == .task {
+        block.startTime = selectedSlot == .evening ? eveningStart : nil
+        if selectedSlot == .evening {
+            block.task = nil
+            block.project = nil
+        } else if source == .task {
             block.task = selectedTask
             block.project = nil
         } else {

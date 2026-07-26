@@ -23,12 +23,44 @@ struct ActivitySection: View {
     @State private var selectedMeetingMinutes: Minutes?
     @State private var isNewMeeting = false
     @State private var editorDayRecord: DayRecord?
-    @State private var isUnspecifiedCollapsed = false
 
     // @Query-driven so new blocks appear immediately without relationship-refresh lag.
     private var blocks: [FocusBlock] {
         guard let id = dayRecord?.id else { return [] }
         return allFocusBlocks.filter { $0.dayRecord?.id == id }
+    }
+
+    // Entries not covered by any block's range — rendered standalone, at block indent level.
+    private var standaloneEntries: [TaskTimeEntry] {
+        todayEntries.filter { $0.focusBlock == nil }
+    }
+
+    private enum ActivityRowItem: Identifiable {
+        case block(FocusBlock)
+        case entry(TaskTimeEntry)
+        var id: String {
+            switch self {
+            case .block(let b): "b-\(b.id.uuidString)"
+            case .entry(let e): "e-\(e.id.uuidString)"
+            }
+        }
+    }
+
+    // The time a block's range begins, used to order blocks against standalone entries.
+    private func slotStart(_ block: FocusBlock) -> Date {
+        let cal = Calendar.current
+        switch block.slot {
+        case .morning, .allDay: return cal.startOfDay(for: date)
+        case .afternoon:        return DaySlotBoundary.morningAfternoon(on: date)
+        case .evening:          return block.startTime ?? cal.date(bySettingHour: 18, minute: 0, second: 0, of: date) ?? date
+        }
+    }
+
+    // Blocks + standalone entries, interleaved in chronological order.
+    private var activityItems: [ActivityRowItem] {
+        let blockItems = blocks.map { (slotStart($0), ActivityRowItem.block($0)) }
+        let entryItems = standaloneEntries.map { ($0.date, ActivityRowItem.entry($0)) }
+        return (blockItems + entryItems).sorted { $0.0 < $1.0 }.map(\.1)
     }
 
     private func meetings(for block: FocusBlock) -> [DayEntry] {
@@ -40,6 +72,8 @@ struct ActivitySection: View {
                 guard let m = entry.minutes else { return false }
                 return MeetingSlotClassifier.slots(for: m, on: date).contains(block.slot)
             }
+        case .evening:
+            return []
         }
     }
 
@@ -57,20 +91,31 @@ struct ActivitySection: View {
     // No more slots can be added if an all-day block exists, or both morning and afternoon are taken.
     private var canAddBlock: Bool {
         let taken = Set(blocks.map(\.slot))
+        if !taken.contains(.evening) { return true }   // an evening block is always addable
         if taken.contains(.allDay) { return false }
         return !taken.contains(.morning) || !taken.contains(.afternoon)
     }
 
     var body: some View {
-        let unspecified = todayEntries.filter { $0.focusBlock == nil }.sorted { $0.date < $1.date }
-        let hasContent = !blocks.isEmpty || !unspecified.isEmpty
+        let hasContent = !blocks.isEmpty || !todayEntries.isEmpty
             || !standaloneMeetings.isEmpty || !completedTasks.isEmpty
 
         activityHeader
+            .onAppear { normalizeEntries() }
+            .onChange(of: todayEntries.count) { normalizeEntries() }
+            .onChange(of: todayEntries.map(\.date)) { normalizeEntries() }  // re-bucket when an entry's time changes
+            .onChange(of: blocks.map(\.id)) { normalizeEntries() }
+            .onChange(of: blocks.compactMap(\.startTime)) { normalizeEntries() }
 
         if hasContent {
-            ForEach(blocks) { block in
-                FocusBlockRow(block: block, date: date, meetings: meetings(for: block))
+            // Focus blocks and any standalone (out-of-range) entries, interleaved by time.
+            ForEach(activityItems) { item in
+                switch item {
+                case .block(let block):
+                    FocusBlockRow(block: block, date: date, meetings: meetings(for: block))
+                case .entry(let entry):
+                    ActivityEntryRow(entry: entry)
+                }
             }
 
             ForEach(standaloneMeetings, id: \.id) { minutes in
@@ -81,13 +126,9 @@ struct ActivitySection: View {
                 CompletedTaskActivityRow(task: task)
             }
 
-            if !unspecified.isEmpty {
-                unspecifiedSection(unspecified)
-            }
-
             totalFooter(
                 blocks: blocks,
-                unspecified: unspecified,
+                standalone: standaloneEntries,
                 meetings: standaloneMeetings,
                 completedTasks: completedTasks
             )
@@ -183,75 +224,45 @@ struct ActivitySection: View {
         return cal.date(bySettingHour: hour, minute: minute, second: 0, of: date) ?? date
     }
 
-    @ViewBuilder
-    private func unspecifiedSection(_ entries: [TaskTimeEntry]) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack(alignment: .center, spacing: 6) {
-                Button { isUnspecifiedCollapsed.toggle() } label: {
-                    Image(systemName: isUnspecifiedCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(AppTheme.mutedText)
-                }
-                .buttonStyle(.plain)
-                .contentShape(Rectangle())
-                .frame(width: 16, height: 22)
-
-                HStack(alignment: .center, spacing: 6) {
-                    Image(systemName: "circle.dashed")
-                        .foregroundStyle(AppTheme.mutedText)
-                        .font(.system(size: 14))
-                        .frame(width: 18, height: 18)
-                    Text("Unspecified")
-                        .font(.subheadline)
-                        .fontWeight(.medium)
-                    Spacer(minLength: 0)
-                    let totalHours = entries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
-                    if totalHours > 0 {
-                        Chip(label: Duration(value: totalHours, unit: .h).displayString,
-                             color: AppTheme.duration)
-                    }
-                }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(Color.secondary.opacity(0.06))
-                .clipShape(RoundedRectangle(cornerRadius: 6))
-                .padding(.trailing)
-            }
-            .padding(.leading)
-            .padding(.vertical, 2)
-
-            if !isUnspecifiedCollapsed {
-                VStack(alignment: .leading, spacing: 0) {
-                    ForEach(entries) { entry in
-                        UnspecifiedActivityRow(entry: entry)
-                    }
-                }
-                .padding(.leading, 16)
-            }
+    // Re-attach every entry to the block whose range contains its time (or detach it to standalone
+    // when no block covers it). Re-runs when blocks change so entries move as blocks are added or
+    // removed — e.g. an 8 pm entry jumps to a new evening block, or back out when it's deleted.
+    private func normalizeEntries() {
+        let current = blocks
+        for entry in todayEntries {
+            let target = FocusBlockAssignment.containingBlock(for: entry.date, blocks: current)
+            if entry.focusBlock?.id != target?.id { entry.focusBlock = target }
         }
     }
 
     private func totalFooter(
         blocks: [FocusBlock],
-        unspecified: [TaskTimeEntry],
+        standalone: [TaskTimeEntry],
         meetings: [Minutes],
         completedTasks: [Task]
     ) -> some View {
-        let blockHours     = blocks.reduce(0.0) { $0 + $1.duration.hoursNormalized }
-        let unspecHours    = unspecified.reduce(0.0) { $0 + $1.duration.hoursNormalized }
+        // Standard capacity from non-evening blocks; evening blocks are overtime (logged hours).
+        let standardBlockHours = blocks.filter { !$0.isOvertime }.reduce(0.0) { $0 + $1.duration.hoursNormalized }
+        let standaloneHours = standalone.reduce(0.0) { $0 + $1.duration.hoursNormalized }
         let meetingHours   = meetings.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
         let taskHours      = completedTasks.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
-        let total          = blockHours + unspecHours + meetingHours + taskHours
-        return HStack {
+        let total          = standardBlockHours + standaloneHours + meetingHours + taskHours
+        let overtime       = blocks.filter { $0.isOvertime }.reduce(0.0) { $0 + $1.loggedHours }
+        return HStack(spacing: 10) {
             Spacer()
+            if overtime > 0 {
+                Text("Overtime: \(Duration(value: overtime, unit: .h).displayString)")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.accent)
+            }
             if total > 0 {
                 Text("Total: \(Duration(value: total, unit: .h).displayString)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                    .padding(.trailing)
-                    .padding(.bottom, 4)
             }
         }
+        .padding(.trailing)
+        .padding(.bottom, 4)
     }
 }
 
@@ -280,16 +291,13 @@ private struct StandaloneMeetingRow: View {
                             Chip(label: project.name, color: AppTheme.project)
                         }
                     }
-                    .frame(width: 110, alignment: .leading)
                     Chip(label: minutes.meetingAt.formatted(date: .omitted, time: .shortened),
                          color: AppTheme.project)
-                        .frame(width: 76, alignment: .leading)
                     Group {
                         if let d = minutes.duration {
                             Chip(label: d.displayString, color: AppTheme.duration)
                         }
                     }
-                    .frame(width: 46, alignment: .leading)
                 }
             }
             .padding(.horizontal, 8)
@@ -341,230 +349,3 @@ private struct CompletedTaskActivityRow: View {
     }
 }
 
-private final class UnspecifiedActivityTapFlags { var didTapStatus = false; var didTapFollowUp = false; var didTapAddTime = false; var didTapEditTask = false }
-
-private struct UnspecifiedActivityRow: View {
-    @Environment(\.modelContext) private var modelContext
-    var entry: TaskTimeEntry
-
-    @State private var showingEdit = false
-    @State private var showingFollowUpPicker = false
-    @State private var showingAddTime = false
-    @State private var editingTask: Task?
-    @State private var tapFlags = UnspecifiedActivityTapFlags()
-    @State private var tapCount = 0
-
-    var body: some View {
-        HStack(alignment: .center, spacing: 6) {
-            Color.clear.frame(width: 16, height: 1)
-                .sheet(isPresented: $showingAddTime) {
-                    LogTimeSheet(presetTask: entry.task, presetDate: entry.date)
-                }
-                .overlay {
-                    Color.clear.sheet(item: $editingTask) { task in
-                        TaskEditorSheet(task: task, defaultDate: entry.date)
-                    }
-                }
-
-            HStack(alignment: .center, spacing: 6) {
-                statusIconView
-
-                if let task = entry.task {
-                    Text(task.summary)
-                        .font(.subheadline)
-                } else {
-                    Text("Unlinked entry")
-                        .font(.subheadline)
-                        .foregroundStyle(AppTheme.mutedText)
-                }
-
-                if let comment = entry.comment, !comment.isEmpty {
-                    Text(comment)
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.mutedText)
-                        .lineLimit(1)
-                }
-
-                Spacer(minLength: 8)
-                HStack(spacing: 4) {
-                    editTaskIconView
-                        .frame(width: 24, alignment: .center)
-                    addTimeIconView
-                        .frame(width: 24, alignment: .center)
-                    followUpIconView
-                        .frame(width: 24, alignment: .center)
-                    Group {
-                        if let project = entry.task?.project {
-                            Chip(label: project.name, color: AppTheme.project)
-                        }
-                    }
-                    .frame(width: 110, alignment: .leading)
-                    Chip(label: entry.date.formatted(date: .omitted, time: .shortened),
-                         color: AppTheme.project)
-                        .frame(width: 76, alignment: .leading)
-                    Chip(label: entry.duration.displayString, color: AppTheme.duration)
-                        .frame(width: 46, alignment: .leading)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(AppTheme.cardRaised.opacity(0.45))
-            .clipShape(RoundedRectangle(cornerRadius: 5))
-            .contentShape(Rectangle())
-            .simultaneousGesture(TapGesture().onEnded { tapCount += 1 })
-            .onChange(of: tapCount) {
-                if tapFlags.didTapStatus || tapFlags.didTapFollowUp || tapFlags.didTapAddTime || tapFlags.didTapEditTask {
-                    tapFlags.didTapStatus = false
-                    tapFlags.didTapFollowUp = false
-                    tapFlags.didTapAddTime = false
-                    tapFlags.didTapEditTask = false
-                } else {
-                    showingEdit = true
-                }
-            }
-            .padding(.trailing)
-            .sheet(isPresented: $showingEdit) {
-                LogTimeSheet(existingEntry: entry)
-            }
-            .contextMenu {
-                if let task = entry.task {
-                    Button("Edit Task…") { editingTask = task }
-                    Divider()
-                    if task.status != .completed {
-                        Button("Mark Complete") { task.markCompleted() }
-                    }
-                    if task.status == .todo || task.status == .cancelled {
-                        Button("Mark Started") { task.status = .started; task.updatedAt = Date() }
-                    }
-                    if task.status == .completed || task.status == .cancelled || task.status == .followUpPending {
-                        Button("Reopen") {
-                            if task.status == .cancelled { task.unmarkCancelled() } else { task.unmarkCompleted() }
-                        }
-                    }
-                    Divider()
-                }
-                Button("Delete Entry", role: .destructive) { modelContext.delete(entry) }
-            }
-        }
-        .padding(.leading)
-        .padding(.vertical, 1)
-        .sheet(isPresented: $showingFollowUpPicker) {
-            if let task = entry.task {
-                FollowUpDateSheet(
-                    initialDate: task.followUpAt ?? Calendar.current.date(byAdding: .day, value: 1, to: .now)!,
-                    onSave: { date in task.setFollowUp(date: date) },
-                    onRemove: task.status == .followUpPending ? { task.clearFollowUp() } : nil
-                )
-            }
-        }
-        .onChange(of: showingAddTime) { _, isShowing in
-            if !isShowing, let task = entry.task,
-               task.status == .todo, !task.timeEntries.isEmpty {
-                task.status = .started
-                task.updatedAt = Date()
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var editTaskIconView: some View {
-        if let task = entry.task {
-            Button {
-                tapFlags.didTapEditTask = true
-                editingTask = task
-            } label: {
-                Image(systemName: "pencil")
-                    .font(.system(size: 11))
-                    .foregroundStyle(AppTheme.action)
-            }
-            .buttonStyle(.plain)
-            .help("Edit task")
-        }
-    }
-
-    @ViewBuilder
-    private var addTimeIconView: some View {
-        if let task = entry.task,
-           task.status == .todo || task.status == .started {
-            Button {
-                tapFlags.didTapAddTime = true
-                showingAddTime = true
-            } label: {
-                Image(systemName: "plus.circle")
-                    .font(.system(size: 12))
-                    .foregroundStyle(AppTheme.action)
-            }
-            .buttonStyle(.plain)
-            .help("Log time")
-        }
-    }
-
-    @ViewBuilder
-    private var followUpIconView: some View {
-        if let task = entry.task,
-           task.status == .started || task.status == .followUpPending {
-            Button {
-                tapFlags.didTapFollowUp = true
-                showingFollowUpPicker = true
-            } label: {
-                Image(systemName: task.status == .followUpPending ? "clock.fill" : "clock.badge")
-                    .font(.system(size: 12))
-                    .foregroundStyle(task.status == .followUpPending ? AppTheme.followUp : AppTheme.action)
-            }
-            .buttonStyle(.plain)
-            .help(task.status == .followUpPending ? "Edit follow-up date" : "Set follow-up date")
-        }
-    }
-
-    @ViewBuilder
-    private var statusIconView: some View {
-        if let task = entry.task {
-            Button {
-                tapFlags.didTapStatus = true
-                toggleStatus(task)
-            } label: {
-                Image(systemName: taskStatusIcon(task))
-                    .font(.system(size: 12))
-                    .foregroundStyle(taskStatusColor(task))
-                    .frame(width: 18)
-            }
-            .buttonStyle(.plain)
-        } else {
-            Image(systemName: "circle.dotted")
-                .font(.system(size: 12))
-                .foregroundStyle(AppTheme.mutedText)
-                .frame(width: 18)
-                .padding(.leading, 2)
-        }
-    }
-
-    private func toggleStatus(_ task: Task) {
-        switch task.status {
-        case .todo:            task.status = .started; task.updatedAt = Date()
-        case .started:         task.markCompleted()
-        case .completed:       task.markCancelled()
-        case .followUpPending: task.markCancelled()
-        case .cancelled:       task.unmarkCancelled()
-        }
-    }
-
-    private func taskStatusIcon(_ task: Task) -> String {
-        switch task.status {
-        case .todo:            return "circle"
-        case .started:         return "play.circle.fill"
-        case .completed:       return "checkmark.circle.fill"
-        case .cancelled:       return "xmark.circle.fill"
-        case .followUpPending: return "arrow.clockwise.circle.fill"
-        }
-    }
-
-    private func taskStatusColor(_ task: Task) -> Color {
-        switch task.status {
-        case .todo:            return AppTheme.mutedText
-        case .started:         return AppTheme.started
-        case .completed:       return AppTheme.completed
-        case .cancelled:       return AppTheme.mutedText
-        case .followUpPending: return AppTheme.followUp
-        }
-    }
-}

@@ -1,4 +1,5 @@
 import Testing
+import Foundation
 @testable import gbpDiary
 
 @MainActor
@@ -37,9 +38,9 @@ struct FocusBlockTests {
         #expect(block.displayLabel == "Alpha")
     }
 
-    @Test func displayLabel_fallsBackToDefaultWhenNeitherSet() {
-        let block = FocusBlock(duration: Duration(value: 1, unit: .h))
-        #expect(block.displayLabel == "Focus block")
+    @Test func displayLabel_fallsBackToSlotNameWhenNeitherSet() {
+        let block = FocusBlock(duration: Duration(value: 1, unit: .h), slot: .morning)
+        #expect(block.displayLabel == "Morning")
     }
 
     // MARK: - slot
@@ -65,5 +66,48 @@ struct FocusBlockTests {
         #expect(block.slot == .morning)
         block.slot = .allDay
         #expect(block.slot == .allDay)
+    }
+
+    // MARK: - FocusBlockAssignment.containingBlock
+
+    private var utc: Calendar = {
+        var c = Calendar(identifier: .gregorian); c.timeZone = TimeZone(identifier: "UTC")!; return c
+    }()
+    private func time(_ hour: Int, _ minute: Int = 0) -> Date {
+        var comps = DateComponents()
+        comps.year = 2024; comps.month = 1; comps.day = 15
+        comps.hour = hour; comps.minute = minute
+        return utc.date(from: comps)!
+    }
+    private func makeBlock(_ slot: DaySlot, start: Date? = nil) -> FocusBlock {
+        let b = FocusBlock(duration: slot.defaultDuration, slot: slot)
+        b.startTime = start
+        return b
+    }
+
+    @Test func containingBlock_matchesSlotByTime() {
+        let m = makeBlock(.morning); let a = makeBlock(.afternoon)
+        #expect(FocusBlockAssignment.containingBlock(for: time(9), blocks: [m, a], calendar: utc)?.id == m.id)
+        #expect(FocusBlockAssignment.containingBlock(for: time(15), blocks: [m, a], calendar: utc)?.id == a.id)
+    }
+
+    @Test func containingBlock_fallsBackToAllDay() {
+        let allDay = makeBlock(.allDay)
+        #expect(FocusBlockAssignment.containingBlock(for: time(9), blocks: [allDay], calendar: utc)?.id == allDay.id)
+        #expect(FocusBlockAssignment.containingBlock(for: time(20), blocks: [allDay], calendar: utc)?.id == allDay.id)
+    }
+
+    @Test func containingBlock_eveningWinsAfterItsStart() {
+        let allDay = makeBlock(.allDay); let evening = makeBlock(.evening, start: time(18))
+        let blocks = [allDay, evening]
+        #expect(FocusBlockAssignment.containingBlock(for: time(20), blocks: blocks, calendar: utc)?.id == evening.id)
+        #expect(FocusBlockAssignment.containingBlock(for: time(10), blocks: blocks, calendar: utc)?.id == allDay.id)
+        #expect(FocusBlockAssignment.containingBlock(for: time(17, 59), blocks: blocks, calendar: utc)?.id == allDay.id)
+    }
+
+    @Test func containingBlock_nilWhenOutOfRange() {
+        let m = makeBlock(.morning)
+        // 15:00 is afternoon, but there is no afternoon or all-day block → standalone.
+        #expect(FocusBlockAssignment.containingBlock(for: time(15), blocks: [m], calendar: utc) == nil)
     }
 }
