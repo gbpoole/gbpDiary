@@ -62,25 +62,29 @@ struct DocumentsListView: View {
             TableColumn("Summary") { document in
                 Text(document.summary ?? "Untitled")
                     .lineLimit(1)
+                    .font(AppTheme.bodyFont(size: 13))
+                    .foregroundStyle(AppTheme.text)
                     .onTapGesture { selectedDocument = document }
             }
             TableColumn("Description") { document in
                 Text(document.documentDescription ?? "")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
                     .lineLimit(1)
             }
             TableColumn("Projects") { document in
                 Text(document.projects.map(\.name).joined(separator: ", "))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.project)
                     .lineLimit(1)
             }
             .width(160)
             TableColumn("Created") { document in
                 Text(document.createdAt, format: .dateTime.month(.abbreviated).day().year())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
             }
             .width(100)
         }
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
     }
     #else
     private var documentTable: some View {

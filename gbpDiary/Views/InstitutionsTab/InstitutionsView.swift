@@ -30,19 +30,23 @@ struct InstitutionsView: View {
             TableColumn("Name") { institution in
                 Text(institution.name)
                     .lineLimit(1)
+                    .font(AppTheme.bodyFont(size: 13))
+                    .foregroundStyle(AppTheme.text)
                     .onTapGesture { selectedInstitution = institution }
             }
             TableColumn("Members") { institution in
                 Text("\(institution.members.count)")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
             }
             .width(80)
             TableColumn("Projects") { institution in
                 Text("\(institution.projects.count)")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
             }
             .width(80)
         }
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
     }
     #else
     private var institutionTable: some View {

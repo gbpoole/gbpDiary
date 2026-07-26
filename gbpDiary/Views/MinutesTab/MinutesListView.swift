@@ -63,34 +63,38 @@ struct MinutesListView: View {
             TableColumn("Date") { minutes in
                 Text(minutes.meetingAt, format: .dateTime.weekday(.abbreviated).day().month(.abbreviated).year())
                     .lineLimit(1)
+                    .font(AppTheme.bodyFont(size: 13))
+                    .foregroundStyle(AppTheme.text)
                     .onTapGesture { openInspector(for: minutes) }
                     .contextMenu { editMenuItem(minutes) }
             }
             .width(160)
             TableColumn("Time") { minutes in
                 Text(minutes.meetingAt, format: .dateTime.hour().minute())
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
             }
             .width(70)
             TableColumn("Summary") { minutes in
                 Text(minutes.summary ?? "")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.text)
                     .lineLimit(1)
                     .onTapGesture { openInspector(for: minutes) }
                     .contextMenu { editMenuItem(minutes) }
             }
             TableColumn("Projects") { minutes in
                 Text(minutes.projects.map(\.name).joined(separator: ", "))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.project)
                     .lineLimit(1)
             }
             .width(160)
             TableColumn("Attendees") { minutes in
                 Text("\(minutes.attendees.count)")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
             }
             .width(80)
         }
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
     }
     #else
     private var minutesTable: some View {

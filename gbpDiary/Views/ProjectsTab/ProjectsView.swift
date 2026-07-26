@@ -47,11 +47,13 @@ struct ProjectsView: View {
             TableColumn("Name") { project in
                 Text(project.name)
                     .lineLimit(1)
+                    .font(AppTheme.bodyFont(size: 13))
+                    .foregroundStyle(AppTheme.text)
                     .onTapGesture { selectedProject = project }
             }
             TableColumn("Stream") { project in
                 Text(project.stream ?? "")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
                     .lineLimit(1)
             }
             .width(90)
@@ -59,7 +61,7 @@ struct ProjectsView: View {
                 let lead = project.devLead.map { [$0.name] } ?? []
                 let others = project.devTeam.filter { $0.id != project.devLead?.id }.map(\.name).sorted()
                 Text((lead + others).joined(separator: ", "))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.person)
                     .lineLimit(1)
             }
             .width(140)
@@ -67,23 +69,25 @@ struct ProjectsView: View {
                 let lead = project.sciLead.map { [$0.name] } ?? []
                 let others = project.sciTeam.filter { $0.id != project.sciLead?.id }.map(\.name).sorted()
                 Text((lead + others).joined(separator: ", "))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.person)
                     .lineLimit(1)
             }
             .width(140)
             TableColumn("Subprojects") { project in
                 Text("\(project.subprojects.count)")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
             }
             .width(90)
             TableColumn("Last Meeting") { project in
                 if let latest = project.meetings.max(by: { $0.meetingAt < $1.meetingAt }) {
                     Text(latest.meetingAt, format: .dateTime.day().month(.abbreviated).year())
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(AppTheme.mutedText)
                 }
             }
             .width(110)
         }
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
     }
     #else
     private var projectTable: some View {

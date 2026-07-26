@@ -61,32 +61,36 @@ struct PeopleView: View {
             TableColumn("Name") { person in
                 Text(person.name)
                     .lineLimit(1)
+                    .font(AppTheme.bodyFont(size: 13))
+                    .foregroundStyle(AppTheme.text)
                     .onTapGesture { selectedPerson = person }
             }
             TableColumn("Email") { person in
                 Text(person.email ?? "")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
                     .lineLimit(1)
             }
             .width(180)
             TableColumn("Institution") { person in
                 Text(person.institution?.name ?? "")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.institution)
                     .lineLimit(1)
             }
             .width(140)
             TableColumn("Tags") { person in
                 Text(person.tags.joined(separator: ", "))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.tag)
                     .lineLimit(1)
             }
             .width(160)
             TableColumn("Projects") { person in
                 Text("\(person.devProjects.count + person.sciProjects.count)")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
             }
             .width(70)
         }
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
     }
     #else
     private var peopleTable: some View {

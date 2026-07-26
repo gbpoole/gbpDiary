@@ -48,24 +48,28 @@ struct TagsView: View {
         Table(tagEntries) {
             TableColumn("Tag") { entry in
                 Text(entry.tag)
+                    .font(AppTheme.bodyFont(size: 13))
+                    .foregroundStyle(AppTheme.tag)
                     .onTapGesture { selectedEntry = entry }
             }
             TableColumn("Projects") { entry in
                 Text("\(entry.projects.count)")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
             }
             .width(70)
             TableColumn("People") { entry in
                 Text("\(entry.people.count)")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
             }
             .width(70)
             TableColumn("Notes") { entry in
                 Text("\(entry.notes.count)")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(AppTheme.mutedText)
             }
             .width(70)
         }
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
     }
     #else
     private var tagTable: some View {
