@@ -3,21 +3,19 @@ import SwiftData
 
 struct FocusBlockRow: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \TaskTimeEntry.sortOrder) private var allEntries: [TaskTimeEntry]
 
     var block: FocusBlock
     var date: Date
+    // Entries whose time falls in this block's range (derived by ActivitySection, not stored).
+    var entries: [TaskTimeEntry] = []
     var meetings: [DayEntry] = []
 
-    // @Query-driven so activity rows appear immediately without relationship-refresh lag.
     private var blockActivities: [TaskTimeEntry] {
-        allEntries.filter { $0.focusBlock?.id == block.id }
-            .sorted { $0.date < $1.date }
+        entries.sorted { $0.date < $1.date }
     }
 
-    // Derive locally so chips update in sync with @Query; subtract both task entries and meetings.
     private var netHours: Double {
-        let taskHours = blockActivities.reduce(0.0) { $0 + $1.duration.hoursNormalized }
+        let taskHours = entries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
         let meetingHours = meetings.compactMap(\.minutes).compactMap(\.duration)
             .reduce(0.0) { $0 + $1.hoursNormalized }
         return max(0, block.duration.hoursNormalized - taskHours - meetingHours)
@@ -187,7 +185,7 @@ struct ActivityEntryRow: View {
         HStack(alignment: .center, spacing: 6) {
             Color.clear.frame(width: 16, height: 1)
                 .sheet(isPresented: $showingAddTime) {
-                    LogTimeSheet(presetTask: entry.task, presetFocusBlock: entry.focusBlock, presetDate: entry.date)
+                    LogTimeSheet(presetTask: entry.task, presetDate: entry.date)
                 }
                 .overlay {
                     Color.clear.sheet(item: $editingTask) { task in

@@ -6,18 +6,13 @@ struct LogTimeSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var presetTask: Task? = nil
-    var presetFocusBlock: FocusBlock? = nil
     var presetDate: Date = Date()
-    /// Blocks available for selection when there is no presetFocusBlock.
-    /// Pass the day's focus blocks from ActivitySection; leave empty elsewhere.
-    var availableFocusBlocks: [FocusBlock] = []
     // When set, the sheet edits the existing entry rather than creating a new one.
     var existingEntry: TaskTimeEntry? = nil
 
     @State private var selectedTask: Task?
     @State private var selectedProjectFilter: Project?
     @State private var isProjectPickerOpen = false
-    @State private var selectedFocusBlock: FocusBlock?
     @State private var entryDate: Date = Date()
     @State private var durationText = ""
     @State private var durationError = false
@@ -26,12 +21,6 @@ struct LogTimeSheet: View {
 
     private var isEditing: Bool { existingEntry != nil }
     private var effectiveTask: Task? { existingEntry?.task ?? presetTask ?? selectedTask }
-
-    /// Show the focus block selector when creating a new entry and blocks are available
-    /// to choose from (i.e. no block was pre-selected by the caller).
-    private var showFocusBlockSelector: Bool {
-        !isEditing && presetFocusBlock == nil && !availableFocusBlocks.isEmpty
-    }
 
     private struct DurationPreset: Identifiable {
         let id: String
@@ -103,7 +92,6 @@ struct LogTimeSheet: View {
             } else {
                 selectedTask = presetTask
                 entryDate = currentTimeOn(presetDate)
-                selectedFocusBlock = blockMatching(entryDate)
             }
         }
         #if os(macOS)
@@ -145,34 +133,6 @@ struct LogTimeSheet: View {
             DatePicker("", selection: $entryDate, displayedComponents: [.hourAndMinute])
                 .labelsHidden()
         }
-    }
-
-    private var focusBlockSection: some View {
-        GroupBox("Focus Block") {
-            HStack(spacing: 6) {
-                ForEach(availableFocusBlocks.sorted(by: { $0.sortOrder < $1.sortOrder })) { block in
-                    blockCapsule(block: block, label: blockLabel(block))
-                }
-            }
-        }
-    }
-
-    private func blockCapsule(block: FocusBlock?, label: String) -> some View {
-        let isActive = selectedFocusBlock?.id == block?.id
-        return Button(label) { selectedFocusBlock = block }
-            .buttonStyle(.plain)
-            .font(.caption)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(isActive ? Color.accentColor : Color.secondary.opacity(0.12), in: Capsule())
-            .foregroundStyle(isActive ? Color.white : Color.primary)
-    }
-
-    private func blockLabel(_ block: FocusBlock) -> String {
-        let slot = block.slot.displayName
-        // A plain container block (no task/project) shows just its slot name.
-        if block.task == nil && block.project == nil { return slot }
-        return "\(slot) · \(block.displayLabel)"
     }
 
     private var durationSection: some View {
@@ -220,17 +180,6 @@ struct LogTimeSheet: View {
         effectiveTask != nil && Duration.parse(durationText) != nil
     }
 
-    /// Returns the focus block whose slot best matches the given time (12:30 split; evening if set).
-    private func blockMatching(_ date: Date) -> FocusBlock? {
-        guard !availableFocusBlocks.isEmpty else { return nil }
-        if availableFocusBlocks.count == 1 { return availableFocusBlocks.first }
-        let eveningStart = availableFocusBlocks.first { $0.slot == .evening }?.startTime
-        let targetSlot = DaySlotClassifier.slot(for: date, eveningStart: eveningStart)
-        return availableFocusBlocks.first(where: { $0.slot == targetSlot })
-            ?? availableFocusBlocks.first(where: { $0.slot == .allDay })
-            ?? availableFocusBlocks.first
-    }
-
     private func currentTimeOn(_ date: Date) -> Date {
         let cal = Calendar.current
         let quarterHour = 15.0 * 60.0
@@ -251,8 +200,8 @@ struct LogTimeSheet: View {
             entry.date = entryDate
             entry.duration = duration
             entry.comment = comment.isEmpty ? nil : comment
-            // Re-bucket by the (possibly changed) time; the Activity section normalizes further.
-            entry.focusBlock = FocusBlockAssignment.containingBlock(for: entryDate, blocks: availableFocusBlocks)
+            // Don't touch focusBlock here — the Activity section re-buckets by time when the time
+            // changes. Reassigning here (without the day's blocks) would wrongly drop the entry.
         } else {
             guard let task = effectiveTask else { return }
             let nextOrder = (task.timeEntries.map(\.sortOrder).max() ?? -1) + 1
@@ -263,8 +212,7 @@ struct LogTimeSheet: View {
                 sortOrder: nextOrder
             )
             entry.task = task
-            // Bucket by time; a preset block is only a hint (the Activity section normalizes by time).
-            entry.focusBlock = FocusBlockAssignment.containingBlock(for: entryDate, blocks: availableFocusBlocks)
+            // Block membership is derived from the entry's time by the Activity section — not stored.
             modelContext.insert(entry)
         }
 

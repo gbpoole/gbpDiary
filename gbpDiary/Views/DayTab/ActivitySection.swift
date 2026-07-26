@@ -30,9 +30,15 @@ struct ActivitySection: View {
         return allFocusBlocks.filter { $0.dayRecord?.id == id }
     }
 
+    // Block membership is derived purely from each entry's time — nothing is stored. The block
+    // whose range contains the time owns the entry; entries covered by no block are standalone.
+    private func entries(for block: FocusBlock) -> [TaskTimeEntry] {
+        todayEntries.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks)?.id == block.id }
+    }
+
     // Entries not covered by any block's range — rendered standalone, at block indent level.
     private var standaloneEntries: [TaskTimeEntry] {
-        todayEntries.filter { $0.focusBlock == nil }
+        todayEntries.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks) == nil }
     }
 
     private enum ActivityRowItem: Identifiable {
@@ -101,18 +107,13 @@ struct ActivitySection: View {
             || !standaloneMeetings.isEmpty || !completedTasks.isEmpty
 
         activityHeader
-            .onAppear { normalizeEntries() }
-            .onChange(of: todayEntries.count) { normalizeEntries() }
-            .onChange(of: todayEntries.map(\.date)) { normalizeEntries() }  // re-bucket when an entry's time changes
-            .onChange(of: blocks.map(\.id)) { normalizeEntries() }
-            .onChange(of: blocks.compactMap(\.startTime)) { normalizeEntries() }
 
         if hasContent {
             // Focus blocks and any standalone (out-of-range) entries, interleaved by time.
             ForEach(activityItems) { item in
                 switch item {
                 case .block(let block):
-                    FocusBlockRow(block: block, date: date, meetings: meetings(for: block))
+                    FocusBlockRow(block: block, date: date, entries: entries(for: block), meetings: meetings(for: block))
                 case .entry(let entry):
                     ActivityEntryRow(entry: entry)
                 }
@@ -165,11 +166,7 @@ struct ActivitySection: View {
                 meetingTrigger.wrappedValue = false
             }
             .sheet(isPresented: $showingLogTime) {
-                LogTimeSheet(
-                    presetFocusBlock: blocks.count == 1 ? blocks.first : nil,
-                    presetDate: date,
-                    availableFocusBlocks: blocks
-                )
+                LogTimeSheet(presetDate: date)
             }
 
         Color.clear
@@ -224,17 +221,6 @@ struct ActivitySection: View {
         return cal.date(bySettingHour: hour, minute: minute, second: 0, of: date) ?? date
     }
 
-    // Re-attach every entry to the block whose range contains its time (or detach it to standalone
-    // when no block covers it). Re-runs when blocks change so entries move as blocks are added or
-    // removed — e.g. an 8 pm entry jumps to a new evening block, or back out when it's deleted.
-    private func normalizeEntries() {
-        let current = blocks
-        for entry in todayEntries {
-            let target = FocusBlockAssignment.containingBlock(for: entry.date, blocks: current)
-            if entry.focusBlock?.id != target?.id { entry.focusBlock = target }
-        }
-    }
-
     private func totalFooter(
         blocks: [FocusBlock],
         standalone: [TaskTimeEntry],
@@ -247,7 +233,9 @@ struct ActivitySection: View {
         let meetingHours   = meetings.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
         let taskHours      = completedTasks.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
         let total          = standardBlockHours + standaloneHours + meetingHours + taskHours
-        let overtime       = blocks.filter { $0.isOvertime }.reduce(0.0) { $0 + $1.loggedHours }
+        let overtime       = blocks.filter { $0.isOvertime }
+            .flatMap { entries(for: $0) }
+            .reduce(0.0) { $0 + $1.duration.hoursNormalized }
         return HStack(spacing: 10) {
             Spacer()
             if overtime > 0 {
