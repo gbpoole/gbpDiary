@@ -4,39 +4,45 @@ import SwiftData
 struct TasksView: View {
     @Query(sort: \Task.createdAt) private var allTasks: [Task]
     @Query(sort: \Project.name) private var allProjects: [Project]
+    @Query(sort: \Person.name) private var allPeople: [Person]
 
-    @State private var statusFilter: TaskStatus? = nil
-    @State private var projectFilter: Project? = nil
-    @State private var personFilter: Person? = nil
+    @State private var activeFilterIds: Set<String> = []
     @State private var dateRangeFilter: ClosedRange<Date>? = nil
     @State private var editingTask: Task? = nil
     @State private var pendingStatusIds: Set<UUID> = []
 
+    private var taskFilters: [PickerFilter<Task>] {
+        let status = TaskStatus.allCases.map { s in
+            PickerFilter<Task>(id: "status.\(s)", label: s.displayName, chipColor: AppTheme.accent, group: "Status") { $0.status == s }
+        }
+        let projects = allProjects.map { p in
+            PickerFilter<Task>(id: "project.\(p.id)", label: p.name, chipColor: AppTheme.project, group: "Project") { $0.project?.id == p.id }
+        }
+        let assignees = allPeople.map { p in
+            PickerFilter<Task>(id: "assignee.\(p.id)", label: p.name, chipColor: AppTheme.person, group: "Assignee") { $0.assignee?.id == p.id }
+        }
+        return status + projects + assignees
+    }
+
     private var filteredTasks: [Task] {
-        allTasks.filter { task in
+        let matched = Set(FilterEngine.apply(allTasks, filters: taskFilters, activeIds: activeFilterIds).map(\.id))
+        return allTasks.filter { task in
             if pendingStatusIds.contains(task.id) { return true }
-            let statusOk = statusFilter.map { task.status == $0 } ?? true
-            let projectOk = projectFilter.map { task.project?.id == $0.id } ?? true
-            let personOk = personFilter.map { task.assignee?.id == $0.id } ?? true
-            let dateOk: Bool
-            if let range = dateRangeFilter {
-                let completedInRange = task.completedAt.map { range.contains($0) } ?? false
-                let createdInRange = range.contains(task.createdAt)
-                dateOk = completedInRange || createdInRange
-            } else {
-                dateOk = true
-            }
-            return statusOk && projectOk && personOk && dateOk
+            guard matched.contains(task.id) else { return false }
+            guard let range = dateRangeFilter else { return true }
+            let completedInRange = task.completedAt.map { range.contains($0) } ?? false
+            return completedInRange || range.contains(task.createdAt)
         }
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            TasksFilterBar(
-                statusFilter: $statusFilter,
-                projectFilter: $projectFilter,
-                personFilter: $personFilter,
-                dateRangeFilter: $dateRangeFilter
+            FilterBar(
+                filters: taskFilters,
+                activeFilterIds: $activeFilterIds,
+                hasExtraActiveFilter: dateRangeFilter != nil,
+                extraRows: AnyView(DateRangeFilterRow(range: $dateRangeFilter)),
+                onClearAll: { activeFilterIds = []; dateRangeFilter = nil }
             )
             Divider()
             taskTable
@@ -45,9 +51,7 @@ struct TasksView: View {
         .sheet(item: $editingTask) { task in
             TaskEditorSheet(task: task, defaultDate: Date())
         }
-        .onChange(of: statusFilter) { pendingStatusIds.removeAll() }
-        .onChange(of: projectFilter) { pendingStatusIds.removeAll() }
-        .onChange(of: personFilter) { pendingStatusIds.removeAll() }
+        .onChange(of: activeFilterIds) { pendingStatusIds.removeAll() }
         .onChange(of: dateRangeFilter) { pendingStatusIds.removeAll() }
     }
 

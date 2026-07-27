@@ -7,15 +7,34 @@ struct ProjectsView: View {
 
     @State private var selectedProject: Project?
     @State private var showingAddProject = false
-    @State private var showCompleted = false
+    // Default to showing only active projects (matches the previous hide-completed default).
+    @State private var activeFilterIds: Set<String> = ["status.active"]
+
+    private var projectFilters: [PickerFilter<Project>] {
+        let statusGroup = [
+            PickerFilter<Project>(id: "status.active", label: "Active", chipColor: AppTheme.accent, group: "Status") { !$0.isCompleted },
+            PickerFilter<Project>(id: "status.completed", label: "Completed", chipColor: AppTheme.accent, group: "Status") { $0.isCompleted },
+        ]
+        let streams = Set(projects.compactMap(\.stream)).sorted()
+        let streamGroup = streams.map { stream in
+            PickerFilter<Project>(id: "stream.\(stream)", label: stream, chipColor: AppTheme.tag, group: "Stream") {
+                $0.stream == stream
+            }
+        }
+        return statusGroup + streamGroup
+    }
 
     private var filteredProjects: [Project] {
-        projects.filter { showCompleted || !$0.isCompleted }
+        FilterEngine.apply(projects, filters: projectFilters, activeIds: activeFilterIds)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            filterBar
+            FilterBar(
+                filters: projectFilters,
+                activeFilterIds: $activeFilterIds,
+                onClearAll: { activeFilterIds = [] }
+            )
             Divider()
             projectTable
         }
@@ -29,16 +48,6 @@ struct ProjectsView: View {
         }
         .sheet(item: $selectedProject) { ProjectDetailView(project: $0, asSheet: true) }
         .sheet(isPresented: $showingAddProject) { ProjectEditorSheet(project: nil) }
-    }
-
-    private var filterBar: some View {
-        HStack(spacing: 12) {
-            Toggle("Show Completed", isOn: $showCompleted)
-                .toggleStyle(.checkbox)
-            Spacer()
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 6)
     }
 
     #if os(macOS)

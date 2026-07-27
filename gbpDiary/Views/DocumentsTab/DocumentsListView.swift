@@ -8,16 +8,27 @@ struct DocumentsListView: View {
 
     @State private var selectedDocument: Document?
     @State private var creatingDocument: Document? = nil
-    @State private var projectFilter: Project? = nil
+    @State private var activeFilterIds: Set<String> = []
+
+    private var documentFilters: [PickerFilter<Document>] {
+        allProjects.map { p in
+            PickerFilter<Document>(id: "project.\(p.id)", label: p.name, chipColor: AppTheme.project, group: "Project") {
+                $0.projects.contains(where: { $0.id == p.id })
+            }
+        }
+    }
 
     private var filteredDocuments: [Document] {
-        guard let proj = projectFilter else { return allDocuments }
-        return allDocuments.filter { $0.projects.contains(where: { $0.id == proj.id }) }
+        FilterEngine.apply(allDocuments, filters: documentFilters, activeIds: activeFilterIds)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            filterBar
+            FilterBar(
+                filters: documentFilters,
+                activeFilterIds: $activeFilterIds,
+                onClearAll: { activeFilterIds = [] }
+            )
             Divider()
             documentTable
         }
@@ -33,27 +44,6 @@ struct DocumentsListView: View {
         }
         .sheet(item: $selectedDocument) { DocumentDetailView(document: $0, asSheet: true) }
         .sheet(item: $creatingDocument) { DocumentDetailView(document: $0, asSheet: true) }
-    }
-
-    private var filterBar: some View {
-        HStack(spacing: 12) {
-            Picker("Project", selection: $projectFilter) {
-                Text("Any Project").tag(Optional<Project>.none)
-                ForEach(allProjects) { p in
-                    Text(p.name).tag(Optional(p))
-                }
-            }
-            .labelsHidden()
-            .fixedSize()
-            if projectFilter != nil {
-                Button("Clear") { projectFilter = nil }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 6)
     }
 
     #if os(macOS)

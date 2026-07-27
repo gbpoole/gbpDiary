@@ -4,21 +4,39 @@ import SwiftData
 struct MinutesListView: View {
     @Query(sort: \Minutes.meetingAt, order: .reverse) private var allMinutes: [Minutes]
     @Query(sort: \Project.name) private var allProjects: [Project]
+    @Query(sort: \Person.name) private var allPeople: [Person]
     @Environment(\.modelContext) private var modelContext
     @Environment(WorkspaceModel.self) private var workspace
 
     @State private var editingMinutes: Minutes?
     @State private var showingAdd = false
-    @State private var projectFilter: Project? = nil
+    @State private var activeFilterIds: Set<String> = []
+
+    private var minutesFilters: [PickerFilter<Minutes>] {
+        let projectGroup = allProjects.map { p in
+            PickerFilter<Minutes>(id: "project.\(p.id)", label: p.name, chipColor: AppTheme.project, group: "Project") {
+                $0.projects.contains(where: { $0.id == p.id })
+            }
+        }
+        let attendeeGroup = allPeople.map { person in
+            PickerFilter<Minutes>(id: "attendee.\(person.id)", label: person.name, chipColor: AppTheme.person, group: "Attendee") {
+                $0.attendees.contains(where: { $0.id == person.id })
+            }
+        }
+        return projectGroup + attendeeGroup
+    }
 
     private var filteredMinutes: [Minutes] {
-        guard let proj = projectFilter else { return allMinutes }
-        return allMinutes.filter { $0.projects.contains(where: { $0.id == proj.id }) }
+        FilterEngine.apply(allMinutes, filters: minutesFilters, activeIds: activeFilterIds)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            filterBar
+            FilterBar(
+                filters: minutesFilters,
+                activeFilterIds: $activeFilterIds,
+                onClearAll: { activeFilterIds = [] }
+            )
             Divider()
             minutesTable
         }
@@ -34,27 +52,6 @@ struct MinutesListView: View {
 
     private func openInspector(for minutes: Minutes) {
         workspace.openInNewTab(.minutes(minutes.persistentModelID))
-    }
-
-    private var filterBar: some View {
-        HStack(spacing: 12) {
-            Picker("Project", selection: $projectFilter) {
-                Text("Any Project").tag(Optional<Project>.none)
-                ForEach(allProjects) { p in
-                    Text(p.name).tag(Optional(p))
-                }
-            }
-            .labelsHidden()
-            .fixedSize()
-            if projectFilter != nil {
-                Button("Clear") { projectFilter = nil }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 6)
     }
 
     #if os(macOS)

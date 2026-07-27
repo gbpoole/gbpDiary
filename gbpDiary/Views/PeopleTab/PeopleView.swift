@@ -8,17 +8,34 @@ struct PeopleView: View {
 
     @State private var selectedPerson: Person?
     @State private var showingAddPerson = false
-    @State private var institutionFilter: Institution? = nil
+    @State private var activeFilterIds: Set<String> = []
+
+    private var personFilters: [PickerFilter<Person>] {
+        let institutionGroup = institutions.map { inst in
+            PickerFilter<Person>(id: "institution.\(inst.id)", label: inst.name, chipColor: AppTheme.institution, group: "Institution") {
+                $0.institution?.id == inst.id
+            }
+        }
+        let allTags = Set(people.flatMap(\.tags)).sorted()
+        let tagGroup = allTags.map { tag in
+            PickerFilter<Person>(id: "tag.\(tag)", label: tag, chipColor: AppTheme.tag, group: "Tag") {
+                $0.tags.contains(tag)
+            }
+        }
+        return institutionGroup + tagGroup
+    }
 
     private var filteredPeople: [Person] {
-        people.filter { person in
-            institutionFilter.map { person.institution?.id == $0.id } ?? true
-        }
+        FilterEngine.apply(people, filters: personFilters, activeIds: activeFilterIds)
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            filterBar
+            FilterBar(
+                filters: personFilters,
+                activeFilterIds: $activeFilterIds,
+                onClearAll: { activeFilterIds = [] }
+            )
             Divider()
             peopleTable
         }
@@ -32,27 +49,6 @@ struct PeopleView: View {
         }
         .sheet(item: $selectedPerson) { PersonDetailView(person: $0, asSheet: true) }
         .sheet(isPresented: $showingAddPerson) { PersonEditorSheet(person: nil) }
-    }
-
-    private var filterBar: some View {
-        HStack(spacing: 12) {
-            Picker("Institution", selection: $institutionFilter) {
-                Text("Any Institution").tag(Optional<Institution>.none)
-                ForEach(institutions) { inst in
-                    Text(inst.name).tag(Optional(inst))
-                }
-            }
-            .labelsHidden()
-            .fixedSize()
-            if institutionFilter != nil {
-                Button("Clear") { institutionFilter = nil }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-        }
-        .padding(.horizontal)
-        .padding(.vertical, 6)
     }
 
     #if os(macOS)

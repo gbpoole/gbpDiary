@@ -1,123 +1,68 @@
 import SwiftUI
-import SwiftData
 
-struct TasksFilterBar: View {
-    @Binding var statusFilter: TaskStatus?
-    @Binding var projectFilter: Project?
-    @Binding var personFilter: Person?
-    @Binding var dateRangeFilter: ClosedRange<Date>?
+/// A date-range selector styled to match `FilterGroupSelector`, for use as an `extraRows`
+/// entry in a `FilterBar`. Shows a neutral "Date" dropdown that opens a from/to popover and,
+/// once a range is set, a removable chip with the range.
+struct DateRangeFilterRow: View {
+    @Binding var range: ClosedRange<Date>?
 
-    @Query(sort: \Project.name) private var allProjects: [Project]
-    @Query(sort: \Person.name) private var allPeople: [Person]
-
-    @State private var showingDatePicker = false
+    @State private var showing = false
     @State private var rangeStart = Date()
     @State private var rangeEnd = Date()
 
     var body: some View {
-        HStack(spacing: 12) {
-            statusPicker
-            projectPicker
-            personPicker
-            dateRangePicker
-            if hasActiveFilter {
-                Button("Clear") { clearFilters() }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(AppTheme.accent)
-            }
-            Spacer()
-        }
-        .font(AppTheme.interfaceFont(size: 12))
-        .foregroundStyle(AppTheme.mutedText)
-        .padding(.horizontal)
-        .padding(.vertical, 8)
-        .background(AppTheme.sidebarBackground)
-    }
-
-    private var hasActiveFilter: Bool {
-        statusFilter != nil || projectFilter != nil || personFilter != nil || dateRangeFilter != nil
-    }
-
-    private var statusPicker: some View {
-        Picker("Status", selection: $statusFilter) {
-            Text("Any status").tag(Optional<TaskStatus>.none)
-            Divider()
-            ForEach(TaskStatus.allCases, id: \.self) { status in
-                Text(status.displayName).tag(Optional(status))
-            }
-        }
-        .labelsHidden()
-        .fixedSize()
-    }
-
-    private var projectPicker: some View {
-        Picker("Project", selection: $projectFilter) {
-            Text("Any project").tag(Optional<Project>.none)
-            if !allProjects.isEmpty { Divider() }
-            ForEach(allProjects) { project in
-                Text(project.name).tag(Optional(project))
-            }
-        }
-        .labelsHidden()
-        .fixedSize()
-    }
-
-    private var personPicker: some View {
-        Picker("Person", selection: $personFilter) {
-            Text("Any person").tag(Optional<Person>.none)
-            if !allPeople.isEmpty { Divider() }
-            ForEach(allPeople) { person in
-                Text(person.name).tag(Optional(person))
-            }
-        }
-        .labelsHidden()
-        .fixedSize()
-    }
-
-    private var dateRangePicker: some View {
-        Button(dateRangeLabel) {
-            if dateRangeFilter != nil {
-                dateRangeFilter = nil
-            } else {
-                rangeStart = Calendar.current.startOfDay(for: Date())
-                rangeEnd = Calendar.current.date(byAdding: .day, value: 7, to: rangeStart) ?? rangeStart
-                showingDatePicker = true
-            }
-        }
-        .buttonStyle(.borderless)
-        .popover(isPresented: $showingDatePicker) {
-            VStack(alignment: .leading, spacing: 8) {
-                DatePicker("From", selection: $rangeStart, displayedComponents: .date)
-                DatePicker("To", selection: $rangeEnd, displayedComponents: .date)
-                HStack {
-                    Spacer()
-                    Button("Apply") {
-                        let start = Calendar.current.startOfDay(for: rangeStart)
-                        let end = Calendar.current.date(byAdding: .day, value: 1,
-                                                        to: Calendar.current.startOfDay(for: rangeEnd)) ?? rangeEnd
-                        dateRangeFilter = start...end
-                        showingDatePicker = false
-                    }
-                    .buttonStyle(.borderedProminent)
+        HStack(alignment: .top, spacing: 6) {
+            Button {
+                rangeStart = range?.lowerBound ?? Calendar.current.startOfDay(for: Date())
+                rangeEnd = range?.upperBound ?? (Calendar.current.date(byAdding: .day, value: 7, to: rangeStart) ?? rangeStart)
+                showing = true
+            } label: {
+                HStack(spacing: 5) {
+                    Text("Date").font(.caption).lineLimit(1)
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
                 }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 4)
+                .background(Color.secondary.opacity(0.12), in: Capsule())
+                .foregroundStyle(.primary)
             }
-            .padding()
-            .frame(minWidth: 240)
+            .buttonStyle(.plain)
+            .frame(width: 104, alignment: .leading)
+            .popover(isPresented: $showing, arrowEdge: .bottom) { editor }
+
+            if let range {
+                PickerRemovableChip(label: rangeLabel(range), color: AppTheme.accent) { self.range = nil }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Spacer(minLength: 0)
+            }
         }
     }
 
-    private var dateRangeLabel: String {
-        guard let range = dateRangeFilter else { return "Any date" }
+    private var editor: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            DatePicker("From", selection: $rangeStart, displayedComponents: .date)
+            DatePicker("To", selection: $rangeEnd, displayedComponents: .date)
+            HStack {
+                Spacer()
+                Button("Apply") {
+                    let start = Calendar.current.startOfDay(for: rangeStart)
+                    let end = Calendar.current.date(byAdding: .day, value: 1,
+                                                    to: Calendar.current.startOfDay(for: rangeEnd)) ?? rangeEnd
+                    range = start...end
+                    showing = false
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding()
+        .frame(minWidth: 240)
+    }
+
+    private func rangeLabel(_ range: ClosedRange<Date>) -> String {
         let fmt = DateFormatter()
         fmt.dateStyle = .short
         return "\(fmt.string(from: range.lowerBound)) – \(fmt.string(from: range.upperBound))"
-    }
-
-    private func clearFilters() {
-        statusFilter = nil
-        projectFilter = nil
-        personFilter = nil
-        dateRangeFilter = nil
     }
 }
 

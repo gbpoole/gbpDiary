@@ -546,7 +546,7 @@ extension FuzzyPickerField {
 // One compact dropdown per filter group. Tapping opens a searchable, multi-select list (same
 // visual language as the main picker) so long option lists — e.g. institutions — stay tidy and
 // searchable instead of overflowing a horizontal chip row. Values within a group combine with OR.
-private struct FilterGroupSelector<Item>: View {
+struct FilterGroupSelector<Item>: View {
     let name: String?
     let groupFilters: [PickerFilter<Item>]
     let defaultColor: Color
@@ -636,7 +636,7 @@ private struct FilterGroupSelector<Item>: View {
 
 // MARK: - RemovableChip (private to this file)
 
-private struct PickerRemovableChip: View {
+struct PickerRemovableChip: View {
     let label: String
     let color: Color
     let onRemove: () -> Void
