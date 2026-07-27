@@ -44,14 +44,14 @@ enum WorkspaceTab: Hashable, Identifiable {
 enum WorkspaceCategory: String, CaseIterable, Identifiable {
     case diary        = "Diary"
     case tasks        = "Tasks"
+    case timesheet    = "Timesheet"
     case projects     = "Projects"
+    case meetings     = "Meetings"
     case people       = "People"
     case institutions = "Institutions"
-    case meetings     = "Meetings"
     case documents    = "Documents"
     case images       = "Images"
     case tags         = "Tags"
-    case timesheet    = "Timesheet"
 
     var id: Self { self }
 
