@@ -115,11 +115,13 @@ struct ImportedNoteAttachment: Decodable {
 
 struct ImportedNote: Decodable {
     var id: UUID
+    var title: String?
     var content: String?
     var blocks: [ImportedNoteBlock]?
     var attachments: [ImportedNoteAttachment]?
     var tags: [String]?
     var dayRecordId: UUID?
+    var projectId: UUID?
     var sourcePath: String?
     var createdAt: String?
     var updatedAt: String?

@@ -268,7 +268,9 @@ def resolve_note_image(ref: str, source: SourceFile, vault: Path) -> Path | None
 
 def note_markdown_and_attachments(source: SourceFile, markdown: str, vault: Path, diagnostics: list[dict[str, Any]]) -> tuple[str, list[dict[str, Any]]]:
     """Rewrite Obsidian/markdown image links into managed `attachment://<uuid>` refs and collect
-    the referenced attachments. Notes are plain markdown in the app; images are resolved by id."""
+    the referenced attachments. Notes are plain markdown in the app; images are resolved by id.
+    Inferred inline fields (project/assignee/duration/…) are stripped so they don't show as raw text."""
+    markdown = strip_inline_fields(markdown)
     attachments: list[dict[str, Any]] = []
     parts: list[str] = []
     cursor = 0
@@ -357,6 +359,8 @@ def infer_type(rel_path: str, frontmatter: dict[str, Any]) -> str | None:
         return "minutes"
     if "/documents/" in f"/{lower}" or "/document/" in f"/{lower}":
         return "document"
+    if lower.startswith("notes/"):
+        return "content"
     if lower.startswith("diary/") or DATE_IN_FILENAME_RE.search(Path(rel_path).stem):
         return "diary"
     return None
@@ -421,6 +425,16 @@ def extract_inline_fields(text: str) -> tuple[dict[str, str], str]:
     cleaned = INLINE_WIKILINK_FIELD_RE.sub(replace, text)
     cleaned = INLINE_FIELD_RE.sub(replace, cleaned)
     return fields, re.sub(r"\s+", " ", cleaned).strip()
+
+
+def strip_inline_fields(text: str) -> str:
+    """Remove Dataview-style inline fields like `[project:: [[X]]]` or `(duration:: 2h)` that are
+    inferred into structured metadata (assignee, project, duration, …), so they don't linger as raw
+    text in note/description content. Preserves line structure (unlike extract_inline_fields)."""
+    cleaned = INLINE_WIKILINK_FIELD_RE.sub("", text)
+    cleaned = INLINE_FIELD_RE.sub("", cleaned)
+    # Tidy up doubled spaces / trailing whitespace left where a field was removed.
+    return "\n".join(re.sub(r"[ \t]{2,}", " ", line).rstrip() for line in cleaned.splitlines())
 
 
 def extract_task_metadata(raw_text: str, checkbox_mark: str, source_date: str | None) -> dict[str, Any]:
@@ -642,12 +656,33 @@ def build_bundle(vault: Path) -> dict[str, Any]:
             source_sections = sections(strip_generated_blocks(source.body))
             contents_links = [m.group("link") for m in WIKILINK_RE.finditer(source_sections.get("contents", ""))]
             attachments = as_list(first_field(fm, "attachment", "attachments")) + contents_links
+            doc_description = clean_scalar(first_field(fm, "description")) or source_sections.get("notes") or None
             documents.append({
                 "id": stable_uuid("document", source.rel_path),
                 "summary": basename,
-                "description": clean_scalar(first_field(fm, "description")) or source_sections.get("notes") or None,
+                "description": strip_inline_fields(doc_description).strip() or None if doc_description else None,
                 "projectIds": [rid for rid in (ref_id(v, "project", source) for v in as_list(first_field(fm, "project", "projects"))) if rid],
                 "attachmentRefs": sorted(set(filter(None, (canonical_markdown_path(a) or clean_scalar(a) for a in attachments)))),
+                "createdAt": created,
+                "updatedAt": updated,
+                "sourceContext": source_context(source),
+            })
+        elif kind == "content":
+            note_text = strip_generated_blocks(source.body)
+            note_tags = merge_tags(type_tags, markdown_tags(note_text))
+            note_content, note_attachments = note_markdown_and_attachments(source, note_text, vault, diagnostics)
+            project_id = next(
+                (rid for rid in (ref_id(v, "project", source) for v in as_list(first_field(fm, "project", "projects"))) if rid),
+                None,
+            )
+            notes.append({
+                "id": stable_uuid("note", f"{source.rel_path}:content-note"),
+                "title": basename,
+                "content": note_content,
+                "attachments": note_attachments,
+                "tags": note_tags,
+                "projectId": project_id,
+                "sourcePath": source.rel_path,
                 "createdAt": created,
                 "updatedAt": updated,
                 "sourceContext": source_context(source),

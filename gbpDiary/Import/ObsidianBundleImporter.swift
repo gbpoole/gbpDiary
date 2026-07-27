@@ -112,9 +112,11 @@ struct ObsidianBundleImporter {
         for imported in bundle.notes {
             let note = notes[imported.id] ?? Note(content: imported.content ?? "", id: imported.id)
             if notes[imported.id] == nil { context.insert(note); notes[imported.id] = note }
+            note.title = imported.title ?? ""
             note.content = markdownForImportedNote(imported)
             note.tags = imported.tags ?? []
             note.dayRecord = imported.dayRecordId.flatMap { dayRecords[$0] }
+            note.project = imported.projectId.flatMap { projects[$0] }
             note.attachments = importNoteAttachments(imported, note: note, existing: &attachments, vaultPath: bundle.vaultPath)
             report.attachments += note.attachments.count
             applyDates(created: imported.createdAt, updated: imported.updatedAt, to: note)

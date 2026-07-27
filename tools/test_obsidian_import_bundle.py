@@ -58,6 +58,11 @@ class ObsidianImportBundleTests(unittest.TestCase):
                 "---\ntype:\n  - meeting\ntags:\n  - weekly\nProject:\n  - \"[[CMS/Projects/Foo|Foo]]\"\nDate: 2025-08-20 14:28\nDuration: 1h\nAttendees:\n  - \"[[CMS/People/Greg Poole|Greg Poole]]\"\nSummary: Status update\n---\n\n## Notes\n- Useful #milestone note\n\n![[plot.png]]\n\nAfter image.\n## New Tasks\n- [ ] ( who::[[CMS/People/Greg Poole|Greg Poole]] ) Do thing [project::[[CMS/Projects/Foo|Foo]]]\n",
                 encoding="utf-8",
             )
+            (vault / "Notes").mkdir()
+            (vault / "Notes/Idea about Foo.md").write_text(
+                "---\nproject: \"[[CMS/Projects/Foo|Foo]]\"\ntags:\n  - idea\n---\nSome idea text [project:: [[CMS/Projects/Foo|Foo]]] and more.\n",
+                encoding="utf-8",
+            )
             (vault / "Diary").mkdir()
             (vault / "Diary/2025-08-21-Thursday.md").write_text(
                 "---\ncreated: 2025-08-21 09:00\ntags:\n  - diary-tag\n---\n- [x] Timesheet focus (duration:: 1.5 h) #timesheet ✅ 2025-08-21\n    - [ ] Nested task\n    - [ ] [[CMS/People/Lee Spitler|Lee Spitler]] needs to be informed that he won't be able to apply for RT time next semester📅 2025-08-22\n- [?] Follow up focus (follow_up:: 2025-08-28)\n- [x] Apply for access to Nectar and OzSTAR projects (who::[[CMS/People/Owen Cole.md|Owen Cole]]) (project::[[CMS/Projects/YWang_2026A.md|YWang_2026A]]) ✅ 2026-03-02\n",
@@ -102,6 +107,22 @@ class ObsidianImportBundleTests(unittest.TestCase):
             self.assertEqual(owen["assigneePersonId"], owen_person["id"])
             self.assertEqual(owen["projectId"], ywang_project["id"])
             self.assertEqual(bundle["diagnostics"], [])
+
+            # Content notes: files in the vault-root Notes/ directory import as titled notes with no
+            # day record, resolving a frontmatter project, with inline fields stripped from content.
+            content_note = next(note for note in bundle["notes"] if note.get("title") == "Idea about Foo")
+            self.assertIsNone(content_note.get("dayRecordId"))
+            foo_project = next(project for project in bundle["projects"] if project["name"] == "Foo")
+            self.assertEqual(content_note["projectId"], foo_project["id"])
+            self.assertIn("Some idea text", content_note["content"])
+            self.assertNotIn("project::", content_note["content"])
+            self.assertEqual(content_note["tags"], ["idea"])
+
+            # Inferred inline fields (duration/who/project) are stripped from diary note content too.
+            diary_note = next(note for note in bundle["notes"] if note.get("dayRecordId"))
+            self.assertNotIn("duration::", diary_note["content"])
+            self.assertNotIn("who::", diary_note["content"])
+            self.assertNotIn("project::", diary_note["content"])
 
 
 if __name__ == "__main__":

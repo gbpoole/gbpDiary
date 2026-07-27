@@ -59,6 +59,38 @@ struct ObsidianBundleImporterTests {
         #expect(tasks.first?.notes == nil)
     }
 
+    @Test func importBundle_createsContentNoteWithTitleAndProject() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let projectId = "00000000-0000-5000-8000-0000000000A1"
+        let noteId = "00000000-0000-5000-8000-0000000000A2"
+        let json = """
+        {
+          "schemaVersion": 1,
+          "counts": {},
+          "institutions": [],
+          "people": [],
+          "projects": [{"id": "\(projectId)", "name": "Foo"}],
+          "minutes": [],
+          "documents": [],
+          "notes": [{"id": "\(noteId)", "title": "Idea about Foo", "content": "Some idea text", "tags": ["idea"], "projectId": "\(projectId)", "sourcePath": "Notes/Idea about Foo.md"}],
+          "dayRecords": [],
+          "tasks": [],
+          "diagnostics": []
+        }
+        """
+        let bundle = try JSONDecoder().decode(ObsidianImportBundle.self, from: Data(json.utf8))
+        let report = try ObsidianBundleImporter(context: context).importBundle(bundle)
+
+        #expect(report.notes == 1)
+        let notes = try context.fetch(FetchDescriptor<Note>())
+        let note = try #require(notes.first)
+        #expect(note.title == "Idea about Foo")
+        #expect(note.project?.name == "Foo")
+        #expect(note.dayRecord == nil)
+        #expect(note.isContentNote == true)
+    }
+
     @Test func importBundle_createsFocusBlocksAndCopiesDocumentAttachments() throws {
         let tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("obsidian-importer-test-\(UUID().uuidString)")
