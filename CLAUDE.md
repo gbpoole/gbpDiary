@@ -232,12 +232,26 @@ notes browse via `ContentListView` (sidebar **Content** category), each opening 
 `.contentNote(id)` tab rendering `ContentNoteDetailView` (minutes-style Title/Tags/Project header +
 `MarkdownDocumentEditor` + a "Linked from" panel). New notes are created from the Content list "+"
 or the sidebar "New Note" button, both presenting `ContentNoteEditorSheet` (title required), which
-then calls `WorkspaceModel.openContentForEditing(_:)`. In the editor, `note://` links render as
-clickable chips in the source pane (`ImageChipTextEditor`, extended alongside image chips) and as
-links in the preview (intercepted via `openURL` → open/focus the target tab); the insert-link
-toolbar button is a tag-filterable `FuzzyPickerField` over content notes that inserts a link at the
-caret. A content note that also has a project appears in both the vault and that project's Notes
-section.
+then calls `WorkspaceModel.openContentForEditing(_:)`. A content note that also has a project appears
+in both the vault and that project's Notes section.
+
+**Diary notes are titled content notes on a day.** A note added from the diary is created with the
+same `ContentNoteEditorSheet` (passed a `dayRecord`, reported via `onCreated`) — it gets a title,
+tags, and optional project, is attached to the day, and shows in the diary Notes section rather than
+the Content list (it has a `dayRecord`, so `isContentNote` is false). Its title shows in the
+`MarkdownDocumentEditor` header and is editable via `NoteEditorSheet`.
+
+**Note linking (available in every `MarkdownDocumentEditor`).** Link support is internal to the
+editor (via `@Query` + `@Environment(WorkspaceModel.self)`), so diary notes, meeting minutes, task
+notes, and content notes all get it. `note://<uuid>` links render as clickable chips in the source
+pane (`ImageChipTextEditor`, alongside image chips — link chips are sized to one line height so
+inserting/removing one doesn't shift text) and as links in the preview. The insert-link and
+edit-link controls open `LinkPickerSheet`, a segmented picker over three target kinds — **Content**
+notes and **Diary** notes (tag-filtered; date shown for diary options) and **Meetings**
+(project-filtered; date shown). A meeting resolves to its minutes `Note` (created if absent), so all
+links are uniformly `note://`; the chip label shows the meeting summary + date. Clicking a chip
+opens the edit modal (change target / remove); clicking a preview link calls
+`WorkspaceModel.reveal(note:)`, which routes to the content tab, the diary day, or the meeting tab.
 
 Each `@Model` has `@Attribute(.unique) var id: UUID` for stable external identity (used by the import pipeline). SwiftData also assigns its own `persistentModelID`.
 

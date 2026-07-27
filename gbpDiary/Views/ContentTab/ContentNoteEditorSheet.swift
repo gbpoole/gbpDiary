@@ -4,8 +4,14 @@ import SwiftData
 // Creation modal for a Content note: set a (required) title, optional tags and project, then create
 // the note and open it in a new tab ready to edit. Presented from the Content list "+" and the
 // sidebar "New Note" button. When `note` is non-nil it edits that note's metadata in place instead.
+//
+// When `dayRecord` is provided, it instead creates a *diary* note (a titled note attached to that
+// day, shown in the diary rather than the Content list) and reports it via `onCreated` rather than
+// opening a Content tab. A diary note is otherwise the same as a content note.
 struct ContentNoteEditorSheet: View {
     var note: Note? = nil
+    var dayRecord: DayRecord? = nil
+    var onCreated: ((Note) -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -56,7 +62,7 @@ struct ContentNoteEditorSheet: View {
                 }
                 .padding()
             }
-            .navigationTitle(note == nil ? "New Content Note" : "Edit Note")
+            .navigationTitle(navigationTitle)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -76,6 +82,11 @@ struct ContentNoteEditorSheet: View {
         #if os(macOS)
         .frame(minWidth: 400, minHeight: 320)
         #endif
+    }
+
+    private var navigationTitle: String {
+        if note != nil { return "Edit Note" }
+        return dayRecord != nil ? "New Diary Note" : "New Content Note"
     }
 
     private var availableTags: [ContentTagItem] {
@@ -98,6 +109,17 @@ struct ContentNoteEditorSheet: View {
             note.tags = tags
             note.updatedAt = Date()
             dismiss()
+        } else if let dayRecord {
+            // Diary note: attach to the day and let the diary show/edit it (no Content tab).
+            let newNote = Note(content: "", title: trimmed,
+                               sortOrder: (dayRecord.noteItems.map(\.sortOrder).max() ?? -1) + 1)
+            newNote.project = selectedProject
+            newNote.tags = tags
+            newNote.dayRecord = dayRecord
+            modelContext.insert(newNote)
+            try? modelContext.save()
+            dismiss()
+            onCreated?(newNote)
         } else {
             let newNote = Note(content: "", title: trimmed)
             newNote.project = selectedProject

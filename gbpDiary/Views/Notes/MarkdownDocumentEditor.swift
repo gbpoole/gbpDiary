@@ -51,10 +51,14 @@ struct MarkdownDocumentEditor: View {
 
     private struct EditingLink: Identifiable { let id: UUID }
 
-    // Content notes are the linkable pool (excluding this note); titles feed the chip labels.
-    private var linkableNotes: [Note] { allNotesForLinks.filter { $0.isContentNote && $0.id != note.id } }
+    // Resolves a link chip's label from its target note: a meeting note shows the meeting summary
+    // + date, a diary note its title, a content note its title.
     private func noteLinkTitle(_ id: UUID) -> String {
         guard let n = allNotesForLinks.first(where: { $0.id == id }) else { return "Note" }
+        if let m = n.minutes {
+            let summary = (m.summary?.isEmpty == false) ? m.summary! : "Meeting"
+            return "\(summary) (\(m.meetingAt.formatted(.dateTime.month(.abbreviated).day())))"
+        }
         return n.title.isEmpty ? "Untitled" : n.title
     }
     // Distinguishes a note-link tap (navigate) from a plain tap (enter edit mode) in the preview.
@@ -119,12 +123,13 @@ struct MarkdownDocumentEditor: View {
             NoteImageEditSheet(attachment: attachment, onRemove: { removeImage(attachment.id) })
                 .onDisappear { chipRefresh += 1 }  // refresh chips in case the display name changed
         }
+        .sheet(isPresented: $showingLinkPicker) {
+            LinkPickerSheet(mode: .insert, onPick: { insertLink($0) })
+        }
         .sheet(item: $editingLink) { link in
-            NoteLinkEditSheet(
-                currentTargetID: link.id,
-                currentTitle: noteLinkTitle(link.id),
-                linkableNotes: linkableNotes,
-                onChangeTarget: { newID in changeLinkTarget(from: link.id, to: newID) },
+            LinkPickerSheet(
+                mode: .edit(currentNoteID: link.id),
+                onPick: { newID in changeLinkTarget(from: link.id, to: newID) },
                 onRemove: { removeLink(link.id) }
             )
         }
@@ -156,6 +161,11 @@ struct MarkdownDocumentEditor: View {
     private var header: some View {
         if showsHeader {
             VStack(alignment: .leading, spacing: 7) {
+                if !note.title.isEmpty {
+                    Text(note.title)
+                        .font(.headline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 metaRow("Project") { projectLine }
                 metaRow("Tags")    { tagsLine }
             }
@@ -179,7 +189,14 @@ struct MarkdownDocumentEditor: View {
                 .help("Insert image")
             }
 
-            if isEditing { insertLinkControl }
+            if isEditing {
+                Button { showingLinkPicker = true } label: {
+                    Image(systemName: "link.badge.plus").font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(AppTheme.action)
+                .help("Insert link")
+            }
 
             if isEditing {
                 Button { exitEditing() } label: {
@@ -200,32 +217,9 @@ struct MarkdownDocumentEditor: View {
         }
     }
 
-    // Tag-filterable picker of content notes; picking one inserts a `[Title](note://…)` link at the
-    // caret. Uses the picker's own magnifying-glass trigger (opened via `showingLinkPicker`).
-    private var insertLinkControl: some View {
-        let tags = Set(linkableNotes.flatMap(\.tags)).sorted()
-        let tagFilters = tags.map { tag in
-            PickerFilter<Note>(id: "tag.\(tag)", label: tag, chipColor: AppTheme.tag, group: "Tag") {
-                $0.tags.contains(tag)
-            }
-        }
-        return FuzzyPickerField(
-            allItems: linkableNotes,
-            selectedItem: Binding<Note?>(
-                get: { nil },
-                set: { picked in
-                    guard let picked else { return }
-                    insertionText = NoteLinkRef.markdown(for: picked.id, displayName: picked.title)
-                    insertionToken += 1
-                }
-            ),
-            label: { $0.title.isEmpty ? "Untitled" : $0.title },
-            chipColor: AppTheme.project,
-            placeholder: "Link a note…",
-            filters: tagFilters.isEmpty ? nil : tagFilters,
-            isPresented: $showingLinkPicker
-        )
-        .help("Insert link to a note")
+    private func insertLink(_ id: UUID) {
+        insertionText = NoteLinkRef.markdown(for: id, displayName: noteLinkTitle(id))
+        insertionToken += 1
     }
 
     private func metaRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
@@ -374,11 +368,12 @@ struct MarkdownDocumentEditor: View {
             .textual.structuredTextStyle(.gitHub)
             .font(.body)
             .environment(\.openURL, OpenURLAction { url in
-                // Note-to-note links navigate to the target's tab; system handles everything else.
+                // Note links navigate to the target's home (content tab, diary day, or meeting tab
+                // via reveal); the system handles everything else.
                 if let id = NoteLinkRef.id(fromURL: url.absoluteString) {
                     linkFlags.didTapLink = true   // suppress the outer tap-to-edit for this tap
                     if let target = allNotesForLinks.first(where: { $0.id == id }) {
-                        workspace.focusOrOpen(.contentNote(target.persistentModelID))
+                        workspace.reveal(note: target)
                     }
                     return .handled
                 }

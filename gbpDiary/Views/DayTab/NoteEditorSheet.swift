@@ -9,6 +9,7 @@ struct NoteEditorSheet: View {
     @Query private var allNotes: [Note]
     @Query(sort: \Person.name) private var allPeople: [Person]
 
+    @State private var title = ""
     @State private var selectedProject: Project?
     @State private var selectedTags: [TagItem] = []
 
@@ -16,6 +17,11 @@ struct NoteEditorSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
+                    GroupBox("Title") {
+                        TextField("Note title (optional)", text: $title)
+                            .textFieldStyle(.plain)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                     GroupBox("Project") {
                         FuzzyPickerField(
                             allItems: allProjects,
@@ -48,6 +54,7 @@ struct NoteEditorSheet: View {
             }
         }
         .onAppear {
+            title = note.title
             selectedProject = note.project
             selectedTags = note.tags.map { TagItem(id: $0) }
         }
@@ -67,6 +74,7 @@ struct NoteEditorSheet: View {
     }
 
     private func save() {
+        note.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         note.project = selectedProject
         note.tags = selectedTags.map(\.id)
         note.updatedAt = Date()

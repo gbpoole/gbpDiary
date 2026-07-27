@@ -29,6 +29,7 @@ struct DayPageContent: View {
     @State private var editingNote: Note?
     @State private var notesDropTargetIndex: Int?
     @State private var newlyAddedNoteId: UUID?
+    @State private var addNoteRecord: DayRecord?
 
     @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allTimeEntries: [TaskTimeEntry]
 
@@ -155,6 +156,9 @@ struct DayPageContent: View {
         .sheet(item: $editingNote) { n in
             NoteEditorSheet(note: n)
         }
+        .sheet(item: $addNoteRecord) { record in
+            ContentNoteEditorSheet(dayRecord: record, onCreated: { newlyAddedNoteId = $0.id })
+        }
         .onAppear {
             migrateOldNotes()
             migrateDayNote()
@@ -240,14 +244,9 @@ struct DayPageContent: View {
     }
 
     private func addNote() {
-        let record = findOrCreateDayRecord()
-        let note = Note(
-            content: "",
-            sortOrder: (record.noteItems.map(\.sortOrder).max() ?? -1) + 1
-        )
-        note.dayRecord = record
-        modelContext.insert(note)
-        newlyAddedNoteId = note.id
+        // Use the same modal as content notes to set title/tags/project up front; the created note
+        // is attached to this day and shown in the diary Notes section.
+        addNoteRecord = findOrCreateDayRecord()
     }
 
     private func noteRow(note: Note, index: Int) -> some View {
