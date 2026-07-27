@@ -208,7 +208,13 @@ struct ObsidianBundleImporter {
 
         assignTaskParents(bundle.tasks, tasks: tasks)
 
-        var dayRecordByDate = Dictionary(uniqueKeysWithValues: dayRecords.values.map { (dayKey($0.date), $0) })
+        // Tolerate multiple DayRecords sharing a date (e.g. a pre-existing store record plus an
+        // imported one) — keep the earliest-created so the mapping is deterministic. Using
+        // Dictionary(uniqueKeysWithValues:) here traps on duplicate keys.
+        var dayRecordByDate = Dictionary(
+            dayRecords.values.map { (dayKey($0.date), $0) },
+            uniquingKeysWith: { first, second in first.createdAt <= second.createdAt ? first : second }
+        )
         for item in minutes.values {
             let entryId = deterministicUUID("meeting-entry:\(item.id.uuidString)")
             let entry = dayEntries[entryId] ?? DayEntry(kind: .meeting, id: entryId)
