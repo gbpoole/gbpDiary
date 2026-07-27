@@ -28,14 +28,14 @@ Targets: macOS 15.7 · iOS 26 · Swift 6 (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainA
 
 ### Navigation
 
-The app is an Obsidian-style shell: `WorkspaceView` (`Views/Workspace/`) is a `NavigationSplitView` with a **browse sidebar** (the `WorkspaceCategory` list — Diary, Tasks, Projects, People, Institutions, Meetings, Documents, Images, Tags, Timesheet) and a **tabbed detail area** (`WorkspaceTabStrip` + the active tab's content).
+The app is an Obsidian-style shell: `WorkspaceView` (`Views/Workspace/`) is a `NavigationSplitView` with a **browse sidebar** (the `WorkspaceCategory` list — Diary, Tasks, Timesheet, Projects, Meetings, People, Institutions, Documents, Content, Images, Tags — plus a "New Note" button pinned to the sidebar bottom) and a **tabbed detail area** (`WorkspaceTabStrip` + the active tab's content).
 
 State lives in `WorkspaceModel` (injected via `.environment` from `gbpDiaryApp`):
 - `tabs: [WorkspaceTabState]` — each tab is a **back/forward browsing history** of `WorkspaceTab` destinations, with its own `DiaryState` (so two Diary tabs can be on different dates).
 - Selecting a sidebar category calls `navigate(to:)` on the **active** tab (in-place browsing); back/forward buttons walk that tab's history.
 - Meetings open in a **new tab** (`openInNewTab(.minutes(id))`); `focusOrOpen(_:)` reuses an existing tab already showing a destination; `reveal(note:)` jumps to the container (day/meeting/project) that holds a note; `closeEntity(_:)` closes tabs referencing a to-be-deleted model.
 
-`WorkspaceTab` is `.diary | .tasks | .projects | .people | .institutions | .meetings | .documents | .images | .tags | .timesheet` plus entity cases `.project/.person/.institution/.minutes/.document(PersistentIdentifier)`. Category tabs render the existing list/tool views; entity tabs resolve the model via `modelContext.model(for:)` and render its `…DetailView` (in non-sheet mode).
+`WorkspaceTab` is `.diary | .tasks | .projects | .people | .institutions | .meetings | .documents | .content | .images | .tags | .timesheet` plus entity cases `.project/.person/.institution/.minutes/.document/.contentNote(PersistentIdentifier)`. Category tabs render the existing list/tool views (`.content` → `ContentListView`); entity tabs resolve the model via `modelContext.model(for:)` and render its `…DetailView` (in non-sheet mode; `.contentNote` → `ContentNoteDetailView`). `reveal(note:)` sends a content note to its own `.contentNote` tab (checked before the project fallback).
 
 Note: opening Project / Person / Institution / Document detail from their list views still uses `.sheet(item:)` (not yet routed through `WorkspaceModel`); wiring those drilldowns to in-place tab navigation is pending.
 
@@ -213,14 +213,31 @@ Attachment     (file copied into app container on import via `AttachmentStorage`
   note          → Note?        (set when attached to a Note)
 
 Note
-  content   : String         (markdown, sole source of truth; edited via MarkdownDocumentEditor. Images embed as attachment://<uuid> refs — see AttachmentRef)
+  title     : String         (free-standing "Content" notes have a non-empty title; day/meeting/legacy project notes leave it "" — see NoteContentMembership)
+  content   : String         (markdown, sole source of truth; edited via MarkdownDocumentEditor. Images embed as attachment://<uuid> refs — see AttachmentRef. Note-to-note links embed as [Title](note://<uuid>) — see NoteLinkRef)
   sortOrder : Int            (drag-to-reorder within a day)
   tagsJSON  : String         (JSON-encoded [String]; use computed `tags` property)
   dayRecord → DayRecord?     (set when captured from a day's Notes section)
   project   → Project?       (optional; displayed as blue chip above note content)
   minutes   → Minutes?       (set when note is the block-based minutes for a meeting; nullify on note delete)
   attachments → [Attachment]  cascade delete ↔ Attachment.note
+  isContentNote: Bool        (computed; NoteContentMembership.isContentNote — vault membership)
 ```
+
+**Content notes (the "Content" vault).** A *content note* is any `Note` with a non-empty `title`
+that is not a day or meeting note (it may still carry a project). It is a free-standing markdown
+note that links to other notes Obsidian-style. Links embed as `[Title](note://<uuid>)` (`NoteLinkRef`,
+mirroring `AttachmentRef`); `NoteLinkUsageScanner.backlinks(to:in:)` computes backlinks. Content
+notes browse via `ContentListView` (sidebar **Content** category), each opening in a
+`.contentNote(id)` tab rendering `ContentNoteDetailView` (minutes-style Title/Tags/Project header +
+`MarkdownDocumentEditor` + a "Linked from" panel). New notes are created from the Content list "+"
+or the sidebar "New Note" button, both presenting `ContentNoteEditorSheet` (title required), which
+then calls `WorkspaceModel.openContentForEditing(_:)`. In the editor, `note://` links render as
+clickable chips in the source pane (`ImageChipTextEditor`, extended alongside image chips) and as
+links in the preview (intercepted via `openURL` → open/focus the target tab); the insert-link
+toolbar button is a tag-filterable `FuzzyPickerField` over content notes that inserts a link at the
+caret. A content note that also has a project appears in both the vault and that project's Notes
+section.
 
 Each `@Model` has `@Attribute(.unique) var id: UUID` for stable external identity (used by the import pipeline). SwiftData also assigns its own `persistentModelID`.
 
@@ -406,6 +423,9 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Obsidian import launch arguments require `--import-obsidian-bundle <path>` and support `--exit-after-import` for CLI validation runs | Obsidian import | `gbpDiaryTests/Import/ObsidianBundleImporterTests.swift` | `launchRequest_parsesBundlePathAndExitFlag`, `launchRequest_requiresBundlePath` |
 | Workspace tabs are per-tab back/forward histories: `navigate(to:)` pushes (no-op on current), back/forward traverse, navigating after back truncates forward history. `openInNewTab` adds+activates; `focusOrOpen` reuses a tab showing the destination else opens one; `closeTab` reassigns active and recreates a Diary tab when the last closes | Navigation / workspace shell | `gbpDiaryTests/Views/WorkspaceModelTests.swift` | `tabState_navigate_pushesHistoryAndEnablesBack`, `tabState_navigate_toCurrentIsNoOp`, `tabState_backForward_traversesHistory`, `tabState_navigateAfterBack_truncatesForwardHistory`, `openInNewTab_addsAndActivates`, `focusOrOpen_activatesExistingTabShowingDestination`, `focusOrOpen_opensNewTabWhenNoneShowsDestination`, `closeTab_reassignsActive`, `closeTab_lastTab_recreatesDiary` |
 | `FilterEngine.apply` filters a collection by active `PickerFilter`s: OR within a group, AND across groups; a group with no active filter is ignored; empty active set (or only unknown ids) returns all items | List-page filtering | `gbpDiaryTests/Domain/FilterEngineTests.swift` | `apply_noActiveFilters_returnsAll`, `apply_orWithinGroup_matchesAnyInGroup`, `apply_andAcrossGroups_requiresBothGroups`, `apply_orWithinAndAndAcross_combined`, `apply_groupWithNoActiveFilter_isIgnored`, `apply_unknownActiveId_isIgnored` |
+| Note-link refs: `NoteLinkRef.url(for:)`/`markdown(for:)` produce `note://<uuid>` links; `id(fromURL:)` parses them (rejecting other schemes/non-UUIDs); `referencedIDs(in:)` extracts all note-link ids in order, ignoring images and plain links | Content notes / linking | `gbpDiaryTests/Models/NoteLinkRefTests.swift` | `url_and_id_roundTrip`, `id_fromURL_rejectsNonNoteSchemes`, `markdown_embedsTitleAndRef`, `markdown_sanitizesClosingBracketInTitle`, `referencedIDs_extractsAllInOrder`, `referencedIDs_ignoresImageAndPlainLinks` |
+| `NoteLinkUsageScanner.backlinks(to:in:)` returns ids of notes referencing the target (in order), excluding self; empty when none | Content notes / backlinks | `gbpDiaryTests/Models/NoteLinkUsageScannerTests.swift` | `backlinks_findsReferrers`, `backlinks_excludesSelfReference`, `backlinks_emptyWhenNoReferrers` |
+| Content-note membership: `NoteContentMembership.isContentNote` is true iff the title is non-empty (after trimming) and the note has neither a day record nor minutes | Content notes / vault membership | `gbpDiaryTests/Models/NoteLinkUsageScannerTests.swift` | `isContentNote_requiresNonEmptyTitle`, `isContentNote_excludesDayAndMeetingNotes` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 

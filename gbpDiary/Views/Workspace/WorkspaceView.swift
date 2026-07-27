@@ -8,6 +8,7 @@ struct WorkspaceView: View {
     @Environment(WorkspaceModel.self) private var workspace
     @Query private var allAttachments: [Attachment]
     @Query private var allNotes: [Note]
+    @State private var showingNewContent = false
 
     // Image attachments referenced by no note and not attached to a document.
     private var unusedImageCount: Int {
@@ -32,6 +33,17 @@ struct WorkspaceView: View {
             }
             .navigationSplitViewColumnWidth(min: 170, ideal: 200, max: 260)
             .background(AppTheme.sidebarBackground)
+            .safeAreaInset(edge: .bottom) {
+                Button { showingNewContent = true } label: {
+                    Label("New Note", systemImage: "square.and.pencil")
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(AppTheme.accent)
+                .padding(8)
+                .help("Create a new Content note")
+            }
         } detail: {
             VStack(spacing: 0) {
                 WorkspaceTabStrip()
@@ -44,6 +56,7 @@ struct WorkspaceView: View {
         }
         .environment(workspace.active.diaryState)
         .kanagawaAppBackground()
+        .sheet(isPresented: $showingNewContent) { ContentNoteEditorSheet(note: nil) }
     }
 
     @ViewBuilder
@@ -56,10 +69,13 @@ struct WorkspaceView: View {
         case .institutions: InstitutionsView()
         case .meetings:     MinutesListView()
         case .documents:    DocumentsListView()
+        case .content:      ContentListView()
         case .images:       ImageLibraryView()
         case .tags:         TagsView()
         case .timesheet:    TimesheetView()
 
+        case .contentNote(let pid):
+            if let n = model(pid, as: Note.self) { ContentNoteDetailView(note: n) } else { missing }
         case .project(let pid):
             if let p = model(pid, as: Project.self) { ProjectDetailView(project: p) } else { missing }
         case .person(let pid):

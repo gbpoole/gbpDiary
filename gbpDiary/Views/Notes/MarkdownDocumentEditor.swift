@@ -21,9 +21,16 @@ struct MarkdownDocumentEditor: View {
     var onDelete: (() -> Void)? = nil    // context-menu Delete; hidden if nil
     var startInEdit: Bool = false
     var onStartedEditing: (() -> Void)? = nil   // called once if startInEdit opens edit mode
+    /// When false, the project/tags metadata rows are omitted (the host provides its own header,
+    /// as in ContentNoteDetailView); the editing controls bar is still shown.
+    var showsHeader: Bool = true
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var hSizeClass
+    @Environment(WorkspaceModel.self) private var workspace
+    // Note-to-note linking is available in every editor: all content notes are the link pool,
+    // titles resolve for chip labels, clicking a chip opens the edit modal, preview links navigate.
+    @Query private var allNotesForLinks: [Note]
 
     @State private var isEditing = false
     @State private var narrowShowsPreview = false
@@ -37,6 +44,25 @@ struct MarkdownDocumentEditor: View {
     @State private var chipRefresh = 0
     @State private var sourceHeight: CGFloat = 120
     @State private var autoFocusPending = false
+    @State private var showingLinkPicker = false
+    @State private var insertionText: String?
+    @State private var insertionToken = 0
+    @State private var editingLink: EditingLink?
+
+    private struct EditingLink: Identifiable { let id: UUID }
+
+    // Content notes are the linkable pool (excluding this note); titles feed the chip labels.
+    private var linkableNotes: [Note] { allNotesForLinks.filter { $0.isContentNote && $0.id != note.id } }
+    private func noteLinkTitle(_ id: UUID) -> String {
+        guard let n = allNotesForLinks.first(where: { $0.id == id }) else { return "Note" }
+        return n.title.isEmpty ? "Untitled" : n.title
+    }
+    // Distinguishes a note-link tap (navigate) from a plain tap (enter edit mode) in the preview.
+    // Class-based so the mutation is visible synchronously across the gesture closures (see CLAUDE.md).
+    @State private var linkFlags = LinkTapFlags()
+    @State private var previewTapCount = 0
+
+    private final class LinkTapFlags { var didTapLink = false }
     #if os(macOS)
     @State private var escapeMonitor = EscapeKeyMonitor()
     #endif
@@ -51,7 +77,12 @@ struct MarkdownDocumentEditor: View {
             } else {
                 previewBody
                     .contentShape(Rectangle())
-                    .onTapGesture { beginEditing() }
+                    .simultaneousGesture(TapGesture().onEnded { previewTapCount += 1 })
+                    .onChange(of: previewTapCount) {
+                        // A note-link tap already navigated; suppress entering edit mode for it.
+                        if linkFlags.didTapLink { linkFlags.didTapLink = false }
+                        else { beginEditing() }
+                    }
             }
         }
         .padding(10)
@@ -88,6 +119,15 @@ struct MarkdownDocumentEditor: View {
             NoteImageEditSheet(attachment: attachment, onRemove: { removeImage(attachment.id) })
                 .onDisappear { chipRefresh += 1 }  // refresh chips in case the display name changed
         }
+        .sheet(item: $editingLink) { link in
+            NoteLinkEditSheet(
+                currentTargetID: link.id,
+                currentTitle: noteLinkTitle(link.id),
+                linkableNotes: linkableNotes,
+                onChangeTarget: { newID in changeLinkTarget(from: link.id, to: newID) },
+                onRemove: { removeLink(link.id) }
+            )
+        }
         .alert("Delete Note?", isPresented: $showingDeleteConfirm) {
             Button("Delete", role: .destructive) { onDelete?() }
             Button("Cancel", role: .cancel) {}
@@ -112,41 +152,80 @@ struct MarkdownDocumentEditor: View {
 
     // Compact labeled metadata block, matching the meeting minutes metadata header. Insert-image
     // and Done controls sit at the top-right.
+    @ViewBuilder
     private var header: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            metaRow("Project") { projectLine }
-            metaRow("Tags")    { tagsLine }
+        if showsHeader {
+            VStack(alignment: .leading, spacing: 7) {
+                metaRow("Project") { projectLine }
+                metaRow("Tags")    { tagsLine }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)  // fill so chip vs placeholder width doesn't resize the card
+            .padding(10)
+            .background(AppTheme.cardRaised.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
+            .overlay(alignment: .topTrailing) { controlBar.padding(8) }
+        } else {
+            HStack(spacing: 8) { Spacer(minLength: 0); controlBar }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)  // fill so chip vs placeholder width doesn't resize the card
-        .padding(10)
-        .background(AppTheme.cardRaised.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
-        .overlay(alignment: .topTrailing) {
-            HStack(spacing: 8) {
+    }
+
+    private var controlBar: some View {
+        HStack(spacing: 8) {
+            if isEditing {
                 Button { showingImageImporter = true } label: {
                     Image(systemName: "photo.badge.plus").font(.system(size: 12))
                 }
                 .buttonStyle(.plain)
                 .foregroundStyle(AppTheme.action)
                 .help("Insert image")
-                if isEditing {
-                    Button { exitEditing() } label: {
-                        Image(systemName: "checkmark.circle").font(.system(size: 12))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(AppTheme.action)
-                    .help("Done editing")
-                }
-                if onDelete != nil {
-                    Button { showingDeleteConfirm = true } label: {
-                        Image(systemName: "trash").font(.system(size: 12))
-                    }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(AppTheme.action)
-                    .help("Delete note")
-                }
             }
-            .padding(8)
+
+            if isEditing { insertLinkControl }
+
+            if isEditing {
+                Button { exitEditing() } label: {
+                    Image(systemName: "checkmark.circle").font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(AppTheme.action)
+                .help("Done editing")
+            }
+            if onDelete != nil {
+                Button { showingDeleteConfirm = true } label: {
+                    Image(systemName: "trash").font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(AppTheme.action)
+                .help("Delete note")
+            }
         }
+    }
+
+    // Tag-filterable picker of content notes; picking one inserts a `[Title](note://…)` link at the
+    // caret. Uses the picker's own magnifying-glass trigger (opened via `showingLinkPicker`).
+    private var insertLinkControl: some View {
+        let tags = Set(linkableNotes.flatMap(\.tags)).sorted()
+        let tagFilters = tags.map { tag in
+            PickerFilter<Note>(id: "tag.\(tag)", label: tag, chipColor: AppTheme.tag, group: "Tag") {
+                $0.tags.contains(tag)
+            }
+        }
+        return FuzzyPickerField(
+            allItems: linkableNotes,
+            selectedItem: Binding<Note?>(
+                get: { nil },
+                set: { picked in
+                    guard let picked else { return }
+                    insertionText = NoteLinkRef.markdown(for: picked.id, displayName: picked.title)
+                    insertionToken += 1
+                }
+            ),
+            label: { $0.title.isEmpty ? "Untitled" : $0.title },
+            chipColor: AppTheme.project,
+            placeholder: "Link a note…",
+            filters: tagFilters.isEmpty ? nil : tagFilters,
+            isPresented: $showingLinkPicker
+        )
+        .help("Insert link to a note")
     }
 
     private func metaRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
@@ -252,7 +331,11 @@ struct MarkdownDocumentEditor: View {
                     }
                 },
                 startFocused: autoFocusPending,
-                onTapImage: { editingImageID = $0 }
+                onTapImage: { editingImageID = $0 },
+                noteTitle: { noteLinkTitle($0) },
+                onTapNoteLink: { editingLink = EditingLink(id: $0) },
+                insertionText: insertionText,
+                insertionToken: insertionToken
             )
             .frame(height: sourceHeight)
             #else
@@ -290,6 +373,17 @@ struct MarkdownDocumentEditor: View {
             .textual.textSelection(.enabled)
             .textual.structuredTextStyle(.gitHub)
             .font(.body)
+            .environment(\.openURL, OpenURLAction { url in
+                // Note-to-note links navigate to the target's tab; system handles everything else.
+                if let id = NoteLinkRef.id(fromURL: url.absoluteString) {
+                    linkFlags.didTapLink = true   // suppress the outer tap-to-edit for this tap
+                    if let target = allNotesForLinks.first(where: { $0.id == id }) {
+                        workspace.focusOrOpen(.contentNote(target.persistentModelID))
+                    }
+                    return .handled
+                }
+                return .systemAction
+            })
         }
     }
 
@@ -334,6 +428,34 @@ struct MarkdownDocumentEditor: View {
         }
         note.updatedAt = Date()
         editingImageID = nil
+    }
+
+    // Repoint every link to `oldID` at `newID` (updating the displayed title to the new target).
+    private func changeLinkTarget(from oldID: UUID, to newID: UUID) {
+        guard oldID != newID else { editingLink = nil; return }
+        let pattern = "\\[[^\\]]*\\]\\(note://\(oldID.uuidString)\\)"
+        let replacement = NoteLinkRef.markdown(for: newID, displayName: noteLinkTitle(newID))
+        let template = NSRegularExpression.escapedTemplate(for: replacement)
+        let updated = currentSource.replacingOccurrences(of: pattern, with: template, options: .regularExpression)
+        applyLinkEdit(updated)
+    }
+
+    // Remove every link to `id` from the note markdown.
+    private func removeLink(_ id: UUID) {
+        let pattern = "\\[[^\\]]*\\]\\(note://\(id.uuidString)\\)"
+        let updated = currentSource.replacingOccurrences(of: pattern, with: "", options: .regularExpression)
+        applyLinkEdit(updated)
+    }
+
+    // The live editing text if editing, else the persisted content.
+    private var currentSource: String { isEditing ? draft : note.content }
+
+    private func applyLinkEdit(_ updated: String) {
+        draft = updated
+        previewDraft = updated
+        note.content = updated
+        note.updatedAt = Date()
+        editingLink = nil
     }
 
     // Create an Attachment for a source image file and return its markdown ref (no draft mutation).

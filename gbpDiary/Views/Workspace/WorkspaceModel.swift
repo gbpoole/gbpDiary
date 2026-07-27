@@ -14,12 +14,14 @@ enum WorkspaceTab: Hashable, Identifiable {
     case images
     case tags
     case timesheet
+    case content
 
     case project(PersistentIdentifier)
     case person(PersistentIdentifier)
     case institution(PersistentIdentifier)
     case minutes(PersistentIdentifier)
     case document(PersistentIdentifier)
+    case contentNote(PersistentIdentifier)
 
     var id: Self { self }
 
@@ -36,6 +38,7 @@ enum WorkspaceTab: Hashable, Identifiable {
         case .images:                    .images
         case .tags:                      .tags
         case .timesheet:                 .timesheet
+        case .content, .contentNote:     .content
         }
     }
 }
@@ -50,6 +53,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     case people       = "People"
     case institutions = "Institutions"
     case documents    = "Documents"
+    case content      = "Content"
     case images       = "Images"
     case tags         = "Tags"
 
@@ -64,6 +68,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         case .institutions: "building.2"
         case .meetings:     "person.3.sequence"
         case .documents:    "doc"
+        case .content:      "text.book.closed"
         case .images:       "photo.on.rectangle"
         case .tags:         "tag"
         case .timesheet:    "clock"
@@ -80,6 +85,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         case .institutions: .institutions
         case .meetings:     .meetings
         case .documents:    .documents
+        case .content:      .content
         case .images:       .images
         case .tags:         .tags
         case .timesheet:    .timesheet
@@ -120,7 +126,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         history.contains { tab in
             switch tab {
             case .project(let x), .person(let x), .institution(let x),
-                 .minutes(let x), .document(let x):
+                 .minutes(let x), .document(let x), .contentNote(let x):
                 return x == id
             default:
                 return false
@@ -136,6 +142,8 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     var activeId: UUID
     /// A minutes tab that should open straight into minutes-edit mode (e.g. a just-created meeting).
     var autoEditMinutesId: PersistentIdentifier?
+    /// A content-note tab that should open straight into edit mode (e.g. a just-created note).
+    var autoEditContentId: PersistentIdentifier?
 
     init() {
         let first = WorkspaceTabState(.diary)
@@ -161,6 +169,12 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     func openMinutesForEditing(_ id: PersistentIdentifier) {
         autoEditMinutesId = id
         openInNewTab(.minutes(id))
+    }
+
+    /// Open a content note in a new tab that jumps straight into editing (e.g. a just-created note).
+    func openContentForEditing(_ id: PersistentIdentifier) {
+        autoEditContentId = id
+        openInNewTab(.contentNote(id))
     }
 
     /// Activate an existing tab already showing this destination, else open it in a new tab.
@@ -189,6 +203,8 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
             focusDiary(date: day.date, scrollTo: note.id)
         } else if let minutes = note.minutes {
             focusOrOpen(.minutes(minutes.persistentModelID))
+        } else if note.isContentNote {
+            focusOrOpen(.contentNote(note.persistentModelID))
         } else if let project = note.project {
             focusOrOpen(.project(project.persistentModelID))
         }
