@@ -159,7 +159,8 @@ struct FuzzyPickerField<Item: Identifiable>: View {
             filterLeadContent: filterLeadContent,
             dismiss: { popoverIsOpen.wrappedValue = false }
         )
-        .frame(minWidth: 260, maxHeight: 320)
+        .frame(width: 340)
+        .frame(maxHeight: 320)
     }
 }
 
@@ -184,16 +185,22 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
     @State private var searchText = ""
     @FocusState private var searchFocused: Bool
     @State private var highlightedIndex: Int? = nil
-    @State private var activeFilterId: String? = nil
+    // Active filter ids. Within a group they combine with OR; groups combine with AND.
+    @State private var activeFilterIds: Set<String> = []
     // Local @State mirror of selected so the popover's own view graph
     // re-renders reliably on every mutation, independent of binding propagation.
     @State private var localSelected: [Item] = []
 
     private var filteredItems: [Item] {
         var items = allItems.filter { item in !localSelected.contains(where: { $0.id == item.id }) }
-        if let activeFilterId,
-           let f = filters?.first(where: { $0.id == activeFilterId }) {
-            items = items.filter { f.test($0) }
+        if let filters, !activeFilterIds.isEmpty {
+            // Each group narrows independently (AND across groups); within a group the active
+            // filters are OR'd, so an item passes a group if it matches any active filter there.
+            for (_, groupFilters) in orderedGroups(from: filters) {
+                let active = groupFilters.filter { activeFilterIds.contains($0.id) }
+                guard !active.isEmpty else { continue }
+                items = items.filter { item in active.contains { $0.test(item) } }
+            }
         }
         guard !searchText.isEmpty else { return items }
         let q = searchText.lowercased()
@@ -298,27 +305,37 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
                 Divider()
             }
 
-            // Selected items (multi-select only) — pinned above the scrollable list,
-            // scrollable so a large selection doesn't crowd out the item list.
-            // Cursor navigation skips this section entirely.
-            if maxSelections != 1 && !localSelected.isEmpty {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        ForEach(localSelected) { item in
-                            selectedItemRow(item)
-                        }
-                    }
-                }
-                .frame(maxHeight: 120)
-                Divider()
-            }
-
-            // Filterable list — only rendered when there is something to show so that
-            // the flexible ScrollView doesn't consume space when empty.
             let trimmedSearch = searchText.trimmingCharacters(in: .whitespaces)
             let hasListContent = !filteredItems.isEmpty
                 || !searchText.isEmpty
                 || (createLabel != nil && onCreate != nil)
+
+            // Selected items (multi-select only) — pinned above the scrollable list,
+            // scrollable so a large selection doesn't crowd out the item list.
+            // Cursor navigation skips this section entirely.
+            if maxSelections != 1 && !localSelected.isEmpty {
+                let selectedRows = VStack(spacing: 0) {
+                    ForEach(localSelected) { item in
+                        selectedItemRow(item)
+                    }
+                }
+                if !hasListContent {
+                    // No options list to show (e.g. everything selected) — let the selected
+                    // section expand into that space so the popover keeps the same overall
+                    // height instead of shrinking and re-centering on its anchor.
+                    ScrollView { selectedRows }.frame(maxHeight: .infinity)
+                } else if localSelected.count > 4 {
+                    // Cap and scroll a long selection so it doesn't crowd out the item list.
+                    ScrollView { selectedRows }.frame(maxHeight: 120)
+                } else {
+                    // Short selection with a list below — hug the content so there's no gap.
+                    selectedRows
+                }
+                if hasListContent { Divider() }
+            }
+
+            // Filterable list — only rendered when there is something to show so that
+            // the flexible ScrollView doesn't consume space when empty.
             if hasListContent {
                 ScrollView {
                     VStack(spacing: 0) {
@@ -368,7 +385,7 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
         .onAppear {
             localSelected = selected
             searchFocused = true
-            if let defaultId = defaultFilterId { activeFilterId = defaultId }
+            if let defaultId = defaultFilterId { activeFilterIds = [defaultId] }
         }
         // Keep localSelected in sync if chips are removed from the form while open.
         .onChange(of: selected.count) { _, _ in localSelected = selected }
@@ -379,48 +396,38 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
 
     private func filterSection(_ filters: [PickerFilter<Item>]) -> some View {
         let groups = orderedGroups(from: filters)
-        let hasNamedGroups = groups.contains(where: { $0.name != nil })
-        return VStack(spacing: 0) {
+        return VStack(alignment: .leading, spacing: 6) {
+            // One row per filter parameter: the dropdown (aligned in a fixed-width column) on the
+            // left, the chosen values as removable chips to the right.
             ForEach(Array(groups.enumerated()), id: \.offset) { _, group in
-                filterGroupRow(name: hasNamedGroups ? group.name : nil, groupFilters: group.filters)
-            }
-        }
-    }
+                let active = group.filters.filter { activeFilterIds.contains($0.id) }
+                let groupColor = group.filters.first?.chipColor ?? chipColor
+                HStack(alignment: .top, spacing: 6) {
+                    FilterGroupSelector(
+                        name: group.name,
+                        groupFilters: group.filters,
+                        defaultColor: chipColor,
+                        activeFilterIds: $activeFilterIds
+                    )
+                    .frame(width: 104, alignment: .leading)
 
-    private func filterGroupRow(name: String?, groupFilters: [PickerFilter<Item>]) -> some View {
-        HStack(alignment: .center, spacing: 0) {
-            if let name {
-                Text(name)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(width: 76, alignment: .trailing)
-                    .padding(.trailing, 8)
-            }
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
-                    ForEach(groupFilters) { filter in
-                        let filterColor = filter.chipColor ?? chipColor
-                        Button(filter.label) {
-                            activeFilterId = (activeFilterId == filter.id) ? nil : filter.id
+                    if !active.isEmpty {
+                        FlowLayout(spacing: 4) {
+                            ForEach(active) { filter in
+                                PickerRemovableChip(label: filter.label, color: groupColor) {
+                                    activeFilterIds.remove(filter.id)
+                                }
+                            }
                         }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
-                        .background(
-                            activeFilterId == filter.id
-                                ? filterColor.opacity(0.2)
-                                : Color.secondary.opacity(0.1),
-                            in: Capsule()
-                        )
-                        .foregroundStyle(activeFilterId == filter.id ? filterColor : Color.primary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        Spacer(minLength: 0)
                     }
                 }
-                .padding(.horizontal, 10)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
     }
 
     private func orderedGroups(from filters: [PickerFilter<Item>]) -> [(name: String?, filters: [PickerFilter<Item>])] {
@@ -531,6 +538,99 @@ extension FuzzyPickerField {
             get: { selectedItem.wrappedValue.map { [$0] } ?? [] },
             set: { selectedItem.wrappedValue = $0.first }
         )
+    }
+}
+
+// MARK: - Filter group selector
+//
+// One compact dropdown per filter group. Tapping opens a searchable, multi-select list (same
+// visual language as the main picker) so long option lists — e.g. institutions — stay tidy and
+// searchable instead of overflowing a horizontal chip row. Values within a group combine with OR.
+private struct FilterGroupSelector<Item>: View {
+    let name: String?
+    let groupFilters: [PickerFilter<Item>]
+    let defaultColor: Color
+    @Binding var activeFilterIds: Set<String>
+
+    @State private var open = false
+    @State private var search = ""
+
+    private var color: Color { groupFilters.first?.chipColor ?? defaultColor }
+    private var activeInGroup: [PickerFilter<Item>] { groupFilters.filter { activeFilterIds.contains($0.id) } }
+    private var isActive: Bool { !activeInGroup.isEmpty }
+
+    private var matching: [PickerFilter<Item>] {
+        let q = search.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return groupFilters }
+        return groupFilters.filter { $0.label.lowercased().contains(q) }
+    }
+
+    var body: some View {
+        Button { open = true } label: {
+            HStack(spacing: 5) {
+                Text(name ?? "Filter")
+                    .font(.caption)
+                    .lineLimit(1)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 4)
+            .background(Color.secondary.opacity(0.12), in: Capsule())
+            .foregroundStyle(.primary)
+        }
+        .buttonStyle(.plain)
+        .popover(isPresented: $open, arrowEdge: .bottom) {
+            listPopover
+        }
+    }
+
+    private var listPopover: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.caption).foregroundStyle(.secondary)
+                TextField("Search…", text: $search)
+                    .textFieldStyle(.plain)
+                    .font(.callout)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            Divider()
+            ScrollView {
+                VStack(spacing: 0) {
+                    ForEach(matching) { filter in
+                        let on = activeFilterIds.contains(filter.id)
+                        Button {
+                            if on { activeFilterIds.remove(filter.id) } else { activeFilterIds.insert(filter.id) }
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: on ? "checkmark.circle.fill" : "circle")
+                                    .foregroundStyle(on ? color : Color.secondary)
+                                Text(filter.label).font(.callout)
+                                Spacer(minLength: 0)
+                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 7)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        Divider().padding(.leading, 10)
+                    }
+                }
+            }
+            .frame(maxHeight: 240)
+            if isActive {
+                Divider()
+                Button {
+                    for f in groupFilters { activeFilterIds.remove(f.id) }
+                } label: {
+                    Text("Clear \(name ?? "filter")").font(.caption).foregroundStyle(AppTheme.accent)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 7)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(minWidth: 220, maxHeight: 340)
     }
 }
 
