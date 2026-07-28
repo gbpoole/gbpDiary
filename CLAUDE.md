@@ -125,19 +125,19 @@ TaskTimeEntry                (a single logged time entry; used in Activity secti
   comment   : String?
   sortOrder : Int
   task     → Task?           (no @Relationship — Task side declares the inverse)
-  focusBlock→ FocusBlock?    (vestigial/unused — block membership is derived from `date` at the view layer via FocusBlockAssignment.containingBlock, never stored)
+  NOTE: no focusBlock relationship — block membership is derived from `date` at the view layer via FocusBlockAssignment.containingBlock, never stored.
 
 FocusBlock                   (a primary work block for a day; shown in Activity section)
-  duration  : Duration       (explicitly entered total time)
+  duration  : Duration       (explicitly entered total time / capacity)
   slot      : DaySlot        (allDay | morning | afternoon | evening; default allDay)
   startTime : Date?          (evening block's flexible start; nil otherwise; default 18:00)
+  comment   : String?        (optional free-text note, like TaskTimeEntry.comment; shown in the block row + editor)
   sortOrder : Int
   task     → Task?           (backed by a task; nil if project-backed)
   project  → Project?        (backed by a project; nil if task-backed)
   dayRecord→ DayRecord?      (owning day)
-  activities → [TaskTimeEntry]  nullify ↔ TaskTimeEntry.focusBlock
-  displayLabel: String       (task.summary ?? project.name ?? "Focus block")
-  netHours: Double           (duration.hoursNormalized − sum of activities)
+  displayLabel: String       (task.summary ?? project.name ?? slot name)
+  NOTE: FocusBlock stores no child-entry relationship; its activities are the time-derived entries (FocusBlockAssignment). Net-remaining is a view-level calc — FocusBlockMath.netHours(capacity:loggedHours:) = max(0, capacity − loggedHours) — over those entries + meetings (FocusBlockRow).
 
 DayEntry                     (a single diary block for one day)
   kind      : DayEntryKind   (.note | .task | .meeting)
@@ -421,7 +421,7 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Inbox filter: status todo/started, parent == nil, project == nil, assignee == nil | Day view sidebar | gbpDiaryTests/Domain/DayTaskFilteringTests.swift | `inbox_includesUnassignedTopLevelActiveTasks`, `inbox_includesStartedButExcludesOtherStatuses` |
 | notesId derives a stable focus ID by bit-complementing all 16 UUID bytes; result is its own inverse and never collides with organic UUIDs | Inline task notes / meeting minutes | gbpDiaryTests/Models/DayEntryContentTests.swift | (tested indirectly via `notesAreaFocusId` usage) |
 | `entriesInRange` filters `TaskTimeEntry` objects whose `date` falls within the interval; `totalHours(entries:)` sums their `hoursNormalized` | Timesheet entry-based aggregation | gbpDiaryTests/Domain/TimesheetComputationTests.swift | `entriesInRange_filtersCorrectly`, `totalHours_entries_sumsHours` |
-| `FocusBlock.netHours` = max(0, block.duration.hoursNormalized − sum of activity durations) | Activity section | `gbpDiaryTests/Models/FocusBlockTests.swift` | `focusBlock_netHours_subtractsActivities`, `focusBlock_netHours_clampsToZero` |
+| `FocusBlockMath.netHours(capacity:loggedHours:)` = max(0, capacity − loggedHours); the view sums time-derived entry + meeting hours as `loggedHours` (FocusBlock stores no child-entry relationship) | Activity section | `gbpDiaryTests/Models/FocusBlockTests.swift` | `focusBlockMath_netHours_subtractsLogged`, `focusBlockMath_netHours_clampsToZero` |
 | Meeting slot classification: morning = start < 12:30; afternoon = end ≥ 12:30; no-duration meeting is a point in time; spanning-boundary meeting appears in both slots | Activity section / `MeetingSlotClassifier` | `gbpDiaryTests/Domain/MeetingSlotTests.swift` | `slots_morningOnly_noDuration`, `slots_afternoonOnly_noduration`, `slots_spansNoon_morningStartLongDuration`, `slots_morningOnly_shortDurationEndsBeforeNoon`, `slots_before1230_isMorning`, `slots_exactlyAt1230_isAfternoon`, `slots_endsExactlyAt1230_spansBoundary` |
 | Entry slot classification: before 12:30 → morning; ≥ 12:30 → afternoon; ≥ evening start → evening only when an evening block exists (flexible start); evening has no capacity and is overtime | Focus blocks / `DaySlotClassifier` | `gbpDiaryTests/Domain/DaySlotClassifierTests.swift` | `before1230_isMorning`, `atOrAfter1230_isAfternoon`, `withoutEveningBlock_lateTimeStaysAfternoon`, `withEveningBlock_afterStartIsEvening`, `flexibleEveningStart_isRespected`, `daySlot_evening_hasNoStandardCapacity_andIsOvertime` |
 | `FocusBlockAssignment.containingBlock` attaches an entry to the block whose range contains its time (evening wins; morning/afternoon fall back to all-day), or nil (standalone) when none covers it; never creates blocks | Focus blocks / activity grouping | `gbpDiaryTests/Models/FocusBlockTests.swift` | `containingBlock_matchesSlotByTime`, `containingBlock_fallsBackToAllDay`, `containingBlock_eveningWinsAfterItsStart`, `containingBlock_nilWhenOutOfRange` |

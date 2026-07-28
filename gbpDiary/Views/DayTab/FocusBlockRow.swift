@@ -18,7 +18,8 @@ struct FocusBlockRow: View {
         let taskHours = entries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
         let meetingHours = meetings.compactMap(\.minutes).compactMap(\.duration)
             .reduce(0.0) { $0 + $1.hoursNormalized }
-        return max(0, block.duration.hoursNormalized - taskHours - meetingHours)
+        return FocusBlockMath.netHours(capacity: block.duration.hoursNormalized,
+                                       loggedHours: taskHours + meetingHours)
     }
 
     @State private var isCollapsed = false
@@ -49,6 +50,12 @@ struct FocusBlockRow: View {
                 Text(block.displayLabel)
                     .font(.subheadline)
                     .fontWeight(.medium)
+                if let comment = block.comment, !comment.isEmpty {
+                    Text(comment)
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.mutedText)
+                        .lineLimit(1)
+                }
                 Spacer(minLength: 0)
                 durationChips
             }

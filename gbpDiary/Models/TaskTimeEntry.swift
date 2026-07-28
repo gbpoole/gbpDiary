@@ -9,9 +9,9 @@ import SwiftData
     var sortOrder: Int
     var createdAt: Date
 
-    // Singular-side relationships — collection side declares @Relationship(inverse:)
+    // Singular-side relationship — Task declares the inverse. Block membership is derived by time
+    // at the view layer (FocusBlockAssignment), never stored.
     var task: Task?
-    var focusBlock: FocusBlock?
 
     init(date: Date, duration: Duration, comment: String? = nil,
          sortOrder: Int = 0, id: UUID = UUID()) {

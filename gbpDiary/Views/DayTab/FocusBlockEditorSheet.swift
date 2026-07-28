@@ -38,6 +38,7 @@ struct FocusBlockEditorSheet: View {
     @State private var selectedTask: Task?
     @State private var selectedProject: Project?
     @State private var eveningStart: Date = Date()
+    @State private var comment = ""
     @State private var showingDeleteConfirm = false
 
     private func defaultEveningStart() -> Date {
@@ -58,6 +59,7 @@ struct FocusBlockEditorSheet: View {
                             projectSection
                         }
                     }
+                    commentSection
                 }
                 .padding()
             }
@@ -125,6 +127,14 @@ struct FocusBlockEditorSheet: View {
         }
     }
 
+    private var commentSection: some View {
+        GroupBox("Comment") {
+            TextField("Optional note", text: $comment)
+                .textFieldStyle(.plain)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private var slotSection: some View {
         GroupBox("Time Slot") {
             VStack(alignment: .leading, spacing: 10) {
@@ -169,6 +179,7 @@ struct FocusBlockEditorSheet: View {
             return
         }
         selectedSlot = block.slot
+        comment = block.comment ?? ""
         if let start = block.startTime { eveningStart = start }
         if let t = block.task {
             source = .task
@@ -194,6 +205,7 @@ struct FocusBlockEditorSheet: View {
 
         block.duration = duration
         block.slot = selectedSlot
+        block.comment = comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : comment
         block.startTime = selectedSlot == .evening ? eveningStart : nil
         if selectedSlot == .evening {
             block.task = nil

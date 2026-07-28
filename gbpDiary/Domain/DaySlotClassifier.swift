@@ -37,3 +37,12 @@ enum FocusBlockAssignment {
         return blocks.first(where: { $0.slot == .allDay })
     }
 }
+
+// Focus-block capacity math. Net-remaining = the block's capacity minus the hours logged into it
+// (its time-derived entries plus any meetings), clamped to zero. Pure so it can be unit-tested;
+// the block's activities are never stored (membership is derived by time — FocusBlockAssignment).
+enum FocusBlockMath {
+    static func netHours(capacity: Double, loggedHours: Double) -> Double {
+        max(0, capacity - loggedHours)
+    }
+}

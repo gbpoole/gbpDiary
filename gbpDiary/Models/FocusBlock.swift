@@ -10,14 +10,13 @@ import SwiftData
     var createdAt: Date
     // Flexible wall-clock start for an evening block (nil for other slots). Default 18:00.
     var startTime: Date?
+    // Optional free-text note for the block (like a TaskTimeEntry comment).
+    var comment: String? = nil
 
     // Singular-side relationships — collection side declares @Relationship(inverse:)
     var task: Task?
     var project: Project?
     var dayRecord: DayRecord?
-
-    @Relationship(deleteRule: .nullify, inverse: \TaskTimeEntry.focusBlock)
-    var activities: [TaskTimeEntry]
 
     var slot: DaySlot {
         get { slotRaw ?? .allDay }
@@ -30,22 +29,15 @@ import SwiftData
 
     var isOvertime: Bool { slot.isOvertime }
 
-    // Hours logged against this block (its activities). Used as overtime for evening blocks.
-    var loggedHours: Double {
-        activities.reduce(0.0) { $0 + $1.duration.hoursNormalized }
-    }
+    // Net-remaining is computed at the view layer from the block's time-derived entries — see
+    // FocusBlockMath.netHours and FocusBlockRow. Membership is never stored (FocusBlockAssignment).
 
-    var netHours: Double {
-        let spent = activities.reduce(0.0) { $0 + $1.duration.hoursNormalized }
-        return max(0, duration.hoursNormalized - spent)
-    }
-
-    init(duration: Duration, slot: DaySlot = .allDay, sortOrder: Int = 0, id: UUID = UUID()) {
+    init(duration: Duration, slot: DaySlot = .allDay, comment: String? = nil, sortOrder: Int = 0, id: UUID = UUID()) {
         self.id = id
         self.duration = duration
         self.slotRaw = slot == .allDay ? nil : slot
+        self.comment = comment
         self.sortOrder = sortOrder
         self.createdAt = Date()
-        self.activities = []
     }
 }

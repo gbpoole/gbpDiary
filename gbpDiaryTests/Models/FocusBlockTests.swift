@@ -5,21 +5,14 @@ import Foundation
 @MainActor
 struct FocusBlockTests {
 
-    // MARK: - netHours
+    // MARK: - netHours (FocusBlockMath — block membership/logged hours are derived at the view layer)
 
-    @Test func focusBlock_netHours_subtractsActivities() {
-        let block = FocusBlock(duration: Duration(value: 2, unit: .h))
-        let e1 = TaskTimeEntry(date: FixedDates.reference, duration: Duration(value: 0.5, unit: .h))
-        let e2 = TaskTimeEntry(date: FixedDates.reference, duration: Duration(value: 0.5, unit: .h))
-        block.activities = [e1, e2]
-        #expect(block.netHours == 1.0)
+    @Test func focusBlockMath_netHours_subtractsLogged() {
+        #expect(FocusBlockMath.netHours(capacity: 2.0, loggedHours: 1.0) == 1.0)
     }
 
-    @Test func focusBlock_netHours_clampsToZero() {
-        let block = FocusBlock(duration: Duration(value: 1, unit: .h))
-        let e = TaskTimeEntry(date: FixedDates.reference, duration: Duration(value: 2, unit: .h))
-        block.activities = [e]
-        #expect(block.netHours == 0.0)
+    @Test func focusBlockMath_netHours_clampsToZero() {
+        #expect(FocusBlockMath.netHours(capacity: 1.0, loggedHours: 2.0) == 0.0)
     }
 
     // MARK: - displayLabel
