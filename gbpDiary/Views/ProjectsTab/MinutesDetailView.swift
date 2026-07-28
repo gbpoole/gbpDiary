@@ -393,6 +393,15 @@ struct MinutesDetailView: View {
 
 }
 
+/// Seed values for a new meeting created from a macOS Calendar event. Attendees are carried
+/// as unresolved drafts and materialized (matched or created) only when the user taps Add.
+struct MinutesEditorPrefill {
+    var summary: String?
+    var duration: Duration?
+    var meetingAt: Date
+    var attendeeDrafts: [CalendarAttendee]
+}
+
 struct MinutesEditorSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -402,6 +411,10 @@ struct MinutesEditorSheet: View {
     /// Date whose calendar day is used when creating a new meeting.
     /// Only the day portion is used; the time is set to the nearest quarter-hour.
     var presetDate: Date = Date()
+    /// When set, seeds a new meeting from a calendar event (summary/time/duration/attendees).
+    var prefill: MinutesEditorPrefill? = nil
+    /// When set (diary import), the newly created meeting is linked to this day via a `DayEntry`.
+    var dayRecord: DayRecord? = nil
 
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Query(sort: \Person.name) private var allPeople: [Person]
@@ -412,6 +425,8 @@ struct MinutesEditorSheet: View {
     @State private var durationError = false
     @State private var selectedProjects: [Project] = []
     @State private var selectedAttendees: [Person] = []
+    // Calendar attendees with no existing People match — created in save(), shown as "new" chips.
+    @State private var pendingNewAttendees: [CalendarAttendee] = []
 
     private var attendeesPicker: some View {
         let projectFilters: [PickerFilter<Person>] = selectedProjects.map { project in
@@ -448,10 +463,12 @@ struct MinutesEditorSheet: View {
     }
 
     // Create a new Person on the fly while adding attendees (auto-added to the selection).
-    private func makePerson(_ name: String) -> Person? {
+    // An optional email is set when importing an attendee from a calendar event.
+    private func makePerson(_ name: String, email: String? = nil) -> Person? {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         let person = Person(name: trimmed)
+        if let email, !email.isEmpty { person.email = email }
         modelContext.insert(person)
         return person
     }
@@ -513,6 +530,29 @@ struct MinutesEditorSheet: View {
 
                 Section("Attendees") {
                     attendeesPicker
+                    if !pendingNewAttendees.isEmpty {
+                        // Calendar attendees not yet in the app — created when you tap Add.
+                        FlowLayout(spacing: 4) {
+                            ForEach(pendingNewAttendees.indices, id: \.self) { i in
+                                let attendee = pendingNewAttendees[i]
+                                Button {
+                                    pendingNewAttendees.remove(at: i)
+                                } label: {
+                                    HStack(spacing: 3) {
+                                        Text("\(attendee.name) (new)")
+                                        Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                                    }
+                                    .font(.caption)
+                                    .padding(.horizontal, 8).padding(.vertical, 3)
+                                    .background(AppTheme.chipBackground(AppTheme.person))
+                                    .foregroundStyle(AppTheme.person)
+                                    .overlay(Capsule().stroke(AppTheme.person.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [3])))
+                                    .clipShape(Capsule())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                    }
                 }
 
                 Section("Date & Time") {
@@ -540,7 +580,14 @@ struct MinutesEditorSheet: View {
                 selectedProjects = m.projects
                 selectedAttendees = m.attendees
             } else {
-                meetingAt = Self.nearestQuarterHourOn(presetDate)
+                if let prefill {
+                    meetingAt = prefill.meetingAt
+                    summary = prefill.summary ?? ""
+                    durationText = prefill.duration.map(Self.durationText(for:)) ?? ""
+                    applyPrefillAttendees(prefill.attendeeDrafts)
+                } else {
+                    meetingAt = Self.nearestQuarterHourOn(presetDate)
+                }
                 if let p = project { selectedProjects = [p] }
             }
         }
@@ -560,6 +607,13 @@ struct MinutesEditorSheet: View {
             parsedDuration = d
         }
 
+        // Materialize any imported calendar attendees that had no existing People match.
+        var attendees = selectedAttendees
+        for draft in pendingNewAttendees {
+            if let person = makePerson(draft.name, email: draft.email) { attendees.append(person) }
+        }
+
+        let isNew = minutes == nil
         let m = minutes ?? {
             let new = Minutes(meetingAt: meetingAt)
             modelContext.insert(new)
@@ -569,9 +623,47 @@ struct MinutesEditorSheet: View {
         m.summary = summary.isEmpty ? nil : summary
         m.duration = parsedDuration
         m.projects = selectedProjects
-        m.attendees = selectedAttendees
+        m.attendees = attendees
         m.updatedAt = Date()
+
+        // When created from the diary, link the meeting to that day (mirrors ActivitySection.addMeeting()).
+        if isNew, let dayRecord {
+            let entry = DayEntry(kind: .meeting, text: "",
+                                 sortOrder: (dayRecord.entries.map(\.sortOrder).max() ?? -1) + 1)
+            entry.minutes = m
+            entry.dayRecord = dayRecord
+            modelContext.insert(entry)
+        }
         dismiss()
+    }
+
+    // Resolve calendar attendees against existing People: matched become selected chips,
+    // unmatched are held for creation in save() and shown as "new" chips.
+    private func applyPrefillAttendees(_ drafts: [CalendarAttendee]) {
+        let refs = allPeople.map { PersonRef(id: $0.id, name: $0.name, email: $0.email) }
+        var matched: [Person] = []
+        var toCreate: [CalendarAttendee] = []
+        for resolution in AttendeeMatcher.resolve(attendees: drafts, against: refs) {
+            switch resolution {
+            case .matched(let id):
+                if let person = allPeople.first(where: { $0.id == id }) { matched.append(person) }
+            case .create(let name, let email):
+                toCreate.append(CalendarAttendee(name: name, email: email))
+            }
+        }
+        selectedAttendees = matched
+        pendingNewAttendees = toCreate
+    }
+
+    // Formats a duration into a clean, round-trippable hours string (e.g. "1.5h", "0.25h", "1h"),
+    // avoiding displayString's single-decimal rounding that would distort e.g. 15-minute meetings.
+    private static func durationText(for duration: Duration) -> String {
+        let v = duration.hoursNormalized
+        if v == v.rounded() { return "\(Int(v))h" }
+        var s = String(format: "%.2f", v)
+        while s.hasSuffix("0") { s.removeLast() }
+        if s.hasSuffix(".") { s.removeLast() }
+        return "\(s)h"
     }
 
     /// Returns the nearest quarter-hour to the current clock time, placed on `date`'s calendar day.
