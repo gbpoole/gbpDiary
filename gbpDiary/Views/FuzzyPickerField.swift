@@ -15,6 +15,24 @@ struct PickerFilter<Item>: Identifiable {
     let test: (Item) -> Bool
 }
 
+// MARK: - Selection semantics (pure, testable)
+
+/// Pure selection-mutation rules shared by the picker's item taps and its create-on-the-fly row.
+/// Kept free of SwiftUI so the single- vs multi-select behavior can be unit tested directly.
+enum FuzzyPickerSelection {
+    /// The new selection after toggling `item` in `current`: remove it if already present
+    /// (matched by `id`); otherwise add it. Single-select (`maxSelections == 1`) replaces the
+    /// whole selection; multi-select appends only while under the cap, else leaves it unchanged.
+    static func toggling<Item: Identifiable>(_ item: Item, in current: [Item], maxSelections: Int) -> [Item] {
+        if current.contains(where: { $0.id == item.id }) {
+            return current.filter { $0.id != item.id }
+        }
+        if maxSelections == 1 { return [item] }
+        if current.count < maxSelections { return current + [item] }
+        return current
+    }
+}
+
 // MARK: - FuzzyPickerField
 
 /// A reusable search-filter selector with chips for selected items.
@@ -160,7 +178,6 @@ struct FuzzyPickerField<Item: Identifiable>: View {
             dismiss: { popoverIsOpen.wrappedValue = false }
         )
         .frame(width: 340)
-        .frame(maxHeight: 320)
     }
 }
 
@@ -212,21 +229,13 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
     }
 
     private func toggle(_ item: Item) {
-        if isSelected(item) {
-            localSelected.removeAll { $0.id == item.id }
-        } else {
-            if maxSelections == 1 {
-                localSelected = [item]
-                selected = localSelected
-                dismiss()
-                return
-            } else if localSelected.count < maxSelections {
-                localSelected.append(item)
-            }
-        }
+        let wasSelected = isSelected(item)
+        localSelected = FuzzyPickerSelection.toggling(item, in: localSelected, maxSelections: maxSelections)
         selected = localSelected
         searchText = ""
         highlightedIndex = nil
+        // Single-select closes the popover once a choice is made (not on deselect).
+        if !wasSelected && maxSelections == 1 { dismiss() }
     }
 
     private func moveHighlight(by delta: Int) {
@@ -245,8 +254,15 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
               !localSelected.contains(where: { label($0) == trimmed }),
               let newItem = onCreateItem?(trimmed) else { return }
         if autoSelectOnCreate, !localSelected.contains(where: { $0.id == newItem.id }) {
-            localSelected.append(newItem)
+            localSelected = FuzzyPickerSelection.toggling(newItem, in: localSelected, maxSelections: maxSelections)
             selected = localSelected
+            // Single-select: mirror toggle() and close once the created item is chosen.
+            if maxSelections == 1 {
+                searchText = ""
+                highlightedIndex = nil
+                dismiss()
+                return
+            }
         }
         searchText = ""
         highlightedIndex = nil
@@ -310,76 +326,63 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
                 || !searchText.isEmpty
                 || (createLabel != nil && onCreate != nil)
 
-            // Selected items (multi-select only) — pinned above the scrollable list,
-            // scrollable so a large selection doesn't crowd out the item list.
-            // Cursor navigation skips this section entirely.
+            // Selected items (multi-select only) — hug the content; scroll only when the selection
+            // is long. No greedy fill, so the popover stays content-sized in every state.
             if maxSelections != 1 && !localSelected.isEmpty {
                 let selectedRows = VStack(spacing: 0) {
                     ForEach(localSelected) { item in
                         selectedItemRow(item)
                     }
                 }
-                if !hasListContent {
-                    // No options list to show (e.g. everything selected) — let the selected
-                    // section expand into that space so the popover keeps the same overall
-                    // height instead of shrinking and re-centering on its anchor.
-                    ScrollView { selectedRows }.frame(maxHeight: .infinity)
-                } else if localSelected.count > 4 {
-                    // Cap and scroll a long selection so it doesn't crowd out the item list.
+                if localSelected.count > 4 {
                     ScrollView { selectedRows }.frame(maxHeight: 120)
                 } else {
-                    // Short selection with a list below — hug the content so there's no gap.
                     selectedRows
                 }
                 if hasListContent { Divider() }
             }
 
-            // Filterable list — only rendered when there is something to show so that
-            // the flexible ScrollView doesn't consume space when empty.
+            // Filterable list — hug a short list; scroll (capped) only when it's long. Sizing to the
+            // content avoids the empty area a greedy ScrollView reserved when the list was short
+            // (e.g. the attendees picker's default project filter narrows to just a few people).
             if hasListContent {
-                ScrollView {
-                    VStack(spacing: 0) {
-                        // Suppress "no results" when the create row will appear — it's self-explanatory.
-                        let createRowWillShow = onCreateItem != nil
-                            && !trimmedSearch.isEmpty
-                            && !localSelected.contains(where: { label($0) == trimmedSearch })
-                        if filteredItems.isEmpty && !searchText.isEmpty && !createRowWillShow {
-                            Text("No results matching \"\(searchText)\"")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .padding(.vertical, 10)
-                                .frame(maxWidth: .infinity)
-                        } else {
-                            ForEach(Array(filteredItems.enumerated()), id: \.element.id) { idx, item in
-                                itemRow(item, highlighted: highlightedIndex == idx)
-                                if idx < filteredItems.count - 1 {
-                                    Divider().padding(.leading, 10)
-                                }
+                let listRows = VStack(spacing: 0) {
+                    // Suppress "no results" when the create row will appear — it's self-explanatory.
+                    let createRowWillShow = onCreateItem != nil
+                        && !trimmedSearch.isEmpty
+                        && !localSelected.contains(where: { label($0) == trimmedSearch })
+                    if filteredItems.isEmpty && !searchText.isEmpty && !createRowWillShow {
+                        Text("No results matching \"\(searchText)\"")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .padding(.vertical, 10)
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        ForEach(Array(filteredItems.enumerated()), id: \.element.id) { idx, item in
+                            itemRow(item, highlighted: highlightedIndex == idx)
+                            if idx < filteredItems.count - 1 {
+                                Divider().padding(.leading, 10)
                             }
-                        }
-                        if let onCreateItem {
-                            if !trimmedSearch.isEmpty, !localSelected.contains(where: { label($0) == trimmedSearch }) {
-                                if !filteredItems.isEmpty { Divider().padding(.leading, 10) }
-                                createRow(label: "Add \"\(trimmedSearch)\"") {
-                                    if let newItem = onCreateItem(trimmedSearch) {
-                                        if autoSelectOnCreate,
-                                           !localSelected.contains(where: { $0.id == newItem.id }) {
-                                            localSelected.append(newItem)
-                                            selected = localSelected
-                                        }
-                                    }
-                                    searchText = ""
-                                    highlightedIndex = nil
-                                }
-                            }
-                        }
-                        if let createLabel, let onCreate {
-                            if !filteredItems.isEmpty || searchText.isEmpty { Divider() }
-                            createRow(label: createLabel, action: onCreate)
                         }
                     }
+                    if onCreateItem != nil {
+                        if !trimmedSearch.isEmpty, !localSelected.contains(where: { label($0) == trimmedSearch }) {
+                            if !filteredItems.isEmpty { Divider().padding(.leading, 10) }
+                            createRow(label: "Add \"\(trimmedSearch)\"") {
+                                commitCreate(text: trimmedSearch)
+                            }
+                        }
+                    }
+                    if let createLabel, let onCreate {
+                        if !filteredItems.isEmpty || searchText.isEmpty { Divider() }
+                        createRow(label: createLabel, action: onCreate)
+                    }
                 }
-                .frame(maxHeight: 220)
+                if filteredItems.count > 6 {
+                    ScrollView { listRows }.frame(maxHeight: 220)
+                } else {
+                    listRows
+                }
             }
         }
         .onAppear {

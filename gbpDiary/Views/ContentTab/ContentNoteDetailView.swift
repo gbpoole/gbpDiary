@@ -95,9 +95,19 @@ struct ContentNoteDetailView: View {
             ),
             label: { $0.name },
             chipColor: AppTheme.project,
+            onCreateItem: { makeProject($0) },
             tapArea: true,
             emptyLabel: "None — tap to link project"
         )
+    }
+
+    // Create a new Project on the fly while linking one (auto-selected).
+    private func makeProject(_ projectName: String) -> Project? {
+        let trimmed = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let project = Project(name: trimmed)
+        modelContext.insert(project)
+        return project
     }
 
     private var availableTags: [ContentTagItem] {

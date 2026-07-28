@@ -251,6 +251,7 @@ private struct ProjectFilterPickerRow: View {
 }
 
 private struct TaskPickerRow: View {
+    @Environment(\.modelContext) private var modelContext
     @Query(sort: \Task.summary) private var allTasks: [Task]
     @Binding var selectedTask: Task?
     var projectFilter: Project?
@@ -329,10 +330,20 @@ private struct TaskPickerRow: View {
             selectedItem: $selectedTask,
             label: { $0.summary },
             chipColor: AppTheme.accent,
+            onCreateItem: { makeTask($0) },
             tapArea: true,
             emptyLabel: "None — tap to select task",
             filters: tagFilters.isEmpty ? nil : tagFilters,
             filterLeadContent: projectLeadContent
         )
+    }
+
+    // Create a new Task on the fly while selecting one to log time against (auto-selected).
+    private func makeTask(_ summary: String) -> Task? {
+        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let task = Task(summary: trimmed)
+        modelContext.insert(task)
+        return task
     }
 }

@@ -112,6 +112,7 @@ struct TaskEditorSheet: View {
                 selectedItem: $selectedProject,
                 label: { $0.name },
                 chipColor: AppTheme.project,
+                onCreateItem: { makeProject($0) },
                 tapArea: true,
                 emptyLabel: "None — tap to link project"
             )
@@ -149,6 +150,7 @@ struct TaskEditorSheet: View {
                 selectedItem: $selectedAssignee,
                 label: { $0.name },
                 chipColor: AppTheme.person,
+                onCreateItem: { makePerson($0) },
                 tapArea: true,
                 emptyLabel: "None — tap to assign",
                 filters: filters.isEmpty ? nil : filters,
@@ -254,6 +256,24 @@ struct TaskEditorSheet: View {
         guard let t = task else { return }
         modelContext.delete(t)
         dismiss()
+    }
+
+    // Create a new Project on the fly while linking one (auto-selected).
+    private func makeProject(_ projectName: String) -> Project? {
+        let trimmed = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let project = Project(name: trimmed)
+        modelContext.insert(project)
+        return project
+    }
+
+    // Create a new Person on the fly while assigning (auto-selected).
+    private func makePerson(_ personName: String) -> Person? {
+        let trimmed = personName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let person = Person(name: trimmed)
+        modelContext.insert(person)
+        return person
     }
 
     private func save() {

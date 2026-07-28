@@ -117,7 +117,8 @@ struct DocumentEditorSheet: View {
                         allItems: allProjects,
                         selected: $selectedProjects,
                         label: \.name,
-                        chipColor: AppTheme.project
+                        chipColor: AppTheme.project,
+                        onCreateItem: { makeProject($0) }
                     )
                 }
             }
@@ -139,6 +140,15 @@ struct DocumentEditorSheet: View {
         #if os(macOS)
         .frame(minWidth: 400, minHeight: 320)
         #endif
+    }
+
+    // Create a new Project on the fly while linking one (auto-added to the selection).
+    private func makeProject(_ projectName: String) -> Project? {
+        let trimmed = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let project = Project(name: trimmed)
+        modelContext.insert(project)
+        return project
     }
 
     private func save() {

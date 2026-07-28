@@ -184,6 +184,7 @@ struct ProjectEditorSheet: View {
                         ),
                         label: \.name,
                         chipColor: AppTheme.person,
+                        onCreateItem: { makePerson($0) },
                         filters: institutionFilters
                     )
                     if !selectedDevPeople.isEmpty {
@@ -209,6 +210,7 @@ struct ProjectEditorSheet: View {
                         ),
                         label: \.name,
                         chipColor: AppTheme.person,
+                        onCreateItem: { makePerson($0) },
                         filters: institutionFilters
                     )
                     if !selectedSciPeople.isEmpty {
@@ -246,6 +248,15 @@ struct ProjectEditorSheet: View {
         #if os(macOS)
         .frame(minWidth: 400, minHeight: 500)
         #endif
+    }
+
+    // Create a new Person on the fly while picking team members (auto-added to the selection).
+    private func makePerson(_ personName: String) -> Person? {
+        let trimmed = personName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let person = Person(name: trimmed)
+        modelContext.insert(person)
+        return person
     }
 
     private func save() {

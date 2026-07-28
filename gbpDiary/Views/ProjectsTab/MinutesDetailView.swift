@@ -323,11 +323,21 @@ struct MinutesDetailView: View {
             ),
             label: \.name,
             chipColor: AppTheme.person,
+            onCreateItem: { makePerson($0) },
             tapArea: true,
             emptyLabel: "None selected — tap to add attendees",
             filters: allFilters.isEmpty ? nil : allFilters,
             defaultFilterId: projectFilters.first?.id
         )
+    }
+
+    // Create a new Person on the fly while picking attendees (auto-added to the selection).
+    private func makePerson(_ name: String) -> Person? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let person = Person(name: trimmed)
+        modelContext.insert(person)
+        return person
     }
 
     private var projectsField: some View {
@@ -339,9 +349,19 @@ struct MinutesDetailView: View {
             ),
             label: \.name,
             chipColor: AppTheme.project,
+            onCreateItem: { makeProject($0) },
             tapArea: true,
             emptyLabel: "None selected — tap to link projects"
         )
+    }
+
+    // Create a new Project on the fly while linking one (auto-added to the selection).
+    private func makeProject(_ projectName: String) -> Project? {
+        let trimmed = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let project = Project(name: trimmed)
+        modelContext.insert(project)
+        return project
     }
 
     private var notesSection: some View {
@@ -420,9 +440,28 @@ struct MinutesEditorSheet: View {
             selected: $selectedAttendees,
             label: \.name,
             chipColor: AppTheme.person,
+            onCreateItem: { makePerson($0) },
             filters: allFilters.isEmpty ? nil : allFilters,
             defaultFilterId: projectFilters.first?.id
         )
+    }
+
+    // Create a new Person on the fly while adding attendees (auto-added to the selection).
+    private func makePerson(_ name: String) -> Person? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let person = Person(name: trimmed)
+        modelContext.insert(person)
+        return person
+    }
+
+    // Create a new Project on the fly while linking one (auto-added to the selection).
+    private func makeProject(_ projectName: String) -> Project? {
+        let trimmed = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let project = Project(name: trimmed)
+        modelContext.insert(project)
+        return project
     }
 
     var body: some View {
@@ -466,7 +505,8 @@ struct MinutesEditorSheet: View {
                         allItems: allProjects,
                         selected: $selectedProjects,
                         label: \.name,
-                        chipColor: AppTheme.project
+                        chipColor: AppTheme.project,
+                        onCreateItem: { makeProject($0) }
                     )
                 }
 

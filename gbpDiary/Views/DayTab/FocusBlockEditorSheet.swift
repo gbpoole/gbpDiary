@@ -121,6 +121,7 @@ struct FocusBlockEditorSheet: View {
                 selectedItem: $selectedProject,
                 label: { $0.name },
                 chipColor: AppTheme.project,
+                onCreateItem: { makeProject($0) },
                 tapArea: true,
                 emptyLabel: "None — tap to select project"
             )
@@ -166,6 +167,15 @@ struct FocusBlockEditorSheet: View {
     }
 
     // MARK: - Helpers
+
+    // Create a new Project on the fly while selecting one (auto-selected).
+    private func makeProject(_ projectName: String) -> Project? {
+        let trimmed = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let project = Project(name: trimmed)
+        modelContext.insert(project)
+        return project
+    }
 
     private var canSave: Bool {
         if selectedSlot == .evening { return true }   // container — no source required
@@ -224,6 +234,7 @@ struct FocusBlockEditorSheet: View {
 
 // Isolated so @Query task changes don't force a re-render of the whole sheet.
 private struct FocusBlockTaskPickerRow: View {
+    @Environment(\.modelContext) private var modelContext
     @Query(sort: \Task.summary) private var allTasks: [Task]
     @Binding var selectedTask: Task?
 
@@ -237,8 +248,18 @@ private struct FocusBlockTaskPickerRow: View {
             selectedItem: $selectedTask,
             label: { $0.summary },
             chipColor: AppTheme.completed,
+            onCreateItem: { makeTask($0) },
             tapArea: true,
             emptyLabel: "None — tap to select task"
         )
+    }
+
+    // Create a new Task on the fly while selecting one (auto-selected).
+    private func makeTask(_ summary: String) -> Task? {
+        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let task = Task(summary: trimmed)
+        modelContext.insert(task)
+        return task
     }
 }
