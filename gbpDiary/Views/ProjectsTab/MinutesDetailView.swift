@@ -370,7 +370,8 @@ struct MinutesDetailView: View {
                 MarkdownDocumentEditor(
                     note: note,
                     startInEdit: workspace.autoEditMinutesId == minutes.persistentModelID,
-                    onStartedEditing: { workspace.autoEditMinutesId = nil }
+                    onStartedEditing: { workspace.autoEditMinutesId = nil },
+                    showsHeader: false   // the meeting page header already shows project/tags
                 )
                 .padding(.horizontal, -12)
             } else if !isDeleted {
