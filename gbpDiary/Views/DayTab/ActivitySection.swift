@@ -261,6 +261,8 @@ private struct StandaloneMeetingRow: View {
                     .lineLimit(1)
                 Spacer(minLength: 8)
                 HStack(spacing: 4) {
+                    MeetingDeleteButton(minutes: minutes)
+                        .frame(width: 24, alignment: .center)
                     Group {
                         if let project = minutes.projects.first {
                             Chip(label: project.name, color: AppTheme.project)
