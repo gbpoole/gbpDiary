@@ -17,15 +17,12 @@ struct ActivitySection: View {
     var logTimeTrigger: Binding<Bool> = .constant(false)
     var focusBlockTrigger: Binding<Bool> = .constant(false)
     var meetingTrigger: Binding<Bool> = .constant(false)
-    var calendarImportTrigger: Binding<Bool> = .constant(false)
 
     @State private var showingAddFocusBlock = false
     @State private var showingLogTime = false
     @State private var selectedMeetingMinutes: Minutes?
     @State private var isNewMeeting = false
     @State private var editorDayRecord: DayRecord?
-    @State private var showingCalendarImport = false
-    @State private var importDraft: CalendarEventDraft?
 
     // @Query-driven so new blocks appear immediately without relationship-refresh lag.
     private var blocks: [FocusBlock] {
@@ -172,34 +169,6 @@ struct ActivitySection: View {
             .sheet(item: $selectedMeetingMinutes) { m in
                 MinutesDetailView(minutes: m, asSheet: true, isNew: isNewMeeting).presentationSizing(.fitted)
             }
-
-        #if os(macOS)
-        // Calendar import: pick an event, then open the editor pre-filled (on a separate anchor
-        // so the two sheets present sequentially rather than fighting over one presentation slot).
-        Color.clear
-            .frame(width: 0, height: 0)
-            .onChange(of: calendarImportTrigger.wrappedValue) { _, triggered in
-                guard triggered else { return }
-                showingCalendarImport = true
-                calendarImportTrigger.wrappedValue = false
-            }
-            .sheet(isPresented: $showingCalendarImport) {
-                CalendarEventPickerSheet(presetDate: date, onPick: { importDraft = $0 })
-            }
-
-        Color.clear
-            .frame(width: 0, height: 0)
-            .sheet(item: $importDraft) { draft in
-                let record = findOrCreateDayRecord?() ?? dayRecord
-                let md = CalendarEventImport.minutesDraft(from: draft)
-                MinutesEditorSheet(
-                    minutes: nil, project: nil, presetDate: draft.start,
-                    prefill: MinutesEditorPrefill(summary: md.summary, duration: md.duration,
-                                                  meetingAt: md.meetingAt, attendeeDrafts: draft.attendees),
-                    dayRecord: record
-                )
-            }
-        #endif
     }
 
     // MARK: - Activity header

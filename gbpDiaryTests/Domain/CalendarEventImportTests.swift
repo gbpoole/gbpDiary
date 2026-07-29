@@ -65,4 +65,21 @@ struct CalendarEventImportTests {
         let e = event(title: "Sync", start: start, end: date(hour: 10))
         #expect(CalendarEventImport.minutesDraft(from: e).meetingAt == start)
     }
+
+    @Test func sortedByProximity_ordersByDistanceFromReference() {
+        let now = date(hour: 12)
+        let near = event(title: "near", start: date(hour: 12, minute: 30), end: date(hour: 13)) // 30m away
+        let far = event(title: "far", start: date(hour: 9), end: date(hour: 10))                 // 3h away
+        let mid = event(title: "mid", start: date(hour: 13, minute: 30), end: date(hour: 14))    // 1.5h away
+        let sorted = CalendarEventImport.sortedByProximity([far, mid, near], to: now)
+        #expect(sorted.map(\.title) == ["near", "mid", "far"])
+    }
+
+    @Test func sortedByProximity_treatsPastAndFutureByAbsoluteDistance() {
+        let now = date(hour: 12)
+        let past = event(title: "past", start: date(hour: 11), end: date(hour: 11, minute: 30))  // 1h before
+        let future = event(title: "future", start: date(hour: 14), end: date(hour: 15))          // 2h after
+        let sorted = CalendarEventImport.sortedByProximity([future, past], to: now)
+        #expect(sorted.map(\.title) == ["past", "future"])
+    }
 }

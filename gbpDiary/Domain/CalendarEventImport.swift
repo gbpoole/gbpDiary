@@ -15,6 +15,8 @@ struct CalendarEventDraft: Identifiable, Equatable {
     var attendees: [CalendarAttendee]
     var organizerEmail: String?         // lowercased; nil when the event has no organizer
     var isAllDay: Bool
+    var calendarId: String = ""         // owning calendar's identifier (for per-calendar filtering)
+    var calendarTitle: String = ""      // owning calendar's display name
 }
 
 /// A single attendee snapshot. `email` is lowercased when present.
@@ -64,6 +66,17 @@ enum CalendarEventImport {
         guard seconds > 0 else { return nil }
         let hours = seconds / 3600.0
         return (hours * 100).rounded() / 100
+    }
+
+    /// Orders events by increasing distance of their start from `reference` (closest to "now"
+    /// first). Ties (equal distance) fall back to earlier start first.
+    static func sortedByProximity(_ events: [CalendarEventDraft], to reference: Date) -> [CalendarEventDraft] {
+        events.sorted { a, b in
+            let da = abs(a.start.timeIntervalSince(reference))
+            let db = abs(b.start.timeIntervalSince(reference))
+            if da == db { return a.start < b.start }
+            return da < db
+        }
     }
 }
 

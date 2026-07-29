@@ -38,7 +38,8 @@ final class CalendarService {
     }
 
     /// All events on `day` across every calendar, mapped to platform-neutral drafts and
-    /// sorted by start. Only meaningful when `access == .authorized`.
+    /// sorted by start. Only meaningful when `access == .authorized`. The picker applies its
+    /// own per-calendar filtering and proximity ordering on top of this.
     func events(on day: Date, calendar: Calendar = .current) -> [CalendarEventDraft] {
         let start = calendar.startOfDay(for: day)
         guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
@@ -77,7 +78,9 @@ final class CalendarService {
             end: event.endDate,
             attendees: attendees,
             organizerEmail: Self.email(from: event.organizer?.url),
-            isAllDay: event.isAllDay
+            isAllDay: event.isAllDay,
+            calendarId: event.calendar?.calendarIdentifier ?? "",
+            calendarTitle: event.calendar?.title ?? ""
         )
     }
 

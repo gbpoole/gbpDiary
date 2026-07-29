@@ -12,16 +12,6 @@ struct DayActionItem: Identifiable {
     let tooltip: String
     var isEnabled: Bool = true
     let action: () -> Void
-    /// When non-empty, the item opens a menu of these choices instead of firing `action`.
-    var menuItems: [DayActionMenuItem] = []
-}
-
-/// One choice within a `DayActionItem`'s dropdown menu.
-struct DayActionMenuItem: Identifiable {
-    let id: String
-    let title: String
-    let systemName: String
-    let action: () -> Void
 }
 
 // MARK: - macOS presentation: centered horizontal bar
@@ -35,26 +25,10 @@ struct DayActionBar: View {
                 Spacer()
                 HStack(spacing: 24) {
                     ForEach(items) { item in
-                        if item.menuItems.isEmpty {
-                            Button(action: item.action) { icon(item) }
-                                .buttonStyle(.plain)
-                                .help(item.tooltip)
-                                .disabled(!item.isEnabled)
-                        } else {
-                            Menu {
-                                ForEach(item.menuItems) { choice in
-                                    Button(action: choice.action) {
-                                        Label(choice.title, systemImage: choice.systemName)
-                                    }
-                                }
-                            } label: { icon(item) }
-                            .menuStyle(.button)
+                        Button(action: item.action) { icon(item) }
                             .buttonStyle(.plain)
-                            .menuIndicator(.hidden)
-                            .fixedSize()
                             .help(item.tooltip)
                             .disabled(!item.isEnabled)
-                        }
                     }
                 }
                 Spacer()

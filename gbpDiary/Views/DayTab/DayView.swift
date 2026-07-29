@@ -23,7 +23,6 @@ struct DayPageContent: View {
     @Environment(DiaryState.self) private var diaryState: DiaryState?
     @State private var showingAddTask = false
     @State private var activityMeetingTrigger = false
-    @State private var activityCalendarImportTrigger = false
     @State private var activityLogTimeTrigger = false
     @State private var activityFocusBlockTrigger = false
     @State private var editingTask: Task?
@@ -108,27 +107,11 @@ struct DayPageContent: View {
     private var actionItems: [DayActionItem] {
         [
             DayActionItem(id: "focusblock", systemName: "scope",               color: AppTheme.tag,       tooltip: "Add focus block", isEnabled: canAddFocusBlock) { activityFocusBlockTrigger = true },
-            meetingActionItem,
+            DayActionItem(id: "meeting",    systemName: "calendar.badge.plus", color: AppTheme.project,   tooltip: "Add meeting")     { activityMeetingTrigger = true },
             DayActionItem(id: "logtime",    systemName: "timer",               color: AppTheme.duration,  tooltip: "Log time")        { activityLogTimeTrigger = true },
             DayActionItem(id: "task",       systemName: "checkmark.square",    color: AppTheme.completed, tooltip: "Add task")        { showingAddTask = true },
             DayActionItem(id: "note",       systemName: "square.and.pencil",   color: AppTheme.accent,    tooltip: "Add note")        { addNote() },
         ]
-    }
-
-    // On macOS the meeting action is a menu: a blank meeting, or one imported from the Calendar.
-    // iOS (no action bar yet) keeps the plain blank-meeting button.
-    private var meetingActionItem: DayActionItem {
-        #if os(macOS)
-        DayActionItem(id: "meeting", systemName: "calendar.badge.plus", color: AppTheme.project,
-                      tooltip: "Add meeting", action: { activityMeetingTrigger = true },
-                      menuItems: [
-                        DayActionMenuItem(id: "blank", title: "Blank meeting", systemName: "calendar") { activityMeetingTrigger = true },
-                        DayActionMenuItem(id: "calendar", title: "From Calendar…", systemName: "calendar.badge.plus") { activityCalendarImportTrigger = true },
-                      ])
-        #else
-        DayActionItem(id: "meeting", systemName: "calendar.badge.plus", color: AppTheme.project,
-                      tooltip: "Add meeting") { activityMeetingTrigger = true }
-        #endif
     }
 
     var body: some View {
@@ -147,8 +130,7 @@ struct DayPageContent: View {
                         findOrCreateDayRecord: findOrCreateDayRecord,
                         logTimeTrigger: $activityLogTimeTrigger,
                         focusBlockTrigger: $activityFocusBlockTrigger,
-                        meetingTrigger: $activityMeetingTrigger,
-                        calendarImportTrigger: $activityCalendarImportTrigger
+                        meetingTrigger: $activityMeetingTrigger
                     )
                     newTasksSection
                     completedTasksSection
