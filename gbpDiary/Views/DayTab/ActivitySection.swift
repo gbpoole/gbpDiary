@@ -167,7 +167,7 @@ struct ActivitySection: View {
         Color.clear
             .frame(width: 0, height: 0)
             .sheet(item: $selectedMeetingMinutes) { m in
-                MinutesDetailView(minutes: m, asSheet: true, isNew: isNewMeeting).presentationSizing(.fitted)
+                MinutesDetailView(minutes: m, asSheet: true, isNew: isNewMeeting)
             }
     }
 

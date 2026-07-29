@@ -76,7 +76,7 @@ struct ObsidianBundleImporter {
             let person = people[imported.id] ?? Person(name: imported.name, id: imported.id)
             if people[imported.id] == nil { context.insert(person); people[imported.id] = person }
             person.name = imported.name
-            person.email = emptyToNil(imported.email)
+            person.emails = emptyToNil(imported.email).map { [$0] } ?? []
             person.tags = imported.tags ?? []
             person.institution = imported.institutionId.flatMap { institutions[$0] }
             applyDates(created: imported.createdAt, updated: imported.updatedAt, to: person)

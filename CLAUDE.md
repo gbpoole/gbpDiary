@@ -172,6 +172,10 @@ Project
   focusBlocks  → [FocusBlock] nullify ↔ FocusBlock.project
 
 Person
+  email        : String?         (LEGACY; migrated into `emails` on first launch then nil — do not read)
+  emailsJSON   : String          (JSON-encoded [String]; default "[]"; use computed `emails`)
+  emails       : [String]        (computed; ordered — first is primary; wraps emailsJSON)
+  primaryEmail : String?         (computed; emails.first — use this wherever one email is needed)
   tagsJSON     : String          (JSON-encoded [String]; use computed `tags` property)
   tags         : [String]        (computed; wraps tagsJSON)
   institution    → Institution?  ↔ Institution.members
@@ -272,6 +276,65 @@ Just create the `.swift` file in the right directory — Xcode picks it up autom
 - New view for an existing tab → `gbpDiary/Views/<TabName>Tab/`
 - Shared UI component → `gbpDiary/Views/` (top level of Views)
 
+### Edit-modal style (canonical — follow for every entity editor)
+
+All entity edit modals (`PersonEditorSheet`, `InstitutionEditorSheet`, `ProjectEditorSheet`,
+`DocumentEditorSheet`, `TaskEditorSheet`, `NoteEditorSheet`, `ContentNoteEditorSheet`,
+`FocusBlockEditorSheet`, `ResolveAttendeeSheet`, …) use one shape. Do **not** use `Form` for new
+edit modals. The reference implementations are `PersonEditorSheet` (in `PeopleView.swift`) and
+`ResolveAttendeeSheet`.
+
+```swift
+NavigationStack {
+    ScrollView {
+        VStack(alignment: .leading, spacing: 20) {
+            GroupBox("Section label") { <control>.frame(maxWidth: .infinity, alignment: .leading) }
+            // one GroupBox per field/section
+        }
+        .padding()
+    }
+    .navigationTitle(model == nil ? "New X" : "Edit X")
+    .toolbar {
+        if model != nil {                                  // Delete only when editing an existing entity
+            ToolbarItem(placement: .destructiveAction) {
+                Button("Delete") { showingDeleteConfirm = true }.buttonStyle(.borderedProminent).tint(.red)
+            }
+        }
+        ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+        ToolbarItem(placement: .confirmationAction) {
+            Button(model == nil ? "Add" : "Save") { save() }.disabled(!canSave)
+        }
+    }
+    .alert("Delete X?", isPresented: $showingDeleteConfirm) {
+        Button("Delete", role: .destructive) { delete() }
+        Button("Cancel", role: .cancel) {}
+    } message: { Text("This permanently deletes the X. …") }
+}
+.onAppear { /* populate @State from the model when editing */ }
+#if os(macOS)
+.frame(minWidth: 420, minHeight: 360)   // size to the content; wider/taller for busy editors
+#endif
+```
+
+Rules:
+- **Controls:** `TextField(...).textFieldStyle(.roundedBorder)` (never bare/`.plain` — it must read as
+  editable). Single relations use `FuzzyPickerField(selectedItem:)`; multi-relations use
+  `FuzzyPickerField(selected:)` — **not** SwiftUI `Picker` dropdowns. Give pickers `onCreateItem:` so
+  new People/Institutions/Projects/Tags can be created inline.
+- **Delete:** every editor of an existing entity has a destructive Delete (confirm alert) whose handler
+  is `workspace.closeEntity(model.persistentModelID); modelContext.delete(model); dismiss()` — inject
+  `@Environment(WorkspaceModel.self)`. Relationships nullify via the model's inverses.
+- **Read-only "detail" browsers are separate from editors.** A read-only view + a pencil-to-edit button
+  is the discouraged pattern.
+
+**Row-tap rule (list pages).** Tapping a row goes straight to the useful surface, never a read-only
+detail sheet with an Edit button:
+- **Light entities** (`Person`, `Institution`) → open the **editor sheet** directly.
+- **Rich entities** (`Project`, `Document`) → open the entity **in a workspace tab**
+  (`workspace.focusOrOpen(.project(id))` / `.document(id)`) — the tab's detail view browses related
+  items and its pencil opens the editor. `Minutes` rows open `MinutesDetailView` (edit-in-place), which
+  is already one-click.
+
 ### Querying
 
 Prefer `@Query` at the top of a view for simple sorts/filters. For dynamic filters (e.g., date changes as user navigates), use `@Query(sort:)` to fetch all and filter in a computed property. Avoid `#Predicate` with enum comparisons until verified — in-memory filtering is fast enough for personal data volumes.
@@ -294,7 +357,7 @@ User input is a string like `"1.5h"`, `"2d"`, `"1w"`. Parse with `Duration.parse
 
 When a meeting `DayEntry` is created, `addMeeting()` automatically creates and links a `Minutes` object with `meetingAt` defaulting to the nearest quarter-hour (rounding from `Date()`). Deleting a meeting entry requires confirmation (alert) because it also deletes the linked `Minutes`. The meeting's one-line summary is stored on `Minutes.summary`, edited inline in the diary row (tapping the row line edits the summary; it no longer opens the meeting). The **"Minutes" chip** opens the meeting in a **new workspace tab** (`MinutesDetailView`), a single unified editor for both metadata (summary, projects, time, duration, attendees, laid out compactly) and the minutes markdown. `MinutesEditorSheet` remains only for quick new-meeting creation.
 
-**Import a meeting from the macOS Calendar (macOS only).** The diary add-meeting flow is unchanged (`ActivitySection.addMeeting()` → `MinutesDetailView(asSheet:true, isNew:true)`). For a **new** meeting, `MinutesDetailView`'s metadata block gains an **"Import"** row that is a standard `FuzzyPickerField` (single-select over the day's calendar events) — the same search/filter picker used for projects/people. Per-calendar filtering is expressed as **filter chips** (one per calendar with events that day; none active → all shown), and the options are ordered by **closeness to the present** (`CalendarEventImport.sortedByProximity`). Picking an event calls `applyImportedEvent` → sets summary/time/duration and resolves attendees (matched People reused; unmatched created immediately, since the meeting already exists). Access is requested on appear (new meetings only); if denied, the row shows an "Enable calendar access…" button linking to System Settings. **EventKit is confined to `CalendarService`** (`Domain/CalendarService.swift`, `#if os(macOS)`): it requests access via the completion-handler API (not `async`, since `Swift.Task` is shadowed here), reads events across all calendars — which already aggregate Exchange + Gmail/CalDAV accounts registered on the Mac — and maps `EKEvent`s to platform-neutral `CalendarEventDraft`s (tagged with their `calendarId`/`calendarTitle`). The pure, testable logic lives in `Domain/CalendarEventImport.swift` (Foundation only; no EventKit/SwiftData): `minutesDraft(from:)` maps title→summary/start→meetingAt/(end−start)→duration, `sortedByProximity(_:to:)` orders by distance from a reference time, and `AttendeeMatcher.resolve(...)` matches attendees to existing People by email then name (creating the rest). Requires the `com.apple.security.personal-information.calendars` entitlement (`gbpDiary/gbpDiary.entitlements`) and the `NSCalendars*UsageDescription` Info.plist strings.
+**Import a meeting from the macOS Calendar (macOS only).** The diary add-meeting flow is unchanged (`ActivitySection.addMeeting()` → `MinutesDetailView(asSheet:true, isNew:true)`). For a **new** meeting, `MinutesDetailView`'s metadata block gains an **"Import"** row that is a standard `FuzzyPickerField` (single-select over the day's calendar events) — the same search/filter picker used for projects/people. Per-calendar filtering is expressed as **filter chips** (one per calendar with events that day; none active → all shown), and the options are ordered by **closeness to the present** (`CalendarEventImport.sortedByProximity`). Picking an event calls `applyImportedEvent` → sets summary/time/duration and resolves attendees: matched People are added; **unmatched attendees are NOT auto-created** — they appear as **yellow "Unrecognized" chips** (`AppTheme.warning`) that the user clicks to reconcile via `ResolveAttendeeSheet` (segmented "Existing person" → link and add the scraped email to that Person's list, or "New person" → name prefilled + optional institution). Unresolved flags are session-only (ephemeral `@State`); confirming the meeting with any still pending prompts a confirm alert (they're then dropped). Access is requested on appear (new meetings only); if denied, the row shows an "Enable calendar access…" button linking to System Settings. **EventKit is confined to `CalendarService`** (`Domain/CalendarService.swift`, `#if os(macOS)`): it requests access via the completion-handler API (not `async`, since `Swift.Task` is shadowed here), reads events across all calendars — which already aggregate Exchange + Gmail/CalDAV accounts registered on the Mac — and maps `EKEvent`s to platform-neutral `CalendarEventDraft`s (tagged with their `calendarId`/`calendarTitle`). The pure, testable logic lives in `Domain/CalendarEventImport.swift` (Foundation only; no EventKit/SwiftData): `minutesDraft(from:)` maps title→summary/start→meetingAt/(end−start)→duration, `sortedByProximity(_:to:)` orders by distance from a reference time, `displayName(fromEmail:)` derives a human name from an email local part ("john.smith@x.com" → "John Smith"; used when an invite has no display name), and `AttendeeMatcher.resolve(...)` matches attendees to existing People by **any email in the Person's ordered `emails` list** (case-insensitive) then name (the rest become `.create` intents the UI flags for reconciliation). `ResolveAttendeeSheet` follows the app's edit-modal style (ScrollView + GroupBox sections, rounded-border name field, styled header) and uses a `FuzzyPickerField` for the institution — which can **create a new institution** inline. Requires the `com.apple.security.personal-information.calendars` entitlement (`gbpDiary/gbpDiary.entitlements`) and the `NSCalendars*UsageDescription` Info.plist strings.
 
 ### Shared UI components
 
@@ -322,7 +385,7 @@ When a meeting `DayEntry` is created, `addMeeting()` automatically creates and l
 - `WorkspaceView` / `WorkspaceModel` / `WorkspaceTabStrip` (`Views/Workspace/`) — the shell: browse sidebar + per-tab back/forward history. See the Navigation section.
 - `DocumentDetailView(document:asSheet:)` — same pattern for `Document`.
 - `ProjectDetailView(project:asSheet:)` — same pattern for `Project`. Includes a Notes section showing notes linked to the project.
-- `PersonDetailView(person:asSheet:)` — same pattern for `Person`.
+- `PersonDetailView(person:asSheet:)` — same pattern for `Person` (used for the `.person` tab). Note: tapping a person in `PeopleView` opens `PersonEditorSheet` directly (not the detail view). `PersonEditorSheet` uses the app's edit-modal style (ScrollView + GroupBox sections) and edits name / emails (`EmailListEditor`) / institution (a `FuzzyPickerField` that can create institutions inline) / tags, and when editing an existing person offers a **Delete** (destructive, confirm alert) that `workspace.closeEntity(…)`s any open tab then deletes — relationships (attendees, assignee, team, institution) nullify. The metadata sheet form of `MinutesDetailView` (`asSheet`) bounds its height and scrolls a long attendee list so the Cancel/Add bar stays visible.
 - `InstitutionDetailView(institution:asSheet:)` — same pattern for `Institution`.
 - `TagsView` — computed table of all unique tags used across `Project.tags` and `Person.tags`. Columns: tag name, project count, people count. Tap a row to open `TagDetailSheet` showing chips for all matching projects and people. No model of its own; derives from `@Query` on `Project` and `Person`.
 - All entity list pages (`ProjectsView`, `PeopleView`, `InstitutionsView`, `MinutesListView`, `DocumentsListView`) use the same `VStack { filterBar + Divider + Table }` pattern as `TasksView`: macOS `Table` with tap-to-open-sheet on the primary column, iOS `List`. Each has a filter bar (project or institution picker where relevant).
@@ -445,7 +508,12 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Content-note membership: `NoteContentMembership.isContentNote` is true iff the title is non-empty (after trimming) and the note has neither a day record nor minutes | Content notes / vault membership | `gbpDiaryTests/Models/NoteLinkUsageScannerTests.swift` | `isContentNote_requiresNonEmptyTitle`, `isContentNote_excludesDayAndMeetingNotes` |
 | Calendar import mapping: title→summary (trimmed, nil if blank); start→meetingAt (not rounded); (end−start)→Duration(.h) rounded to 2dp; all-day or zero/negative length → nil duration | Calendar import | `gbpDiaryTests/Domain/CalendarEventImportTests.swift` | `minutesDraft_mapsTitleToSummary_trimmed`, `minutesDraft_blankTitle_yieldsNilSummary`, `durationHours_computesEndMinusStart`, `durationHours_zeroOrNegative_yieldsNil`, `durationHours_roundedToTwoDecimals`, `minutesDraft_timedEvent_setsDurationInHours`, `minutesDraft_allDayEvent_yieldsNilDuration`, `minutesDraft_meetingAtEqualsStart_notRounded` |
 | Calendar events ordered by increasing distance of their start from a reference time (closest to now first; ties → earlier start first) | Calendar import / picker order | `gbpDiaryTests/Domain/CalendarEventImportTests.swift` | `sortedByProximity_ordersByDistanceFromReference`, `sortedByProximity_treatsPastAndFutureByAbsoluteDistance` |
-| Attendee resolution: match by email (case-insensitive) first, then exact name; else create Person(name,email); empty→[]; blank+no-email skipped; duplicates collapse; `excludingEmails` filtered first | Calendar import | `gbpDiaryTests/Domain/AttendeeMatcherTests.swift` | `resolve_matchesByEmailCaseInsensitive`, `resolve_matchesByExactNameWhenNoEmail`, `resolve_emailTakesPrecedenceOverName`, `resolve_noMatch_createsWithNameAndEmail`, `resolve_noMatchNoName_createsWithEmailAsName`, `resolve_emptyAttendees_returnsEmpty`, `resolve_blankNameNoEmail_isSkipped`, `resolve_duplicateAttendees_collapse`, `resolve_excludingEmails_filtersOrganizer` |
+| Display name from email: drop domain; split local part on `. _ - +`; capitalise each word (first upper, rest lower); "" for empty local part | Calendar import / attendee naming | `gbpDiaryTests/Domain/CalendarEventImportTests.swift` | `displayName_fromDottedLocalPart_capitalisesWords`, `displayName_lowercasesRestAndCapitalisesFirst`, `displayName_singleWord`, `displayName_handlesUnderscoreHyphenPlus`, `displayName_noDomain` |
+| Attendee resolution: match by any email in a Person's ordered list (case-insensitive) first, then exact name; else create-intent; empty→[]; blank+no-email skipped; duplicates collapse; `excludingEmails` filtered first | Calendar import | `gbpDiaryTests/Domain/AttendeeMatcherTests.swift` | `resolve_matchesByEmailCaseInsensitive`, `resolve_matchesWhenEmailIsSecondaryInList`, `resolve_matchesByExactNameWhenNoEmail`, `resolve_emailTakesPrecedenceOverName`, `resolve_noMatch_createsWithNameAndEmail`, `resolve_noMatchNoName_createsWithEmailAsName`, `resolve_emptyAttendees_returnsEmpty`, `resolve_blankNameNoEmail_isSkipped`, `resolve_duplicateAttendees_collapse`, `resolve_excludingEmails_filtersOrganizer` |
+| Person emails: `emails` round-trips via JSON (default `[]`); `primaryEmail` = first (nil when empty); `appendingEmail` dedups case-insensitively preserving order and ignores blanks | Person emails | `gbpDiaryTests/Models/PersonEmailsTests.swift` | `emails_roundTripThroughJSON`, `primaryEmail_isFirstOrNil`, `appendingEmail_dedupsCaseInsensitively_preservesOrder`, `appendingEmail_ignoresBlank` |
+| Legacy email migration: `migratedEmails` promotes a non-blank legacy `email` to `[email]` only when the list is empty; nil otherwise (already migrated / blank / nil) | Person emails / migration | `gbpDiaryTests/Models/PersonEmailsTests.swift` | `migratedEmails_promotesLegacyEmail_whenListEmpty`, `migratedEmails_returnsNil_whenAlreadyHasEmails`, `migratedEmails_returnsNil_whenLegacyBlank` |
+| Deleting a Person removes it and nullifies references (Minutes.attendees, Task.assignee); the referencing entities survive | Relationship integrity | `gbpDiaryTests/Models/RelationshipIntegrityTests.swift` | `personDelete_nullifiesReferences` |
+| Deleting an Institution nullifies its members' `institution`; deleting a Project nullifies references (Task.project, Minutes.projects); referencing entities survive | Relationship integrity / entity delete | `gbpDiaryTests/Models/RelationshipIntegrityTests.swift` | `institutionDelete_nullifiesMemberInstitution`, `projectDelete_nullifiesReferences` |
 | `FuzzyPickerSelection.toggling` adds an item (matched by `id`) when absent and removes it when present; single-select (`maxSelections == 1`) replaces the whole selection, multi-select appends only while under the cap (else unchanged). Shared by item taps and create-on-the-fly (`onCreateItem`) so creating a new item honors single- vs multi-select | Picker selection semantics | `gbpDiaryTests/Views/FuzzyPickerSelectionTests.swift` | `toggling_multiSelect_addsWhenAbsent`, `toggling_multiSelect_removesWhenPresent`, `toggling_multiSelect_atCap_leavesUnchanged`, `toggling_singleSelect_replacesExistingSelection`, `toggling_singleSelect_fromEmpty_selectsItem`, `toggling_singleSelect_removesWhenSameItemPresent` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.

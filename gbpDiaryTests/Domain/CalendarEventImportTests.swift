@@ -75,6 +75,26 @@ struct CalendarEventImportTests {
         #expect(sorted.map(\.title) == ["near", "mid", "far"])
     }
 
+    @Test func displayName_fromDottedLocalPart_capitalisesWords() {
+        #expect(CalendarEventImport.displayName(fromEmail: "john.smith@example.com") == "John Smith")
+    }
+
+    @Test func displayName_lowercasesRestAndCapitalisesFirst() {
+        #expect(CalendarEventImport.displayName(fromEmail: "JOHN.SMITH@x.com") == "John Smith")
+    }
+
+    @Test func displayName_singleWord() {
+        #expect(CalendarEventImport.displayName(fromEmail: "jsmith@x.com") == "Jsmith")
+    }
+
+    @Test func displayName_handlesUnderscoreHyphenPlus() {
+        #expect(CalendarEventImport.displayName(fromEmail: "mary-jane_watson+cal@x.com") == "Mary Jane Watson Cal")
+    }
+
+    @Test func displayName_noDomain() {
+        #expect(CalendarEventImport.displayName(fromEmail: "bob") == "Bob")
+    }
+
     @Test func sortedByProximity_treatsPastAndFutureByAbsoluteDistance() {
         let now = date(hour: 12)
         let past = event(title: "past", start: date(hour: 11), end: date(hour: 11, minute: 30))  // 1h before

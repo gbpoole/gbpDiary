@@ -3,9 +3,9 @@ import SwiftData
 
 struct ProjectsView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(WorkspaceModel.self) private var workspace
     @Query(sort: \Project.name) private var projects: [Project]
 
-    @State private var selectedProject: Project?
     @State private var showingAddProject = false
     // Default to showing only active projects (matches the previous hide-completed default).
     @State private var activeFilterIds: Set<String> = ["status.active"]
@@ -46,7 +46,6 @@ struct ProjectsView: View {
                 }
             }
         }
-        .sheet(item: $selectedProject) { ProjectDetailView(project: $0, asSheet: true) }
         .sheet(isPresented: $showingAddProject) { ProjectEditorSheet(project: nil) }
     }
 
@@ -58,7 +57,7 @@ struct ProjectsView: View {
                     .lineLimit(1)
                     .font(AppTheme.bodyFont(size: 13))
                     .foregroundStyle(AppTheme.text)
-                    .onTapGesture { selectedProject = project }
+                    .onTapGesture { workspace.focusOrOpen(.project(project.persistentModelID)) }
             }
             TableColumn("Stream") { project in
                 Text(project.stream ?? "")
@@ -116,6 +115,7 @@ struct ProjectsView: View {
 struct ProjectEditorSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(WorkspaceModel.self) private var workspace
 
     let project: Project?
 
@@ -131,9 +131,7 @@ struct ProjectEditorSheet: View {
     @State private var devLeadId: UUID? = nil
     @State private var selectedSciPeople: [Person] = []
     @State private var sciLeadId: UUID? = nil
-
-    private var devMembers: [Person] { selectedDevPeople }
-    private var sciMembers: [Person] { selectedSciPeople }
+    @State private var showingDeleteConfirm = false
 
     private var canSave: Bool {
         guard !name.trimmingCharacters(in: .whitespaces).isEmpty else { return false }
@@ -157,79 +155,59 @@ struct ProjectEditorSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                TextField("Name", text: $name)
-                TextField("Description", text: $description, axis: .vertical).lineLimit(3...5)
-                TextField("Stream", text: $stream)
-                Section("Tags") {
-                    TextField("Comma-separated tags", text: $tagsText)
-                }
-                Picker("Parent project", selection: $selectedParent) {
-                    Text("None").tag(Optional<Project>.none)
-                    ForEach(allProjects.filter { $0.id != project?.id }) { p in
-                        Text(p.name).tag(Optional(p))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    GroupBox("Name") {
+                        TextField("Name", text: $name)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: .infinity)
                     }
-                }
-
-                Section("Dev Team") {
-                    FuzzyPickerField(
-                        allItems: allPeople,
-                        selected: Binding(
-                            get: { selectedDevPeople },
-                            set: { newPeople in
-                                let removed = Set(selectedDevPeople.map(\.id)).subtracting(newPeople.map(\.id))
-                                if let leadId = devLeadId, removed.contains(leadId) { devLeadId = nil }
-                                selectedDevPeople = newPeople
-                            }
-                        ),
-                        label: \.name,
-                        chipColor: AppTheme.person,
-                        onCreateItem: { makePerson($0) },
-                        filters: institutionFilters
-                    )
-                    if !selectedDevPeople.isEmpty {
-                        Picker("Dev Lead", selection: $devLeadId) {
-                            Text("None").tag(UUID?.none)
-                            ForEach(devMembers) { p in
-                                Text(p.name).tag(p.id as UUID?)
-                            }
-                        }
+                    GroupBox("Description") {
+                        TextField("Description", text: $description, axis: .vertical)
+                            .lineLimit(3...5)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: .infinity)
                     }
-                }
-
-                Section("Sci Team") {
-                    FuzzyPickerField(
-                        allItems: allPeople,
-                        selected: Binding(
-                            get: { selectedSciPeople },
-                            set: { newPeople in
-                                let removed = Set(selectedSciPeople.map(\.id)).subtracting(newPeople.map(\.id))
-                                if let leadId = sciLeadId, removed.contains(leadId) { sciLeadId = nil }
-                                selectedSciPeople = newPeople
-                            }
-                        ),
-                        label: \.name,
-                        chipColor: AppTheme.person,
-                        onCreateItem: { makePerson($0) },
-                        filters: institutionFilters
-                    )
-                    if !selectedSciPeople.isEmpty {
-                        Picker("Sci Lead", selection: $sciLeadId) {
-                            Text("None").tag(UUID?.none)
-                            ForEach(sciMembers) { p in
-                                Text(p.name).tag(p.id as UUID?)
-                            }
-                        }
+                    GroupBox("Stream") {
+                        TextField("Stream", text: $stream)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: .infinity)
                     }
+                    GroupBox("Tags") {
+                        TextField("Comma-separated tags", text: $tagsText)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: .infinity)
+                    }
+                    GroupBox("Parent project") {
+                        FuzzyPickerField(
+                            allItems: allProjects.filter { $0.id != project?.id },
+                            selectedItem: $selectedParent,
+                            label: { $0.name },
+                            chipColor: AppTheme.project,
+                            tapArea: true,
+                            emptyLabel: "None — tap to choose"
+                        )
+                    }
+                    GroupBox("Dev Team") { teamSection(dev: true) }
+                    GroupBox("Sci Team") { teamSection(dev: false) }
                 }
+                .padding()
             }
             .navigationTitle(project == nil ? "New Project" : "Edit Project")
             .toolbar {
+                if project != nil {
+                    ToolbarItem(placement: .destructiveAction) {
+                        Button("Delete") { showingDeleteConfirm = true }
+                            .buttonStyle(.borderedProminent).tint(.red)
+                    }
+                }
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(project == nil ? "Add" : "Save") { save() }
                         .disabled(!canSave)
                 }
+            }
+            .alert("Delete Project?", isPresented: $showingDeleteConfirm) {
+                Button("Delete", role: .destructive) { deleteProject() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This permanently deletes the project. Its tasks, meetings, documents, and notes are kept but no longer reference it.")
             }
         }
         .onAppear {
@@ -248,6 +226,51 @@ struct ProjectEditorSheet: View {
         #if os(macOS)
         .frame(minWidth: 400, minHeight: 500)
         #endif
+    }
+
+    @ViewBuilder private func teamSection(dev: Bool) -> some View {
+        let members = dev ? selectedDevPeople : selectedSciPeople
+        let peopleBinding = Binding<[Person]>(
+            get: { dev ? selectedDevPeople : selectedSciPeople },
+            set: { newPeople in
+                let removed = Set(members.map(\.id)).subtracting(newPeople.map(\.id))
+                if dev {
+                    if let leadId = devLeadId, removed.contains(leadId) { devLeadId = nil }
+                    selectedDevPeople = newPeople
+                } else {
+                    if let leadId = sciLeadId, removed.contains(leadId) { sciLeadId = nil }
+                    selectedSciPeople = newPeople
+                }
+            }
+        )
+        let leadBinding = Binding<Person?>(
+            get: { members.first { $0.id == (dev ? devLeadId : sciLeadId) } },
+            set: { if dev { devLeadId = $0?.id } else { sciLeadId = $0?.id } }
+        )
+        VStack(alignment: .leading, spacing: 8) {
+            FuzzyPickerField(
+                allItems: allPeople,
+                selected: peopleBinding,
+                label: \.name,
+                chipColor: AppTheme.person,
+                onCreateItem: { makePerson($0) },
+                filters: institutionFilters
+            )
+            if !members.isEmpty {
+                HStack(spacing: 8) {
+                    Text("Lead").font(.caption).foregroundStyle(.secondary)
+                    FuzzyPickerField(
+                        allItems: members,
+                        selectedItem: leadBinding,
+                        label: { $0.name },
+                        chipColor: AppTheme.person,
+                        tapArea: true,
+                        emptyLabel: "Choose lead"
+                    )
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     // Create a new Person on the fly while picking team members (auto-added to the selection).
@@ -292,6 +315,13 @@ struct ProjectEditorSheet: View {
             p.sciLead = sciLead
             modelContext.insert(p)
         }
+        dismiss()
+    }
+
+    private func deleteProject() {
+        guard let p = project else { return }
+        workspace.closeEntity(p.persistentModelID)
+        modelContext.delete(p)
         dismiss()
     }
 }

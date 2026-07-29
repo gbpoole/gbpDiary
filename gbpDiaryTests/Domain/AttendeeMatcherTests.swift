@@ -5,13 +5,19 @@ import Foundation
 @Suite("AttendeeMatcher")
 @MainActor
 struct AttendeeMatcherTests {
-    private let alice = PersonRef(id: UUID(), name: "Alice Smith", email: "alice@example.com")
-    private let bob = PersonRef(id: UUID(), name: "Bob Jones", email: nil)
+    private let alice = PersonRef(id: UUID(), name: "Alice Smith", emails: ["alice@example.com", "a.smith@work.com"])
+    private let bob = PersonRef(id: UUID(), name: "Bob Jones", emails: [])
 
     private var people: [PersonRef] { [alice, bob] }
 
     @Test func resolve_matchesByEmailCaseInsensitive() {
         let attendees = [CalendarAttendee(name: "A. Smith", email: "ALICE@example.com")]
+        #expect(AttendeeMatcher.resolve(attendees: attendees, against: people) == [.matched(existingId: alice.id)])
+    }
+
+    @Test func resolve_matchesWhenEmailIsSecondaryInList() {
+        // Alice's second (non-primary) email should still match.
+        let attendees = [CalendarAttendee(name: "Someone Else", email: "A.Smith@work.com")]
         #expect(AttendeeMatcher.resolve(attendees: attendees, against: people) == [.matched(existingId: alice.id)])
     }
 

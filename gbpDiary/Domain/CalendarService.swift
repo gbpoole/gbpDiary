@@ -65,9 +65,10 @@ final class CalendarService {
     private nonisolated static func draft(from event: EKEvent) -> CalendarEventDraft {
         let attendees: [CalendarAttendee] = (event.attendees ?? []).map { participant in
             let email = Self.email(from: participant.url)
-            let name = participant.name
-                ?? email?.components(separatedBy: "@").first
-                ?? email
+            // Prefer the invite's display name; otherwise derive a human name from the email.
+            let provided = participant.name?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let name = (provided?.isEmpty == false ? provided : nil)
+                ?? email.map(CalendarEventImport.displayName(fromEmail:))
                 ?? ""
             return CalendarAttendee(name: name, email: email)
         }

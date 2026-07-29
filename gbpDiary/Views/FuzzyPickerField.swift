@@ -122,21 +122,26 @@ struct FuzzyPickerField<Item: Identifiable>: View {
 
     private var tapAreaBody: some View {
         Button { popoverIsOpen.wrappedValue = true } label: {
-            HStack(alignment: .center, spacing: 6) {
+            Group {
                 if selected.isEmpty {
-                    Text(emptyLabel ?? placeholder)
-                        .foregroundStyle(AppTheme.accent)
-                        .font(.callout)
+                    HStack(alignment: .center, spacing: 6) {
+                        Text(emptyLabel ?? placeholder)
+                            .foregroundStyle(AppTheme.accent)
+                            .font(.callout)
+                        Spacer(minLength: 0)
+                    }
                 } else {
-                    HStack(alignment: .center, spacing: 4) {
+                    // Wrap chips so a large selection grows onto more lines instead of squishing
+                    // every chip down to "…". A short selection still occupies a single line.
+                    FlowLayout(spacing: 4) {
                         ForEach(selected) { item in
                             PickerRemovableChip(label: label(item), color: chipColor) {
                                 selected.removeAll { $0.id == item.id }
                             }
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, minHeight: 22)
             .contentShape(Rectangle())

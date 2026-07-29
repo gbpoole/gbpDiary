@@ -20,9 +20,10 @@ struct CalendarEventDraft: Identifiable, Equatable {
 }
 
 /// A single attendee snapshot. `email` is lowercased when present.
-struct CalendarAttendee: Equatable {
+struct CalendarAttendee: Equatable, Hashable, Identifiable {
     var name: String                    // display name; may fall back to the email local-part
     var email: String?
+    var id: String { "\(email ?? "")|\(name)" }
 }
 
 /// The meeting fields derived from an event, ready to seed a `Minutes` (no SwiftData here).
@@ -36,7 +37,7 @@ struct MinutesDraft: Equatable {
 struct PersonRef: Equatable {
     var id: UUID
     var name: String
-    var email: String?
+    var emails: [String]
 }
 
 /// The outcome of matching one event attendee against existing People.
@@ -57,6 +58,17 @@ enum CalendarEventImport {
             ? nil
             : durationHours(start: event.start, end: event.end).map { Duration(value: $0, unit: .h) }
         return MinutesDraft(summary: summary, meetingAt: event.start, duration: duration)
+    }
+
+    /// Derives a human display name from an email address: drops the domain, splits the local
+    /// part on `. _ - +` into words, and capitalises each ("john.smith@x.com" → "John Smith";
+    /// "JSMITH@x.com" → "Jsmith"). Returns "" for an empty local part.
+    static func displayName(fromEmail email: String) -> String {
+        let local = email.prefix { $0 != "@" }
+        return local
+            .split(whereSeparator: { ".-_+".contains($0) })
+            .map { $0.prefix(1).uppercased() + $0.dropFirst().lowercased() }
+            .joined(separator: " ")
     }
 
     /// Hours between start and end, rounded to 2 decimals to avoid floating-point dust.
@@ -111,7 +123,7 @@ enum AttendeeMatcher {
             }
 
             if let email, !email.isEmpty,
-               let match = people.first(where: { $0.email?.lowercased() == email }) {
+               let match = people.first(where: { $0.emails.contains { $0.lowercased() == email } }) {
                 results.append(.matched(existingId: match.id))
             } else if !name.isEmpty,
                       let match = people.first(where: {

@@ -57,6 +57,22 @@ struct WorkspaceView: View {
         .environment(workspace.active.diaryState)
         .kanagawaAppBackground()
         .sheet(isPresented: $showingNewContent) { ContentNoteEditorSheet(note: nil) }
+        .onAppear { migratePersonEmails() }
+    }
+
+    // One-time migration of the legacy single `Person.email` into the ordered `emails` list.
+    // Idempotent: a Person is only touched while it still has a legacy value and an empty list.
+    private func migratePersonEmails() {
+        let people = (try? modelContext.fetch(FetchDescriptor<Person>())) ?? []
+        var changed = false
+        for p in people {
+            if let migrated = Person.migratedEmails(legacyEmail: p.email, existingEmails: p.emails) {
+                p.emails = migrated
+                p.email = nil
+                changed = true
+            }
+        }
+        if changed { try? modelContext.save() }
     }
 
     @ViewBuilder

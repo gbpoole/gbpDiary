@@ -47,7 +47,7 @@ struct PeopleView: View {
                 }
             }
         }
-        .sheet(item: $selectedPerson) { PersonDetailView(person: $0, asSheet: true) }
+        .sheet(item: $selectedPerson) { PersonEditorSheet(person: $0) }
         .sheet(isPresented: $showingAddPerson) { PersonEditorSheet(person: nil) }
     }
 
@@ -62,7 +62,7 @@ struct PeopleView: View {
                     .onTapGesture { selectedPerson = person }
             }
             TableColumn("Email") { person in
-                Text(person.email ?? "")
+                Text(person.primaryEmail ?? "")
                     .foregroundStyle(AppTheme.mutedText)
                     .lineLimit(1)
             }
@@ -106,52 +106,92 @@ struct PeopleView: View {
 struct PersonEditorSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(WorkspaceModel.self) private var workspace
 
     let person: Person?
 
     @Query(sort: \Institution.name) private var institutions: [Institution]
 
     @State private var name = ""
-    @State private var email = ""
+    @State private var emails: [String] = []
     @State private var tagsText = ""
     @State private var selectedInstitution: Institution?
+    @State private var showingDeleteConfirm = false
 
     var body: some View {
         NavigationStack {
-            Form {
-                TextField("Name", text: $name)
-                TextField("Email (optional)", text: $email)
-                    .textContentType(.emailAddress)
-                Picker("Institution", selection: $selectedInstitution) {
-                    Text("None").tag(Optional<Institution>.none)
-                    ForEach(institutions) { inst in
-                        Text(inst.name).tag(Optional(inst))
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    GroupBox("Name") {
+                        TextField("Name", text: $name)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: .infinity)
+                    }
+                    GroupBox("Emails") {
+                        EmailListEditor(emails: $emails)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    GroupBox("Institution") {
+                        FuzzyPickerField(
+                            allItems: institutions,
+                            selectedItem: $selectedInstitution,
+                            label: { $0.name },
+                            chipColor: AppTheme.institution,
+                            onCreateItem: { makeInstitution($0) },
+                            tapArea: true,
+                            emptyLabel: "None — tap to choose or add"
+                        )
+                    }
+                    GroupBox("Tags") {
+                        TextField("Comma-separated tags", text: $tagsText)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: .infinity)
                     }
                 }
-                Section("Tags") {
-                    TextField("Comma-separated tags", text: $tagsText)
-                }
+                .padding()
             }
             .navigationTitle(person == nil ? "New Person" : "Edit Person")
             .toolbar {
+                if person != nil {
+                    ToolbarItem(placement: .destructiveAction) {
+                        Button("Delete") { showingDeleteConfirm = true }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                    }
+                }
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(person == nil ? "Add" : "Save") { save() }
                         .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
+            .alert("Delete Person?", isPresented: $showingDeleteConfirm) {
+                Button("Delete", role: .destructive) { deletePerson() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This permanently deletes the person. Their tasks, meetings, and projects are kept but no longer reference them.")
+            }
         }
         .onAppear {
             if let p = person {
                 name = p.name
-                email = p.email ?? ""
+                emails = p.emails
                 tagsText = p.tags.joined(separator: ", ")
                 selectedInstitution = p.institution
             }
         }
         #if os(macOS)
-        .frame(minWidth: 380, minHeight: 280)
+        .frame(minWidth: 420, minHeight: 360)
         #endif
+    }
+
+    // Create an Institution on the fly while picking one (auto-selected).
+    private func makeInstitution(_ instName: String) -> Institution? {
+        let trimmed = instName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let inst = Institution(name: trimmed)
+        modelContext.insert(inst)
+        return inst
     }
 
     private func save() {
@@ -162,17 +202,24 @@ struct PersonEditorSheet: View {
             .filter { !$0.isEmpty }
         if let p = person {
             p.name = trimmed
-            p.email = email.isEmpty ? nil : email
+            p.emails = emails
             p.institution = selectedInstitution
             p.tags = parsedTags
             p.updatedAt = Date()
         } else {
             let p = Person(name: trimmed)
-            p.email = email.isEmpty ? nil : email
+            p.emails = emails
             p.institution = selectedInstitution
             p.tags = parsedTags
             modelContext.insert(p)
         }
+        dismiss()
+    }
+
+    private func deletePerson() {
+        guard let p = person else { return }
+        workspace.closeEntity(p.persistentModelID)   // close any open tab referencing this person
+        modelContext.delete(p)
         dismiss()
     }
 }

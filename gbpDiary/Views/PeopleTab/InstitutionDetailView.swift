@@ -29,7 +29,7 @@ struct InstitutionDetailView: View {
                         ForEach(institution.members.sorted { $0.name < $1.name }) { person in
                             HStack {
                                 Text(person.name)
-                                if let email = person.email {
+                                if let email = person.primaryEmail {
                                     Spacer()
                                     Link(email, destination: URL(string: "mailto:\(email)")!)
                                         .font(.caption)

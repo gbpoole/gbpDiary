@@ -29,6 +29,10 @@ struct MinutesDetailView: View {
     @State private var calendarAccess: CalendarAccess = .notDetermined
     @State private var calendarEvents: [CalendarEventDraft] = []
     @State private var importedEvent: CalendarEventDraft?
+    // Scraped attendees that matched no existing Person — flagged for reconciliation, session-only.
+    @State private var unresolvedAttendees: [CalendarAttendee] = []
+    @State private var reconciling: CalendarAttendee?
+    @State private var showingUnresolvedConfirm = false
     #endif
 
     private struct DurationPreset: Identifiable {
@@ -51,12 +55,12 @@ struct MinutesDetailView: View {
 
     var body: some View {
         if asSheet {
-            // Metadata-only sheet — size it to the compact content, not the full editor.
+            // Metadata-only sheet. Bounded height + an inner ScrollView so a long attendee list
+            // scrolls rather than pushing the Cancel/Add button bar off the bottom of the sheet.
             NavigationStack {
                 coreContent
             }
-            .frame(minWidth: 420, idealWidth: 460, maxWidth: 560)
-            .fixedSize(horizontal: false, vertical: true)
+            .frame(minWidth: 420, idealWidth: 460, maxWidth: 560, minHeight: 300, idealHeight: 480, maxHeight: 640)
         } else {
             coreContent
         }
@@ -65,12 +69,13 @@ struct MinutesDetailView: View {
     @ViewBuilder private var coreContent: some View {
         Group {
             if asSheet {
-                // No inner ScrollView and no trailing spacer, so the sheet hugs its content height.
-                VStack(alignment: .leading, spacing: 12) {
-                    summaryField
-                    metadataHeader
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        summaryField
+                        metadataHeader
+                    }
+                    .padding()
                 }
-                .padding()
             } else {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
@@ -99,10 +104,10 @@ struct MinutesDetailView: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(isNew ? "Add" : "Done") {
-                        isConfirmed = true
-                        // A new meeting opens in its own tab, ready to edit the minutes.
-                        if isNew { workspace.openMinutesForEditing(minutes.persistentModelID) }
-                        dismiss()
+                        #if os(macOS)
+                        if isNew && !unresolvedAttendees.isEmpty { showingUnresolvedConfirm = true; return }
+                        #endif
+                        confirmAdd()
                     }
                     .keyboardShortcut(.defaultAction)
                 }
@@ -114,6 +119,17 @@ struct MinutesDetailView: View {
         } message: {
             Text("This will permanently delete the meeting and its minutes.")
         }
+        #if os(macOS)
+        .alert("Unrecognized attendees", isPresented: $showingUnresolvedConfirm) {
+            Button("Add anyway") { confirmAdd() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("\(unresolvedAttendees.count) attendee\(unresolvedAttendees.count == 1 ? " is" : "s are") unrecognized and won't be added. Continue?")
+        }
+        .sheet(item: $reconciling) { att in
+            ResolveAttendeeSheet(attendee: att, onResolve: { resolveAttendee(att, with: $0) })
+        }
+        #endif
         .onAppear {
             ensureNoteExists()
             summaryDraft = minutes.summary ?? ""
@@ -178,6 +194,13 @@ struct MinutesDetailView: View {
         dismiss()
     }
 
+    // Confirm the meeting: a new one opens in its own tab, ready to edit the minutes.
+    private func confirmAdd() {
+        isConfirmed = true
+        if isNew { workspace.openMinutesForEditing(minutes.persistentModelID) }
+        dismiss()
+    }
+
     // Prominent title field.
     private var summaryField: some View {
         TextField("Meeting summary", text: $summaryDraft)
@@ -201,6 +224,11 @@ struct MinutesDetailView: View {
             metaRow("Time")      { timeField }
             metaRow("Duration", alignment: .center) { durationPicker }
             metaRow("Attendees") { attendeesField }
+            #if os(macOS)
+            if isNew && !unresolvedAttendees.isEmpty {
+                metaRow("Unrecognized") { unresolvedStrip }
+            }
+            #endif
         }
         .padding(10)
         .background(AppTheme.cardRaised.opacity(0.3), in: RoundedRectangle(cornerRadius: 8))
@@ -471,8 +499,9 @@ struct MinutesDetailView: View {
         } else {
             durationText = ""
         }
-        let refs = allPeople.map { PersonRef(id: $0.id, name: $0.name, email: $0.email) }
+        let refs = allPeople.map { PersonRef(id: $0.id, name: $0.name, emails: $0.emails) }
         var attendees = minutes.attendees
+        var unresolved: [CalendarAttendee] = []
         for resolution in AttendeeMatcher.resolve(attendees: ev.attendees, against: refs) {
             switch resolution {
             case .matched(let id):
@@ -481,13 +510,51 @@ struct MinutesDetailView: View {
                     attendees.append(p)
                 }
             case .create(let name, let email):
-                let p = Person(name: name)
-                if let email, !email.isEmpty { p.email = email }
-                modelContext.insert(p)
-                attendees.append(p)
+                // Do NOT auto-create — flag for the user to reconcile (link or create deliberately).
+                unresolved.append(CalendarAttendee(name: name, email: email))
             }
         }
         minutes.attendees = attendees
+        unresolvedAttendees = unresolved
+        minutes.updatedAt = Date()
+    }
+
+    // MARK: - Attendee reconciliation
+
+    private var unresolvedStrip: some View {
+        FlowLayout(spacing: 6) {
+            ForEach(unresolvedAttendees) { att in
+                Button { reconciling = att } label: {
+                    Chip(label: att.name.isEmpty ? (att.email ?? "?") : att.name, color: AppTheme.warning)
+                }
+                .buttonStyle(.plain)
+                .help("Unrecognized — click to link to an existing person or create a new one")
+            }
+        }
+    }
+
+    private func resolveAttendee(_ att: CalendarAttendee, with result: AttendeeReconcileResult) {
+        let person: Person
+        switch result {
+        case .link(let p):
+            if let e = att.email, !e.isEmpty { p.emails = Person.appendingEmail(e, to: p.emails) }
+            p.updatedAt = Date()
+            person = p
+        case .create(let name, let inst):
+            let p = Person(name: name)
+            if let e = att.email, !e.isEmpty { p.emails = [e] }
+            p.institution = inst
+            modelContext.insert(p)
+            person = p
+        }
+        if !minutes.attendees.contains(where: { $0.id == person.id }) {
+            minutes.attendees.append(person)
+        }
+        // Remove this entry, plus any other unresolved chip carrying the same email.
+        unresolvedAttendees.removeAll { $0.id == att.id }
+        if let e = att.email?.lowercased() {
+            unresolvedAttendees.removeAll { $0.email?.lowercased() == e }
+        }
         minutes.updatedAt = Date()
     }
 
@@ -556,6 +623,39 @@ struct MinutesEditorSheet: View {
     @State private var selectedProjects: [Project] = []
     @State private var selectedAttendees: [Person] = []
 
+    private var durationSection: some View {
+        let presets: [(label: String, value: String)] = [
+            ("15m", "0.25h"), ("30m", "0.5h"), ("1h", "1h"),
+            ("1.5h", "1.5h"), ("2h", "2h"), ("3h", "3h")
+        ]
+        let parsedHours = Duration.parse(durationText.trimmingCharacters(in: .whitespaces))?.hoursNormalized
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                ForEach(presets, id: \.label) { preset in
+                    let active = parsedHours.map { abs($0 - (Duration.parse(preset.value)?.hoursNormalized ?? -1)) < 0.01 } ?? false
+                    Button(preset.label) {
+                        durationText = preset.value
+                        durationError = false
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(active ? Color.accentColor : Color.secondary.opacity(0.12), in: Capsule())
+                    .foregroundStyle(active ? Color.white : Color.primary)
+                }
+            }
+            HStack {
+                TextField("Custom (e.g. 2.5h)", text: $durationText)
+                    .textFieldStyle(.roundedBorder)
+                    .onChange(of: durationText) { _, _ in durationError = false }
+                if durationError {
+                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
+                }
+            }
+        }
+    }
+
     private var attendeesPicker: some View {
         let projectFilters: [PickerFilter<Person>] = selectedProjects.map { project in
             PickerFilter(
@@ -585,6 +685,8 @@ struct MinutesEditorSheet: View {
             label: \.name,
             chipColor: AppTheme.person,
             onCreateItem: { makePerson($0) },
+            tapArea: true,
+            emptyLabel: "None selected — tap to add attendees",
             filters: allFilters.isEmpty ? nil : allFilters,
             defaultFilterId: projectFilters.first?.id
         )
@@ -610,58 +712,33 @@ struct MinutesEditorSheet: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                TextField("One-line summary", text: $summary)
-
-                Section("Duration") {
-                    let presets: [(label: String, value: String)] = [
-                        ("15m", "0.25h"), ("30m", "0.5h"), ("1h", "1h"),
-                        ("1.5h", "1.5h"), ("2h", "2h"), ("3h", "3h")
-                    ]
-                    let parsedHours = Duration.parse(durationText.trimmingCharacters(in: .whitespaces))?.hoursNormalized
-                    HStack(spacing: 6) {
-                        ForEach(presets, id: \.label) { preset in
-                            let active = parsedHours.map { abs($0 - (Duration.parse(preset.value)?.hoursNormalized ?? -1)) < 0.01 } ?? false
-                            Button(preset.label) {
-                                durationText = preset.value
-                                durationError = false
-                            }
-                            .buttonStyle(.plain)
-                            .font(.caption)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(active ? Color.accentColor : Color.secondary.opacity(0.12), in: Capsule())
-                            .foregroundStyle(active ? Color.white : Color.primary)
-                        }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    GroupBox("Summary") {
+                        TextField("One-line summary", text: $summary)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: .infinity)
                     }
-                    HStack {
-                        TextField("Custom (e.g. 2.5h)", text: $durationText)
-                            .onChange(of: durationText) { _, _ in durationError = false }
-                        if durationError {
-                            Image(systemName: "exclamationmark.circle.fill")
-                                .foregroundStyle(.red)
-                        }
+                    GroupBox("Duration") {
+                        durationSection.frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    GroupBox("Projects") {
+                        FuzzyPickerField(
+                            allItems: allProjects,
+                            selected: $selectedProjects,
+                            label: \.name,
+                            chipColor: AppTheme.project,
+                            onCreateItem: { makeProject($0) },
+                            tapArea: true,
+                            emptyLabel: "None — tap to link projects"
+                        )
+                    }
+                    GroupBox("Attendees") { attendeesPicker }
+                    GroupBox("Date & Time") {
+                        DatePicker("", selection: $meetingAt)
+                            .labelsHidden().frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
-
-                Section("Projects") {
-                    FuzzyPickerField(
-                        allItems: allProjects,
-                        selected: $selectedProjects,
-                        label: \.name,
-                        chipColor: AppTheme.project,
-                        onCreateItem: { makeProject($0) }
-                    )
-                }
-
-                Section("Attendees") {
-                    attendeesPicker
-                }
-
-                Section("Date & Time") {
-                    DatePicker("", selection: $meetingAt)
-                        .labelsHidden()
-                }
+                .padding()
             }
             .navigationTitle(minutes == nil ? "New Meeting" : "Edit Meeting")
             .toolbar {

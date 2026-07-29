@@ -20,7 +20,7 @@ struct InstitutionsView: View {
                 }
             }
         }
-        .sheet(item: $selectedInstitution) { InstitutionDetailView(institution: $0, asSheet: true) }
+        .sheet(item: $selectedInstitution) { InstitutionEditorSheet(institution: $0) }
         .sheet(isPresented: $showingAddInstitution) { InstitutionEditorSheet(institution: nil) }
     }
 
@@ -61,28 +61,90 @@ struct InstitutionsView: View {
 struct InstitutionEditorSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(WorkspaceModel.self) private var workspace
 
     let institution: Institution?
     @State private var name = ""
+    @State private var showingDeleteConfirm = false
 
     var body: some View {
         NavigationStack {
-            Form {
-                TextField("Name", text: $name)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    GroupBox("Name") {
+                        TextField("Name", text: $name)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(maxWidth: .infinity)
+                    }
+                    if let inst = institution {
+                        GroupBox("Members (\(inst.members.count))") {
+                            membersList(inst)
+                        }
+                        GroupBox("Projects (\(inst.projects.count))") {
+                            projectsList(inst)
+                        }
+                    }
+                }
+                .padding()
             }
             .navigationTitle(institution == nil ? "New Institution" : "Edit Institution")
             .toolbar {
+                if institution != nil {
+                    ToolbarItem(placement: .destructiveAction) {
+                        Button("Delete") { showingDeleteConfirm = true }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                    }
+                }
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(institution == nil ? "Add" : "Save") { save() }
                         .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
+            .alert("Delete Institution?", isPresented: $showingDeleteConfirm) {
+                Button("Delete", role: .destructive) { deleteInstitution() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This permanently deletes the institution. Its members and projects are kept but no longer reference it.")
+            }
         }
         .onAppear { name = institution?.name ?? "" }
         #if os(macOS)
-        .frame(minWidth: 320, minHeight: 160)
+        .frame(minWidth: 420, minHeight: 320)
         #endif
+    }
+
+    @ViewBuilder private func membersList(_ inst: Institution) -> some View {
+        if inst.members.isEmpty {
+            Text("No members.").foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(inst.members.sorted { $0.name < $1.name }) { person in
+                    HStack {
+                        Text(person.name)
+                        if let email = person.primaryEmail {
+                            Spacer()
+                            Text(email).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    @ViewBuilder private func projectsList(_ inst: Institution) -> some View {
+        if inst.projects.isEmpty {
+            Text("No linked projects.").foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+        } else {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(inst.projects.sorted { $0.name < $1.name }) { p in
+                    Text(p.name)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func save() {
@@ -94,6 +156,13 @@ struct InstitutionEditorSheet: View {
         } else {
             modelContext.insert(Institution(name: trimmed))
         }
+        dismiss()
+    }
+
+    private func deleteInstitution() {
+        guard let inst = institution else { return }
+        workspace.closeEntity(inst.persistentModelID)
+        modelContext.delete(inst)
         dismiss()
     }
 }

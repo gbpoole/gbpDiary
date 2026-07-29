@@ -43,6 +43,7 @@ enum AppTheme {
     static let followUp = Kanagawa.peach
     static let completed = Kanagawa.green
     static let started = Kanagawa.blue
+    static let warning = Kanagawa.yellow
 
     static func interfaceFont(size: CGFloat, weight: Font.Weight = .regular) -> Font {
         .custom("Monoid Nerd Font Propo", size: size).weight(weight)

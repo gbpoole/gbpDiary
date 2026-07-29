@@ -109,7 +109,7 @@ struct PersonDetailView: View {
             if let inst = person.institution {
                 Text(inst.name).foregroundStyle(.secondary)
             }
-            if let email = person.email {
+            if let email = person.primaryEmail {
                 Link(email, destination: URL(string: "mailto:\(email)")!)
                     .font(.subheadline)
             }

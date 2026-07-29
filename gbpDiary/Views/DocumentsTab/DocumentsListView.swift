@@ -5,9 +5,8 @@ struct DocumentsListView: View {
     @Query(sort: \Document.createdAt, order: .reverse) private var allDocuments: [Document]
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Environment(\.modelContext) private var modelContext
+    @Environment(WorkspaceModel.self) private var workspace
 
-    @State private var selectedDocument: Document?
-    @State private var creatingDocument: Document? = nil
     @State private var activeFilterIds: Set<String> = []
 
     private var documentFilters: [PickerFilter<Document>] {
@@ -38,12 +37,10 @@ struct DocumentsListView: View {
                 Button {
                     let doc = Document()
                     modelContext.insert(doc)
-                    creatingDocument = doc
+                    workspace.focusOrOpen(.document(doc.persistentModelID))
                 } label: { Image(systemName: "plus") }
             }
         }
-        .sheet(item: $selectedDocument) { DocumentDetailView(document: $0, asSheet: true) }
-        .sheet(item: $creatingDocument) { DocumentDetailView(document: $0, asSheet: true) }
     }
 
     #if os(macOS)
@@ -54,7 +51,7 @@ struct DocumentsListView: View {
                     .lineLimit(1)
                     .font(AppTheme.bodyFont(size: 13))
                     .foregroundStyle(AppTheme.text)
-                    .onTapGesture { selectedDocument = document }
+                    .onTapGesture { workspace.focusOrOpen(.document(document.persistentModelID)) }
             }
             TableColumn("Description") { document in
                 Text(document.documentDescription ?? "")
@@ -95,6 +92,7 @@ struct DocumentsListView: View {
 struct DocumentEditorSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(WorkspaceModel.self) private var workspace
 
     let document: Document?
 
@@ -103,31 +101,53 @@ struct DocumentEditorSheet: View {
     @State private var summary = ""
     @State private var docDescription = ""
     @State private var selectedProjects: [Project] = []
+    @State private var showingDeleteConfirm = false
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section("Document") {
-                    TextField("Summary", text: $summary)
-                    TextField("Description (optional)", text: $docDescription, axis: .vertical)
-                        .lineLimit(3...6)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    GroupBox("Summary") {
+                        TextField("Summary", text: $summary)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: .infinity)
+                    }
+                    GroupBox("Description") {
+                        TextField("Description (optional)", text: $docDescription, axis: .vertical)
+                            .lineLimit(3...6)
+                            .textFieldStyle(.roundedBorder).frame(maxWidth: .infinity)
+                    }
+                    GroupBox("Projects") {
+                        FuzzyPickerField(
+                            allItems: allProjects,
+                            selected: $selectedProjects,
+                            label: \.name,
+                            chipColor: AppTheme.project,
+                            onCreateItem: { makeProject($0) },
+                            tapArea: true,
+                            emptyLabel: "None — tap to link projects"
+                        )
+                    }
                 }
-                Section("Projects") {
-                    FuzzyPickerField(
-                        allItems: allProjects,
-                        selected: $selectedProjects,
-                        label: \.name,
-                        chipColor: AppTheme.project,
-                        onCreateItem: { makeProject($0) }
-                    )
-                }
+                .padding()
             }
             .navigationTitle(document == nil ? "New Document" : "Edit Document")
             .toolbar {
+                if document != nil {
+                    ToolbarItem(placement: .destructiveAction) {
+                        Button("Delete") { showingDeleteConfirm = true }
+                            .buttonStyle(.borderedProminent).tint(.red)
+                    }
+                }
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(document == nil ? "Add" : "Save") { save() }
                 }
+            }
+            .alert("Delete Document?", isPresented: $showingDeleteConfirm) {
+                Button("Delete", role: .destructive) { deleteDocument() }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This permanently deletes the document and its attachments.")
             }
         }
         .onAppear {
@@ -138,7 +158,7 @@ struct DocumentEditorSheet: View {
             }
         }
         #if os(macOS)
-        .frame(minWidth: 400, minHeight: 320)
+        .frame(minWidth: 420, minHeight: 360)
         #endif
     }
 
@@ -164,6 +184,13 @@ struct DocumentEditorSheet: View {
             d.projects = selectedProjects
             modelContext.insert(d)
         }
+        dismiss()
+    }
+
+    private func deleteDocument() {
+        guard let d = document else { return }
+        workspace.closeEntity(d.persistentModelID)
+        modelContext.delete(d)
         dismiss()
     }
 }
