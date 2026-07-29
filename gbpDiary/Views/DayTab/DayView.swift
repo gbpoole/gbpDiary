@@ -7,6 +7,17 @@ struct BannerMessage: Equatable {
     let text: String
     let systemImage: String
     let tint: Color
+
+    init(text: String, systemImage: String, tint: Color) {
+        self.text = text; self.systemImage = systemImage; self.tint = tint
+    }
+
+    /// Convenience for transient info/error banners.
+    init(text: String, isError: Bool = false) {
+        self.text = text
+        self.systemImage = isError ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"
+        self.tint = isError ? AppTheme.destructive : AppTheme.accent
+    }
 }
 
 // MARK: - Shared day content (used by DayView and WeekView)
@@ -30,12 +41,20 @@ struct DayPageContent: View {
     @State private var notesDropTargetIndex: Int?
     @State private var newlyAddedNoteId: UUID?
     @State private var addNoteRecord: DayRecord?
+    @State private var mailService = MailScriptService()
+    @State private var isRefreshingEmail = false
 
     @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allTimeEntries: [TaskTimeEntry]
+    @Query(sort: \EmailMessage.date, order: .reverse) private var allEmails: [EmailMessage]
 
     private var todayTimeEntries: [TaskTimeEntry] {
         let cal = Calendar.current
         return allTimeEntries.filter { cal.isDate($0.date, inSameDayAs: date) }
+    }
+
+    private var dayEmails: [EmailMessage] {
+        let cal = Calendar.current
+        return allEmails.filter { cal.isDate($0.date, inSameDayAs: date) }
     }
 
     private var dayStart: Date { DayTaskFiltering.dayBounds(for: date).dayStart }
@@ -135,6 +154,7 @@ struct DayPageContent: View {
                     newTasksSection
                     completedTasksSection
                     notesSection
+                    emailsSection
                     if showTaskSections { sidebarSections }
                 }
                 .padding(.vertical, 8)
@@ -163,6 +183,64 @@ struct DayPageContent: View {
             migrateOldNotes()
             migrateDayNote()
         }
+    }
+
+    // MARK: - Email
+
+    @ViewBuilder private var emailsSection: some View {
+        DaySectionHeader(title: "Email", systemImage: "arrow.clockwise", onAction: refreshEmail)
+        if dayEmails.isEmpty {
+            Text(isRefreshingEmail ? "Fetching email…" : "No email fetched for this day.")
+                .font(.callout)
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal)
+                .padding(.vertical, 6)
+        } else {
+            ForEach(dayEmails) { DayEmailRow(email: $0) }
+        }
+    }
+
+    // Manual refresh: read this day's Inbox + Sent from Mail.app (configured account) and upsert.
+    private func refreshEmail() {
+        guard !isRefreshingEmail else { return }
+        let settings = EmailSettingsStore.load()
+        guard settings.isConfigured else {
+            onShowBanner(BannerMessage(text: "Set your email account in Settings (⌘,)", isError: true))
+            return
+        }
+        isRefreshingEmail = true
+        mailService.fetchDay(date, settings: settings) { result in
+            isRefreshingEmail = false
+            switch result {
+            case .success(let drafts):
+                let added = upsertEmails(drafts, account: settings.accountName)
+                onShowBanner(BannerMessage(text: added == 0 ? "Email up to date" : "Fetched \(added) new message\(added == 1 ? "" : "s")"))
+            case .failure(let error):
+                onShowBanner(BannerMessage(text: error.userMessage, isError: true))
+            }
+        }
+    }
+
+    /// Inserts fetched messages not already cached (dedupe by Mail's per-message id). Returns the count added.
+    private func upsertEmails(_ drafts: [MailMessageDraft], account: String) -> Int {
+        var existing = Set(allEmails.map {
+            MailScriptParsing.dedupeKey(messageId: $0.messageId, account: $0.account, mailbox: $0.mailbox,
+                                        date: $0.date, fromAddress: $0.fromAddress, subject: $0.subject)
+        })
+        var added = 0
+        for d in drafts {
+            let mailbox = d.direction == .inbox ? "INBOX" : "Sent"
+            let key = MailScriptParsing.dedupeKey(messageId: d.messageId, account: account, mailbox: mailbox,
+                                                  date: d.date, fromAddress: d.address, subject: d.subject)
+            guard !existing.contains(key) else { continue }
+            existing.insert(key)
+            let msg = EmailMessage(messageId: d.messageId, account: account, mailbox: mailbox,
+                                   direction: d.direction, fromAddress: d.address, fromName: d.name,
+                                   subject: d.subject, date: d.date)
+            modelContext.insert(msg)
+            added += 1
+        }
+        return added
     }
 
     // MARK: - Sections

@@ -26,6 +26,7 @@ struct gbpDiaryApp: App {
             Note.self,
             TaskTimeEntry.self,
             FocusBlock.self,
+            EmailMessage.self,
         ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: isUITesting)
         do {
@@ -55,6 +56,11 @@ struct gbpDiaryApp: App {
         .commands {
             AppCommands()
         }
+        #if os(macOS)
+        Settings {
+            EmailSettingsView()
+        }
+        #endif
     }
 
     private func sweepOrphanedAttachments() {

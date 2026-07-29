@@ -405,6 +405,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "gbpDiary reads your calendar to pre-fill new meetings with event details and attendees.";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "gbpDiary reads your Mail messages to summarize the day's email.";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "gbpDiary reads your calendar to pre-fill new meetings.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -450,6 +451,7 @@
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_NSCalendarsFullAccessUsageDescription = "gbpDiary reads your calendar to pre-fill new meetings with event details and attendees.";
+				INFOPLIST_KEY_NSAppleEventsUsageDescription = "gbpDiary reads your Mail messages to summarize the day's email.";
 				INFOPLIST_KEY_NSCalendarsUsageDescription = "gbpDiary reads your calendar to pre-fill new meetings.";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;

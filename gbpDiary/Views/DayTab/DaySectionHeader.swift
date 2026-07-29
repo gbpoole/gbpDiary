@@ -3,6 +3,10 @@ import SwiftUI
 struct DaySectionHeader: View {
     let title: String
     var onAdd: (() -> Void)? = nil
+    /// SF Symbol for the trailing button; defaults to the add "+" glyph.
+    var systemImage: String = "plus"
+    /// A distinct trailing action (e.g. refresh). When set it takes precedence over `onAdd`.
+    var onAction: (() -> Void)? = nil
 
     var body: some View {
         HStack {
@@ -12,9 +16,9 @@ struct DaySectionHeader: View {
                 .textCase(.uppercase)
                 .foregroundStyle(AppTheme.mutedText)
             Spacer()
-            if let onAdd {
-                Button(action: onAdd) {
-                    Image(systemName: "plus")
+            if let action = onAction ?? onAdd {
+                Button(action: action) {
+                    Image(systemName: systemImage)
                         .font(.caption.bold())
                         .foregroundStyle(AppTheme.accent)
                 }

@@ -61,6 +61,12 @@ enum DayEntryKind: String, Codable {
     case meeting
 }
 
+/// Whether a cached email was received (INBOX) or sent (Sent mailbox).
+enum EmailDirection: String, Codable, CaseIterable {
+    case inbox
+    case sent
+}
+
 enum DaySlot: String, Codable, CaseIterable {
     case allDay
     case morning
