@@ -8,6 +8,7 @@ enum DiaryMode: String, CaseIterable {
 
 struct DiaryView: View {
     @Environment(DiaryState.self) private var diary
+    @Environment(\.scenePhase) private var scenePhase
 
     @Query(sort: \Task.createdAt) private var allTasks: [Task]
     @Query private var allDayRecords: [DayRecord]
@@ -17,6 +18,16 @@ struct DiaryView: View {
     }
 
     var body: some View {
+        content
+            // Roll a stale "today" forward when the diary re-appears or the app reactivates, so a
+            // meeting/task added after midnight files on the real today (not the day left on screen).
+            .onAppear { diary.advanceIfTrackingToday() }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { diary.advanceIfTrackingToday() }
+            }
+    }
+
+    @ViewBuilder private var content: some View {
         if diary.mode == .day {
             VStack(spacing: 0) {
                 diaryBar
@@ -63,7 +74,7 @@ struct DiaryView: View {
             .padding(.vertical, 5)
             .background(dateColor.opacity(0.12), in: Capsule())
 
-            Button("Today") { diary.currentDate = Calendar.current.startOfDay(for: Date()) }
+            Button("Today") { diary.goTo(Date()) }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
                 .disabled(isCurrentPeriod)
@@ -106,6 +117,7 @@ struct DiaryView: View {
 
     private func stepDate(_ delta: Int) {
         let unit: Calendar.Component = diary.mode == .day ? .day : .weekOfYear
-        diary.currentDate = Calendar.current.date(byAdding: unit, value: delta, to: diary.currentDate) ?? diary.currentDate
+        let stepped = Calendar.current.date(byAdding: unit, value: delta, to: diary.currentDate) ?? diary.currentDate
+        diary.goTo(stepped)
     }
 }

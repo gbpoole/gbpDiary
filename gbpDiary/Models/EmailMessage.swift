@@ -16,6 +16,13 @@ import SwiftData
     var date: Date = Date.distantPast
     var fetchedAt: Date = Date()
 
+    // Cleaned out of the day's list (persists across refreshes; undoable).
+    var dismissed: Bool = false
+    // The resolved "other party" (Inbox = sender, Sent = recipient); nil until matched/reconciled.
+    var person: Person?
+    // Projects this email is filed under.
+    @Relationship(inverse: \Project.emails) var projects: [Project] = []
+
     init(messageId: String, account: String, mailbox: String, direction: EmailDirection,
          fromAddress: String, fromName: String?, subject: String, date: Date, id: UUID = UUID()) {
         self.id = id

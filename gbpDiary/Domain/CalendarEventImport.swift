@@ -90,6 +90,19 @@ enum CalendarEventImport {
             return da < db
         }
     }
+
+    /// `[start, end)` day-window for the import picker: from the start of the day `daysBefore` days
+    /// before `day` up to the start of the day `daysAfter + 1` days after it (exclusive end). A
+    /// window rather than a single day lets a meeting whose entry sits on one day still import an
+    /// event from a nearby day (e.g. catching up the next morning, or a recurring event that only
+    /// lands on certain weekdays). nil only on calendar arithmetic overflow.
+    static func importWindow(around day: Date, daysBefore: Int, daysAfter: Int,
+                             calendar: Calendar = .current) -> (start: Date, end: Date)? {
+        let base = calendar.startOfDay(for: day)
+        guard let start = calendar.date(byAdding: .day, value: -daysBefore, to: base),
+              let end = calendar.date(byAdding: .day, value: daysAfter + 1, to: base) else { return nil }
+        return (start, end)
+    }
 }
 
 enum AttendeeMatcher {

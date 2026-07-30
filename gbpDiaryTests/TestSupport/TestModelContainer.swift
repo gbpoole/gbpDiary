@@ -17,6 +17,7 @@ enum TestModelContainer {
             Note.self,
             TaskTimeEntry.self,
             FocusBlock.self,
+            EmailMessage.self,
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         return try ModelContainer(for: schema, configurations: [configuration])

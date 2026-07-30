@@ -193,7 +193,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         if target.current != .diary { target.navigate(to: .diary) }
         activeId = target.id
         target.diaryState.mode = .day
-        target.diaryState.currentDate = Calendar.current.startOfDay(for: date)
+        target.diaryState.goTo(date)
         target.diaryState.scrollTargetNoteId = noteId
     }
 

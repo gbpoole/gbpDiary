@@ -118,4 +118,50 @@ struct RelationshipIntegrityTests {
         let remainingTasks = try context.fetch(FetchDescriptor<Task>())
         #expect(remainingTasks.first?.assignee == nil)
     }
+
+    @Test func personDelete_nullifiesEmailPerson() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+
+        let person = Person(name: "A")
+        let email = EmailMessage(messageId: "<m1>", account: "acct", mailbox: "INBOX",
+                                 direction: .inbox, fromAddress: "a@x.com", fromName: "A",
+                                 subject: "hi", date: FixedDates.reference)
+        email.person = person
+        context.insert(person)
+        context.insert(email)
+        try context.save()
+
+        context.delete(person)
+        try context.save()
+
+        // The Person is gone; the email survives with its person nullified.
+        #expect(try context.fetch(FetchDescriptor<Person>()).isEmpty)
+        let remaining = try context.fetch(FetchDescriptor<EmailMessage>())
+        #expect(remaining.count == 1)
+        #expect(remaining.first?.person == nil)
+    }
+
+    @Test func projectDelete_removesEmailProjectLink() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+
+        let project = Project(name: "P")
+        let email = EmailMessage(messageId: "<m2>", account: "acct", mailbox: "INBOX",
+                                 direction: .inbox, fromAddress: "a@x.com", fromName: "A",
+                                 subject: "hi", date: FixedDates.reference)
+        email.projects = [project]
+        context.insert(project)
+        context.insert(email)
+        try context.save()
+
+        context.delete(project)
+        try context.save()
+
+        // The Project is gone; the email survives with the link removed.
+        #expect(try context.fetch(FetchDescriptor<Project>()).isEmpty)
+        let remaining = try context.fetch(FetchDescriptor<EmailMessage>())
+        #expect(remaining.count == 1)
+        #expect(remaining.first?.projects.isEmpty == true)
+    }
 }

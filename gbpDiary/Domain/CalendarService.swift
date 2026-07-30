@@ -41,9 +41,17 @@ final class CalendarService {
     /// sorted by start. Only meaningful when `access == .authorized`. The picker applies its
     /// own per-calendar filtering and proximity ordering on top of this.
     func events(on day: Date, calendar: Calendar = .current) -> [CalendarEventDraft] {
-        let start = calendar.startOfDay(for: day)
-        guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return [] }
-        let predicate = store.predicateForEvents(withStart: start, end: end, calendars: nil)
+        events(around: day, daysBefore: 0, daysAfter: 0, calendar: calendar)
+    }
+
+    /// Events across a window of days centred on `day` (see `CalendarEventImport.importWindow`),
+    /// so the import picker can surface an event from a nearby day — including recurring events,
+    /// whose occurrences EventKit expands within the queried range.
+    func events(around day: Date, daysBefore: Int, daysAfter: Int,
+                calendar: Calendar = .current) -> [CalendarEventDraft] {
+        guard let window = CalendarEventImport.importWindow(around: day, daysBefore: daysBefore,
+                                                            daysAfter: daysAfter, calendar: calendar) else { return [] }
+        let predicate = store.predicateForEvents(withStart: window.start, end: window.end, calendars: nil)
         return store.events(matching: predicate)
             .map(Self.draft(from:))
             .sorted { $0.start < $1.start }

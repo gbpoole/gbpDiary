@@ -46,6 +46,8 @@ struct DayPageContent: View {
 
     @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allTimeEntries: [TaskTimeEntry]
     @Query(sort: \EmailMessage.date, order: .reverse) private var allEmails: [EmailMessage]
+    @Query private var allPeople: [Person]
+    @State private var reviewingDay: Date?
 
     private var todayTimeEntries: [TaskTimeEntry] {
         let cal = Calendar.current
@@ -54,7 +56,7 @@ struct DayPageContent: View {
 
     private var dayEmails: [EmailMessage] {
         let cal = Calendar.current
-        return allEmails.filter { cal.isDate($0.date, inSameDayAs: date) }
+        return allEmails.filter { cal.isDate($0.date, inSameDayAs: date) && !$0.dismissed }
     }
 
     private var dayStart: Date { DayTaskFiltering.dayBounds(for: date).dayStart }
@@ -179,6 +181,11 @@ struct DayPageContent: View {
         .sheet(item: $addNoteRecord) { record in
             ContentNoteEditorSheet(dayRecord: record, onCreated: { newlyAddedNoteId = $0.id })
         }
+        .sheet(isPresented: Binding(get: { reviewingDay != nil }, set: { if !$0 { reviewingDay = nil } })) {
+            if let day = reviewingDay {
+                EmailReviewSheet(day: day)
+            }
+        }
         .onAppear {
             migrateOldNotes()
             migrateDayNote()
@@ -196,7 +203,10 @@ struct DayPageContent: View {
                 .padding(.horizontal)
                 .padding(.vertical, 6)
         } else {
-            ForEach(dayEmails) { DayEmailRow(email: $0) }
+            ForEach(dayEmails) { email in
+                DayEmailRow(email: email)
+                    .onTapGesture { reviewingDay = date }
+            }
         }
     }
 
@@ -227,6 +237,7 @@ struct DayPageContent: View {
             MailScriptParsing.dedupeKey(messageId: $0.messageId, account: $0.account, mailbox: $0.mailbox,
                                         date: $0.date, fromAddress: $0.fromAddress, subject: $0.subject)
         })
+        let peopleRefs = allPeople.map { PersonRef(id: $0.id, name: $0.name, emails: $0.emails) }
         var added = 0
         for d in drafts {
             let mailbox = d.direction == .inbox ? "INBOX" : "Sent"
@@ -238,6 +249,11 @@ struct DayPageContent: View {
                                    direction: d.direction, fromAddress: d.address, fromName: d.name,
                                    subject: d.subject, date: d.date)
             modelContext.insert(msg)
+            // Auto-link the "other party" when the address already belongs to a Person.
+            if let personID = EmailPersonMatching.personID(forAddress: d.address, in: peopleRefs),
+               let person = allPeople.first(where: { $0.id == personID }) {
+                msg.person = person
+            }
             added += 1
         }
         return added

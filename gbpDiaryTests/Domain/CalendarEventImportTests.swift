@@ -102,4 +102,34 @@ struct CalendarEventImportTests {
         let sorted = CalendarEventImport.sortedByProximity([future, past], to: now)
         #expect(sorted.map(\.title) == ["past", "future"])
     }
+
+    // MARK: - importWindow
+
+    @Test func importWindow_spansDaysBeforeAndAfter_withExclusiveEnd() {
+        // 2024-01-15, ±3 days → [2024-01-12 00:00, 2024-01-19 00:00)
+        let window = CalendarEventImport.importWindow(around: date(hour: 8), daysBefore: 3, daysAfter: 3, calendar: calendar)
+        let day = { (d: Int) -> Date in
+            calendar.date(from: DateComponents(year: 2024, month: 1, day: d))!
+        }
+        #expect(window?.start == day(12))
+        #expect(window?.end == day(19))
+    }
+
+    @Test func importWindow_zeroWidth_isSingleDay() {
+        // daysBefore/after 0 → exactly one calendar day [startOfDay, startOfDay+1)
+        let window = CalendarEventImport.importWindow(around: date(hour: 8), daysBefore: 0, daysAfter: 0, calendar: calendar)
+        let day = { (d: Int) -> Date in
+            calendar.date(from: DateComponents(year: 2024, month: 1, day: d))!
+        }
+        #expect(window?.start == day(15))
+        #expect(window?.end == day(16))
+    }
+
+    @Test func importWindow_normalisesToStartOfDay() {
+        // Any time on the day maps to the same window as midnight.
+        let atNoon = CalendarEventImport.importWindow(around: date(hour: 12), daysBefore: 1, daysAfter: 1, calendar: calendar)
+        let atMidnight = CalendarEventImport.importWindow(around: date(hour: 0), daysBefore: 1, daysAfter: 1, calendar: calendar)
+        #expect(atNoon?.start == atMidnight?.start)
+        #expect(atNoon?.end == atMidnight?.end)
+    }
 }

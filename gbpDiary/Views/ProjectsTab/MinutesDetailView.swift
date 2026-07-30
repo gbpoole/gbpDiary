@@ -460,8 +460,10 @@ struct MinutesDetailView: View {
 
     private func importEventLabel(_ ev: CalendarEventDraft) -> String {
         let title = ev.title.isEmpty ? "Untitled" : ev.title
-        let when = ev.isAllDay ? "All day" : ev.start.formatted(date: .omitted, time: .shortened)
-        return "\(when) · \(title)"
+        // Title first, then the day/time (the picker spans several days, e.g. "Standup · Thu 30 Jul, 8:00 AM").
+        let day = ev.start.formatted(.dateTime.weekday(.abbreviated).day().month(.abbreviated))
+        let when = ev.isAllDay ? "\(day), all day" : "\(day), \(ev.start.formatted(date: .omitted, time: .shortened))"
+        return "\(title) · \(when)"
     }
 
     private func setupCalendarImport() {
@@ -480,7 +482,10 @@ struct MinutesDetailView: View {
     }
 
     private func loadCalendarEvents() {
-        calendarEvents = calendarService.events(on: minutes.meetingAt)
+        // A few days either side so you can import an event from a nearby day (e.g. catching up the
+        // morning after, or a recurring event that only lands on certain weekdays). Proximity
+        // ordering keeps the closest to now at the top.
+        calendarEvents = calendarService.events(around: minutes.meetingAt, daysBefore: 3, daysAfter: 3)
     }
 
     // Populate the meeting from a chosen event; unmatched attendee People are created immediately

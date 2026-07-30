@@ -32,6 +32,7 @@ import SwiftData
 
     var meetings: [Minutes]
     var documents: [Document]
+    var emails: [EmailMessage]
     @Relationship(deleteRule: .nullify, inverse: \Task.project) var tasks: [Task]
     @Relationship(deleteRule: .nullify, inverse: \Note.project) var notes: [Note]
     @Relationship(deleteRule: .nullify, inverse: \FocusBlock.project) var focusBlocks: [FocusBlock]
@@ -48,6 +49,7 @@ import SwiftData
         self.institutions = []
         self.meetings = []
         self.documents = []
+        self.emails = []
         self.tasks = []
         self.notes = []
         self.focusBlocks = []
