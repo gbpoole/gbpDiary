@@ -65,6 +65,8 @@ struct FuzzyPickerField<Item: Identifiable>: View {
     var filters: [PickerFilter<Item>]? = nil
     /// ID of the filter that should be active when the popover first opens.
     var defaultFilterId: String? = nil
+    /// Filter ids active when the popover first opens (multiple; takes precedence over `defaultFilterId`).
+    var defaultActiveFilterIds: Set<String> = []
     /// When provided, the caller controls whether the popover is open.
     /// Useful for opening the picker programmatically from another view.
     var isPresented: Binding<Bool>? = nil
@@ -179,6 +181,7 @@ struct FuzzyPickerField<Item: Identifiable>: View {
             autoSelectOnCreate: autoSelectOnCreate,
             filters: filters,
             defaultFilterId: defaultFilterId,
+            defaultActiveFilterIds: defaultActiveFilterIds,
             filterLeadContent: filterLeadContent,
             dismiss: { popoverIsOpen.wrappedValue = false }
         )
@@ -201,6 +204,7 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
     var autoSelectOnCreate: Bool
     var filters: [PickerFilter<Item>]?
     var defaultFilterId: String? = nil
+    var defaultActiveFilterIds: Set<String> = []
     var filterLeadContent: AnyView? = nil
     var dismiss: () -> Void
 
@@ -393,7 +397,8 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
         .onAppear {
             localSelected = selected
             searchFocused = true
-            if let defaultId = defaultFilterId { activeFilterIds = [defaultId] }
+            if !defaultActiveFilterIds.isEmpty { activeFilterIds = defaultActiveFilterIds }
+            else if let defaultId = defaultFilterId { activeFilterIds = [defaultId] }
         }
         // Keep localSelected in sync if chips are removed from the form while open.
         .onChange(of: selected.count) { _, _ in localSelected = selected }
@@ -522,6 +527,7 @@ extension FuzzyPickerField {
         onCreate: (() -> Void)? = nil,
         filters: [PickerFilter<Item>]? = nil,
         defaultFilterId: String? = nil,
+        defaultActiveFilterIds: Set<String> = [],
         isPresented: Binding<Bool>? = nil,
         filterLeadContent: AnyView? = nil,
         autoFocus: Bool = false
@@ -539,6 +545,7 @@ extension FuzzyPickerField {
         self.onCreate = onCreate
         self.filters = filters
         self.defaultFilterId = defaultFilterId
+        self.defaultActiveFilterIds = defaultActiveFilterIds
         self.isPresented = isPresented
         self.filterLeadContent = filterLeadContent
         self.autoFocus = autoFocus

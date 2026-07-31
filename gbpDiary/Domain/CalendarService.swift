@@ -28,6 +28,13 @@ final class CalendarService {
         Self.map(EKEventStore.authorizationStatus(for: .event))
     }
 
+    /// All of the user's event calendars (id + title), sorted by title. For the Settings picker.
+    func calendars() -> [CalendarInfo] {
+        store.calendars(for: .event)
+            .map { CalendarInfo(id: $0.calendarIdentifier, title: $0.title) }
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
     /// Requests full calendar access. The completion is delivered on the main actor.
     func requestAccess(_ completion: @escaping (CalendarAccess) -> Void) {
         store.requestFullAccessToEvents { _, _ in

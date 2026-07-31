@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
 #endif
@@ -14,6 +15,7 @@ struct MinutesDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Query(sort: \Person.name) private var allPeople: [Person]
+    @Query private var allDocuments: [Document]
     @State private var summaryDraft = ""
     @State private var summaryDebouncer = Debouncer()
     @State private var durationText = ""
@@ -23,6 +25,12 @@ struct MinutesDetailView: View {
     @State private var showingDeleteConfirm = false
     @State private var isDeleted = false
     @State private var isConfirmed = false
+    @State private var addingAction = false
+    @State private var editingActionTask: Task?
+    @State private var editingDocument: Document?
+    @State private var lastAddedDocument: Document?
+    @State private var showingLinkDoc = false
+    @State private var minutesInsertion: MarkdownDocumentEditor.EditorInsertionRequest?
     #if os(macOS)
     // Calendar import (new meetings only): pick an event to populate the fields.
     @State private var calendarService = CalendarService()
@@ -77,13 +85,30 @@ struct MinutesDetailView: View {
                     .padding()
                 }
             } else {
-                ScrollView {
+                // Pin the summary + metadata header so it stays visible while the minutes scroll.
+                VStack(spacing: 0) {
                     VStack(alignment: .leading, spacing: 12) {
-                        summaryField
+                        VStack(alignment: .leading, spacing: 1) {
+                            summaryField
+                            Text(minutes.meetingAt.formatted(date: .complete, time: .shortened))
+                                .font(.subheadline).foregroundStyle(.secondary)
+                        }
                         metadataHeader
-                        notesSection
                     }
-                    .padding()
+                    .padding([.horizontal, .top])
+                    .padding(.bottom, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(AppTheme.background)
+                    // Pinned action bar (Add action / Add document / Download) — stays with the header.
+                    DayActionBar(items: minutesActionItems)
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            actionItemsSection
+                            documentsSection
+                            notesSection
+                        }
+                        .padding()
+                    }
                 }
             }
         }
@@ -119,6 +144,20 @@ struct MinutesDetailView: View {
         } message: {
             Text("This will permanently delete the meeting and its minutes.")
         }
+        .sheet(isPresented: $addingAction) {
+            TaskEditorSheet(task: nil, defaultDate: minutes.meetingAt,
+                            onTaskCreated: { insertActionLine(for: $0) },
+                            presetProject: minutes.projects.first, originMinutes: minutes,
+                            attendees: minutes.attendees, requireAssignee: true)
+        }
+        .sheet(item: $editingActionTask) { task in
+            TaskEditorSheet(task: task, defaultDate: minutes.meetingAt,
+                            attendees: minutes.attendees, requireAssignee: true)
+        }
+        .sheet(item: $editingDocument, onDismiss: { discardEmptyDocument() }) { doc in
+            DocumentEditorSheet(document: doc, requireAttachment: true)
+        }
+        .sheet(isPresented: $showingLinkDoc) { documentLinkSheet }
         #if os(macOS)
         .alert("Unrecognized attendees", isPresented: $showingUnresolvedConfirm) {
             Button("Add anyway") { confirmAdd() }
@@ -433,7 +472,8 @@ struct MinutesDetailView: View {
                 chipColor: AppTheme.project,
                 tapArea: true,
                 emptyLabel: "Search calendar events…",
-                filters: importCalendarFilters.isEmpty ? nil : importCalendarFilters
+                filters: importCalendarFilters.isEmpty ? nil : importCalendarFilters,
+                defaultActiveFilterIds: defaultCalendarFilterIds
             )
             .onChange(of: importedEvent) { _, ev in
                 if let ev { applyImportedEvent(ev); importedEvent = nil }
@@ -443,6 +483,15 @@ struct MinutesDetailView: View {
 
     private var sortedImportEvents: [CalendarEventDraft] {
         CalendarEventImport.sortedByProximity(calendarEvents, to: Date())
+    }
+
+    // Default calendar filters (from Settings) intersected with the calendars that actually have
+    // events in the window, mapped to the picker's chip ids. Empty = show all.
+    private var defaultCalendarFilterIds: Set<String> {
+        let defaults = AppSettingsStore.defaultCalendarIDs
+        guard !defaults.isEmpty else { return [] }
+        let present = Set(calendarEvents.map { "cal:\($0.calendarId)" })
+        return Set(defaults.map { "cal:\($0)" }).intersection(present)
     }
 
     // One filter chip per calendar that has events this day; none active = all calendars.
@@ -577,7 +626,248 @@ struct MinutesDetailView: View {
             NSWorkspace.shared.open(url)
         }
     }
+
+    // MARK: - Export (macOS)
+
+    // Export the minutes as a portable file: a plain .md when there are no images or attached
+    // documents, otherwise a .zip bundling the markdown + images/ and docs/ folders with the
+    // markdown's image links rewritten to point at the bundled files.
+    private func exportMinutes() {
+        let base = MinutesExport.exportBaseName(summary: minutes.summary)
+        let markdown = composedExportMarkdown()
+
+        // Images referenced by the note (only those actually embedded).
+        let referencedIDs = Set(AttachmentRef.referencedIDs(in: markdown))
+        let images = (minutes.note?.attachments ?? []).filter { referencedIDs.contains($0.id) }
+        // Attached documents' files.
+        let docFiles: [Attachment] = minutes.documents.flatMap(\.attachments)
+        let hasBundle = !images.isEmpty || !docFiles.isEmpty
+
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = hasBundle ? "\(base).zip" : "\(base).md"
+        panel.allowedContentTypes = [hasBundle ? .zip : .plainText]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let dest = panel.url else { return }
+
+        do {
+            if hasBundle {
+                try exportBundle(markdown: markdown, base: base, images: images, docFiles: docFiles, to: dest)
+            } else {
+                try markdown.write(to: dest, atomically: true, encoding: .utf8)
+            }
+        } catch {
+            NSAlert(error: error).runModal()
+        }
+    }
+
+    // Full export markdown: meeting header + Action Items + Documents + the minutes body.
+    private func composedExportMarkdown() -> String {
+        let dateLine = minutes.meetingAt.formatted(date: .complete, time: .shortened)
+        var metaLines: [String] = []
+        if !minutes.projects.isEmpty {
+            metaLines.append("**Projects:** " + minutes.projects.map(\.name).joined(separator: ", "))
+        }
+        if let d = minutes.duration { metaLines.append("**Duration:** " + d.displayString) }
+        if !minutes.attendees.isEmpty {
+            metaLines.append("**Attendees:** " + minutes.attendees.map(\.name).joined(separator: ", "))
+        }
+        let actionItems = minutes.newTasks
+            .sorted { $0.meetingTaskSortOrder < $1.meetingTaskSortOrder }
+            .map { task -> String in
+                var line = "\(task.summary) — \(task.assignee?.name ?? "Unassigned")"
+                if let due = task.scheduledAt {
+                    line += " (due \(due.formatted(date: .abbreviated, time: .omitted)))"
+                }
+                return line
+            }
+        let documents = minutes.documents.map { doc -> String in
+            let name = documentTitle(doc)
+            let n = doc.attachments.count
+            return n > 0 ? "\(name) (\(n) file\(n == 1 ? "" : "s"))" : name
+        }
+        return MinutesExport.composeMarkdown(
+            title: minutes.summary ?? "Meeting", dateLine: dateLine, metaLines: metaLines,
+            actionItems: actionItems, documents: documents, body: minutes.note?.content ?? "")
+    }
+
+    private func exportBundle(markdown: String, base: String, images: [Attachment],
+                              docFiles: [Attachment], to dest: URL) throws {
+        let fm = FileManager.default
+        let work = fm.temporaryDirectory.appendingPathComponent("export-\(UUID().uuidString)/\(base)", isDirectory: true)
+        try fm.createDirectory(at: work, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: work.deletingLastPathComponent()) }
+
+        // Map each referenced image id → images/<uuid>.<ext>, copy the file, and rewrite the markdown.
+        var relPaths: [UUID: String] = [:]
+        if !images.isEmpty {
+            let imagesDir = work.appendingPathComponent("images", isDirectory: true)
+            try fm.createDirectory(at: imagesDir, withIntermediateDirectories: true)
+            for att in images {
+                let name = MinutesExport.bundleFileName(id: att.id, originalFileName: att.fileName)
+                try? fm.copyItem(at: att.fileURL, to: imagesDir.appendingPathComponent(name))
+                relPaths[att.id] = "images/\(name)"
+            }
+        }
+        if !docFiles.isEmpty {
+            let docsDir = work.appendingPathComponent("docs", isDirectory: true)
+            try fm.createDirectory(at: docsDir, withIntermediateDirectories: true)
+            for att in docFiles {
+                try? fm.copyItem(at: att.fileURL, to: docsDir.appendingPathComponent(att.fileName))
+            }
+        }
+        let rewritten = MinutesExport.rewriteImageLinks(markdown) { relPaths[$0] }
+        try rewritten.write(to: work.appendingPathComponent("\(base).md"), atomically: true, encoding: .utf8)
+
+        // Zip the folder via NSFileCoordinator's .forUploading (produces a temporary .zip).
+        var coordError: NSError?
+        var thrown: Error?
+        NSFileCoordinator().coordinate(readingItemAt: work, options: [.forUploading], error: &coordError) { zipURL in
+            do {
+                if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
+                try fm.copyItem(at: zipURL, to: dest)
+            } catch { thrown = error }
+        }
+        if let coordError { throw coordError }
+        if let thrown { throw thrown }
+    }
     #endif
+
+    // Top action bar (macOS-agnostic; mirrors the diary page): add action item, add document, export.
+    private var minutesActionItems: [DayActionItem] {
+        var items: [DayActionItem] = [
+            DayActionItem(id: "action", systemName: "checkmark.square", color: AppTheme.completed, tooltip: "Add action item") { addingAction = true },
+            DayActionItem(id: "document", systemName: "doc.badge.plus", color: AppTheme.duration, tooltip: "Add document") { addDocument() },
+        ]
+        #if os(macOS)
+        items.append(DayActionItem(id: "export", systemName: "square.and.arrow.down", color: AppTheme.accent, tooltip: "Download minutes") { exportMinutes() })
+        #endif
+        return items
+    }
+
+    // Action items = the meeting's Tasks (Task.originMinutes); created via the top "Add action" button.
+    private var actionItemsSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 4) {
+                let items = minutes.newTasks.sorted { $0.meetingTaskSortOrder < $1.meetingTaskSortOrder }
+                if items.isEmpty {
+                    Text("No action items yet.")
+                        .font(.callout).foregroundStyle(.secondary).padding(.vertical, 2)
+                } else {
+                    ForEach(items) { task in
+                        MeetingActionRow(task: task, onOpen: { editingActionTask = task })
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text("Action Items").font(.caption).fontWeight(.semibold)
+        }
+    }
+
+    // Add-document flow: create a document linked to the meeting and open its editor (where files are
+    // added — a save requires at least one). If the editor is dismissed with no files, discard it.
+    private func addDocument() {
+        let doc = Document()
+        if let proj = minutes.projects.first { doc.projects = [proj] }
+        modelContext.insert(doc)
+        minutes.documents.append(doc)
+        minutes.updatedAt = Date()
+        lastAddedDocument = doc
+        editingDocument = doc
+    }
+
+    private func discardEmptyDocument() {
+        guard let doc = lastAddedDocument else { return }
+        lastAddedDocument = nil
+        if doc.attachments.isEmpty {
+            minutes.documents.removeAll { $0.id == doc.id }
+            modelContext.delete(doc)
+            minutes.updatedAt = Date()
+        }
+    }
+
+    // When an action item is created, insert a bold "Action <INITIALS>: <summary>" on a new line at
+    // the minutes cursor (bulleted to match the current line's list level); appends the due date.
+    private func insertActionLine(for task: Task) {
+        let initials = MinutesExport.initials(task.assignee?.name ?? "")
+        let who = initials.isEmpty ? "" : "\(initials): "
+        var text = "Action \(who)\(task.summary)"
+        if let due = task.scheduledAt {
+            text += " (due \(due.formatted(date: .abbreviated, time: .omitted)))"
+        }
+        minutesInsertion = .init(id: UUID(), text: "**\(text)**")
+    }
+
+    // Documents attached to the meeting (Minutes.documents ↔ Document.meetings). Link existing docs or
+    // create a new one inline via the picker; rows open the document in a workspace tab.
+    private var documentsSection: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 6) {
+                if minutes.documents.isEmpty {
+                    Text("No documents attached.")
+                        .font(.callout).foregroundStyle(.secondary).padding(.vertical, 2)
+                } else {
+                    ForEach(minutes.documents) { doc in
+                        Button { workspace.focusOrOpen(.document(doc.persistentModelID)) } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "doc").foregroundStyle(.secondary).font(.system(size: 13))
+                                Text(documentTitle(doc)).lineLimit(1)
+                                let n = doc.attachments.count
+                                if n > 0 {
+                                    Text("\(n) file\(n == 1 ? "" : "s")")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 0)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                Button("Link existing document…") { showingLinkDoc = true }
+                    .font(.callout).foregroundStyle(AppTheme.accent).buttonStyle(.plain)
+                    .padding(.top, 2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text("Documents").font(.caption).fontWeight(.semibold)
+        }
+    }
+
+    // Link existing documents (from the document library) to the meeting — chips live in this sheet,
+    // not the inline section.
+    private var documentLinkSheet: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Link existing documents to this meeting.")
+                        .font(.callout).foregroundStyle(.secondary)
+                    FuzzyPickerField(
+                        allItems: allDocuments,
+                        selected: Binding(
+                            get: { minutes.documents },
+                            set: { minutes.documents = $0; minutes.updatedAt = Date() }
+                        ),
+                        label: { documentTitle($0) },
+                        chipColor: AppTheme.duration,
+                        tapArea: true,
+                        emptyLabel: "Tap to link documents"
+                    )
+                }
+                .padding()
+            }
+            .navigationTitle("Link Documents")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) { Button("Done") { showingLinkDoc = false } }
+            }
+        }
+        #if os(macOS)
+        .frame(minWidth: 460, minHeight: 340)
+        #endif
+    }
+
+    private func documentTitle(_ doc: Document) -> String {
+        doc.summary?.isEmpty == false ? doc.summary! : "Untitled document"
+    }
 
     private var notesSection: some View {
         GroupBox("Minutes") {
@@ -586,7 +876,9 @@ struct MinutesDetailView: View {
                     note: note,
                     startInEdit: workspace.autoEditMinutesId == minutes.persistentModelID,
                     onStartedEditing: { workspace.autoEditMinutesId = nil },
-                    showsHeader: false   // the meeting page header already shows project/tags
+                    showsHeader: false,   // the meeting page header already shows project/tags
+                    showsFormattingToolbar: true,
+                    insertionRequest: minutesInsertion
                 )
                 .padding(.horizontal, -12)
             } else if !isDeleted {
@@ -858,5 +1150,69 @@ struct FlowLayout: Layout {
             x += size.width + spacing
         }
         return rows
+    }
+}
+
+// Compact action-item row for a meeting: status toggle + summary + assignee/date chips. The whole
+// row (outside the status icon) opens the task editor; there is no separate edit icon.
+private struct MeetingActionRow: View {
+    @Bindable var task: Task
+    let onOpen: () -> Void
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 6) {
+            Button(action: toggleStatus) {
+                Image(systemName: statusIcon)
+                    .foregroundStyle(statusColor)
+                    .font(.system(size: 16))
+                    .frame(width: 20, height: 20)
+            }
+            .buttonStyle(.plain)
+
+            Text(task.summary)
+                .lineLimit(1)
+                .strikethrough(task.status == .cancelled)
+                .foregroundStyle(task.status == .cancelled ? AppTheme.mutedText : AppTheme.text)
+            if let assignee = task.assignee {
+                Chip(label: assignee.name, color: AppTheme.person)
+            }
+            if let due = task.scheduledAt {
+                Chip(label: due.formatted(.dateTime.day().month()), color: AppTheme.duration)
+            }
+            Spacer(minLength: 0)
+        }
+        .contentShape(Rectangle())
+        .onTapGesture { onOpen() }
+        .padding(.vertical, 3)
+    }
+
+    private var statusIcon: String {
+        switch task.status {
+        case .todo:            "circle"
+        case .started:         "play.circle.fill"
+        case .completed:       "checkmark.circle.fill"
+        case .cancelled:       "xmark.circle.fill"
+        case .followUpPending: "arrow.clockwise.circle.fill"
+        }
+    }
+
+    private var statusColor: Color {
+        switch task.status {
+        case .todo:            AppTheme.mutedText
+        case .started:         AppTheme.started
+        case .completed:       AppTheme.completed
+        case .cancelled:       AppTheme.mutedText
+        case .followUpPending: AppTheme.followUp
+        }
+    }
+
+    private func toggleStatus() {
+        switch task.status {
+        case .todo:            task.status = .started; task.updatedAt = Date()
+        case .started:         task.markCompleted()
+        case .completed:       task.markCancelled()
+        case .followUpPending: task.markCancelled()
+        case .cancelled:       task.unmarkCancelled()
+        }
     }
 }
