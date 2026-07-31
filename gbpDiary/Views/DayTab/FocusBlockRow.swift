@@ -9,6 +9,7 @@ struct FocusBlockRow: View {
     // Entries whose time falls in this block's range (derived by ActivitySection, not stored).
     var entries: [TaskTimeEntry] = []
     var meetings: [DayEntry] = []
+    var sentEmails: [EmailMessage] = []
 
     private var blockActivities: [TaskTimeEntry] {
         entries.sorted { $0.date < $1.date }
@@ -18,8 +19,9 @@ struct FocusBlockRow: View {
         let taskHours = entries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
         let meetingHours = meetings.compactMap(\.minutes).compactMap(\.duration)
             .reduce(0.0) { $0 + $1.hoursNormalized }
+        let emailHours = sentEmails.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
         return FocusBlockMath.netHours(capacity: block.duration.hoursNormalized,
-                                       loggedHours: taskHours + meetingHours)
+                                       loggedHours: taskHours + meetingHours + emailHours)
     }
 
     @State private var isCollapsed = false
@@ -104,27 +106,46 @@ struct FocusBlockRow: View {
     private var durationChips: some View {
         HStack(spacing: 4) {
             Chip(label: block.slot.displayName, color: AppTheme.project)
-            if netHours > 0 && (!blockActivities.isEmpty || !meetings.isEmpty) {
+            if netHours > 0 && (!blockActivities.isEmpty || !meetings.isEmpty || !sentEmails.isEmpty) {
                 let netDur = Duration(value: netHours, unit: .h)
                 Chip(label: netDur.displayString, color: AppTheme.duration)
             }
         }
     }
 
-    @ViewBuilder
-    private var meetingRows: some View {
-        ForEach(meetings, id: \.id) { entry in
-            if let minutes = entry.minutes {
-                MeetingActivityRow(minutes: minutes)
+    // A block's meetings, sent emails, and time entries interleaved in chronological order.
+    private enum BlockItem: Identifiable {
+        case meeting(DayEntry)
+        case email(EmailMessage)
+        case entry(TaskTimeEntry)
+        var id: String {
+            switch self {
+            case .meeting(let e): "m-\(e.id.uuidString)"
+            case .email(let e):   "s-\(e.id.uuidString)"
+            case .entry(let e):   "e-\(e.id.uuidString)"
             }
         }
     }
 
+    private var orderedBlockItems: [BlockItem] {
+        var items: [(Date, BlockItem)] = []
+        for meeting in meetings { items.append((meeting.minutes?.meetingAt ?? .distantPast, .meeting(meeting))) }
+        for email in sentEmails { items.append((email.date, .email(email))) }
+        for entry in entries { items.append((entry.date, .entry(entry))) }
+        return items.sorted { $0.0 < $1.0 }.map(\.1)
+    }
+
     @ViewBuilder
     private var activityRows: some View {
-        meetingRows
-        ForEach(blockActivities) { entry in
-            ActivityEntryRow(entry: entry)
+        ForEach(orderedBlockItems) { item in
+            switch item {
+            case .meeting(let entry):
+                if let minutes = entry.minutes { MeetingActivityRow(minutes: minutes) }
+            case .email(let email):
+                SentEmailActivityRow(email: email)
+            case .entry(let entry):
+                ActivityEntryRow(entry: entry)
+            }
         }
     }
 }

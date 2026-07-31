@@ -28,6 +28,18 @@ struct MailScriptParsingTests {
         #expect(s.contains("account \"Exchange\""))
         #expect(s.contains("mailbox \"Inbox\""))
         #expect(s.contains("mailbox \"Sent Items\""))
+        // Self-sent inbox copies (looped back via a mailing list) are skipped.
+        #expect(s.contains("email addresses of acc"))
+        #expect(s.contains("senderIsMine"))
+    }
+
+    @Test func openMessageScript_embedsAccountMailboxIdAndOpens() {
+        let s = MailScriptParsing.openMessageScript(account: "My \"Work\" Acct", mailbox: "Sent Items", id: "12345")
+        #expect(s.contains("account \"My \\\"Work\\\" Acct\""))
+        #expect(s.contains("mailbox \"Sent Items\""))
+        #expect(s.contains("whose id is 12345"))   // integer, unquoted
+        #expect(s.contains("open theMsg"))
+        #expect(s.contains("activate"))
     }
 
     @Test func mailboxesScript_embedsEscapedAccountName() {

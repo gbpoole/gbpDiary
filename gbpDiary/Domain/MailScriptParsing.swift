@@ -42,12 +42,20 @@ enum MailScriptParsing {
         with timeout of 90 seconds
             tell application "Mail"
                 set acc to account "\(acc)"
+                -- The account's own addresses, so a message that looped back to the Inbox because we
+                -- sent it to a mailing list we're on can be skipped (the Sent copy represents it).
+                set myAddrs to {}
+                try
+                    set myAddrs to (get email addresses of acc)
+                end try
                 try
                     -- Materialize the filter result once, then iterate concrete references (iterating the
                     -- `whose` specifier directly re-scans the whole mailbox per access — pathologically slow).
                     set inMsgs to (messages of mailbox "\(inbox)" of acc whose date received ≥ d1 and date received < d2)
                     repeat with m in inMsgs
-                        set out to out & my rec("in", m, FS) & RS
+                        if not my senderIsMine(m, myAddrs) then
+                            set out to out & my rec("in", m, FS) & RS
+                        end if
                     end repeat
                 end try
                 try
@@ -69,6 +77,21 @@ enum MailScriptParsing {
             set time of dt to 0
             return dt
         end mkDate
+
+        on senderIsMine(m, myAddrs)
+            set snd to ""
+            tell application "Mail"
+                try
+                    set snd to (sender of m) as string
+                end try
+            end tell
+            if snd is "" then return false
+            repeat with a in myAddrs
+                set addr to (a as string)
+                if addr is not "" and snd contains addr then return true
+            end repeat
+            return false
+        end senderIsMine
 
         on rec(dir, m, FS)
             tell application "Mail"
@@ -114,6 +137,19 @@ enum MailScriptParsing {
                 return dir & FS & mid & FS & party & FS & subj & FS & y & FS & mo & FS & dd & FS & hh & FS & mm & FS & ss
             end tell
         end rec
+        """
+    }
+
+    /// AppleScript that opens one message in Mail (by Mail's integer `id` within an account's mailbox)
+    /// and brings Mail forward. `account`/`mailbox` are escaped; `id` is embedded unquoted (integer).
+    nonisolated static func openMessageScript(account: String, mailbox: String, id: String) -> String {
+        """
+        tell application "Mail"
+            set acc to account "\(escape(account))"
+            set theMsg to (first message of mailbox "\(escape(mailbox))" of acc whose id is \(id))
+            open theMsg
+            activate
+        end tell
         """
     }
 

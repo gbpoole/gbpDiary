@@ -205,6 +205,9 @@ private struct EmailReviewRow: View {
     let makeProject: (String) -> Project?
     let onReconcile: () -> Void
 
+    @State private var mailService = MailScriptService()
+    @State private var openError: String?
+
     private var sender: String {
         if let name = email.fromName, !name.isEmpty { return name }
         return email.fromAddress.isEmpty ? "Unknown sender" : email.fromAddress
@@ -212,10 +215,14 @@ private struct EmailReviewRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: email.direction == .sent ? "paperplane" : "envelope")
-                .foregroundStyle(.secondary)
-                .font(.system(size: 14))
-                .frame(width: 20)
+            Button { openInMail() } label: {
+                Image(systemName: email.direction == .sent ? "paperplane" : "envelope")
+                    .foregroundStyle(.secondary)
+                    .font(.system(size: 14))
+                    .frame(width: 20)
+            }
+            .buttonStyle(.plain)
+            .help("Open in Mail")
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(sender).lineLimit(1).fontWeight(.medium)
@@ -234,6 +241,15 @@ private struct EmailReviewRow: View {
             }
         }
         .padding(.vertical, 2)
+        .alert("Couldn't open email", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(openError ?? "") }
+    }
+
+    private func openInMail() {
+        mailService.openMessage(email) { result in
+            if case .failure(let error) = result { openError = error.userMessage }
+        }
     }
 
     @ViewBuilder private var personChip: some View {

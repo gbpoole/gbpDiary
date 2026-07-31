@@ -39,6 +39,35 @@ enum MailScriptError: Error, Equatable {
         #endif
     }
 
+    /// Opens a stored email in Mail: resolves the real mailbox/account (the stored `mailbox` is a
+    /// placeholder), then opens by Mail's integer id. Completion is delivered on the main actor.
+    func openMessage(_ email: EmailMessage, completion: @escaping (Result<Void, MailScriptError>) -> Void) {
+        let settings = EmailSettingsStore.load()
+        let mailbox = email.direction == .inbox ? settings.inboxMailbox : settings.sentMailbox
+        let account = email.account.isEmpty ? settings.accountName : email.account
+        let id = email.messageId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else {
+            completion(.failure(.scriptError("this email has no stored message id to open")))
+            return
+        }
+        openMessage(account: account, mailbox: mailbox, id: id, completion: completion)
+    }
+
+    /// Opens a message by account + mailbox + Mail integer id, bringing Mail forward.
+    func openMessage(account: String, mailbox: String, id: String,
+                     completion: @escaping (Result<Void, MailScriptError>) -> Void) {
+        #if os(macOS)
+        let source = MailScriptParsing.openMessageScript(account: account, mailbox: mailbox, id: id)
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                completion(Self.run(source).map { _ in () })
+            }
+        }
+        #else
+        completion(.failure(.mailUnavailable))
+        #endif
+    }
+
     /// Names of the user's Mail accounts (for the Settings picker).
     func listAccounts(completion: @escaping (Result<[String], MailScriptError>) -> Void) {
         runList(MailScriptParsing.accountsScript(), completion)

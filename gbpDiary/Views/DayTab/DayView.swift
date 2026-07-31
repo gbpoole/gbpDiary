@@ -47,11 +47,31 @@ struct DayPageContent: View {
     @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allTimeEntries: [TaskTimeEntry]
     @Query(sort: \EmailMessage.date, order: .reverse) private var allEmails: [EmailMessage]
     @Query private var allPeople: [Person]
+    @Query(sort: \Project.name) private var allEmailProjects: [Project]
     @State private var reviewingDay: Date?
+    @State private var ingestRequest: EmailIngestRequest?
+    @State private var reconcilingThread: EmailThread?
 
     private var todayTimeEntries: [TaskTimeEntry] {
         let cal = Calendar.current
         return allTimeEntries.filter { cal.isDate($0.date, inSameDayAs: date) }
+    }
+
+    // Emails for the day grouped into threads (same normalized subject + other party), latest first.
+    private var dayEmailThreads: [EmailThread] {
+        let groups = Dictionary(grouping: dayEmails) { email in
+            EmailThreading.threadKey(subject: email.subject,
+                                     party: email.person?.id.uuidString ?? email.fromAddress)
+        }
+        return groups.map { key, msgs in
+            EmailThread(key: key, messages: msgs.sorted { $0.date > $1.date })
+        }
+        .sorted { $0.date > $1.date }
+    }
+
+    // Sent emails for the day (shown in the Activity section at their send time).
+    private var daySentEmails: [EmailMessage] {
+        dayEmails.filter { $0.direction == .sent }
     }
 
     private var dayEmails: [EmailMessage] {
@@ -132,6 +152,7 @@ struct DayPageContent: View {
             DayActionItem(id: "logtime",    systemName: "timer",               color: AppTheme.duration,  tooltip: "Log time")        { activityLogTimeTrigger = true },
             DayActionItem(id: "task",       systemName: "checkmark.square",    color: AppTheme.completed, tooltip: "Add task")        { showingAddTask = true },
             DayActionItem(id: "note",       systemName: "square.and.pencil",   color: AppTheme.accent,    tooltip: "Add note")        { addNote() },
+            DayActionItem(id: "email",      systemName: "tray.and.arrow.down", color: AppTheme.person,    tooltip: "Fetch email", isEnabled: !isRefreshingEmail) { refreshEmail() },
         ]
     }
 
@@ -148,6 +169,7 @@ struct DayPageContent: View {
                         todayEntries: todayTimeEntries,
                         meetings: dayMeetings,
                         completedTasks: activityCompletedTasks,
+                        sentEmails: daySentEmails,
                         findOrCreateDayRecord: findOrCreateDayRecord,
                         logTimeTrigger: $activityLogTimeTrigger,
                         focusBlockTrigger: $activityFocusBlockTrigger,
@@ -186,6 +208,15 @@ struct DayPageContent: View {
                 EmailReviewSheet(day: day)
             }
         }
+        .sheet(item: $ingestRequest) { req in
+            EmailIngestSheet(day: date, drafts: req.drafts, account: req.account)
+        }
+        .sheet(item: $reconcilingThread) { thread in
+            ResolveAttendeeSheet(
+                attendee: CalendarAttendee(name: thread.fromName ?? "", email: thread.fromAddress),
+                onResolve: { resolveEmailPerson(thread, $0) }
+            )
+        }
         .onAppear {
             migrateOldNotes()
             migrateDayNote()
@@ -195,7 +226,7 @@ struct DayPageContent: View {
     // MARK: - Email
 
     @ViewBuilder private var emailsSection: some View {
-        DaySectionHeader(title: "Email", systemImage: "arrow.clockwise", onAction: refreshEmail)
+        DaySectionHeader(title: "Email")
         if dayEmails.isEmpty {
             Text(isRefreshingEmail ? "Fetching email…" : "No email fetched for this day.")
                 .font(.callout)
@@ -203,14 +234,46 @@ struct DayPageContent: View {
                 .padding(.horizontal)
                 .padding(.vertical, 6)
         } else {
-            ForEach(dayEmails) { email in
-                DayEmailRow(email: email)
-                    .onTapGesture { reviewingDay = date }
+            ForEach(dayEmailThreads) { thread in
+                DayEmailThreadRow(
+                    thread: thread,
+                    allProjects: allEmailProjects,
+                    onReconcile: { reconcilingThread = thread },
+                    makeProject: makeEmailProject
+                )
+                .onTapGesture { reviewingDay = date }
             }
         }
     }
 
-    // Manual refresh: read this day's Inbox + Sent from Mail.app (configured account) and upsert.
+    // Resolve the thread's other party (link/create a Person) and apply to every message in it.
+    private func resolveEmailPerson(_ thread: EmailThread, _ result: AttendeeReconcileResult) {
+        let person: Person
+        switch result {
+        case .link(let p):
+            if !thread.fromAddress.isEmpty { p.emails = Person.appendingEmail(thread.fromAddress, to: p.emails) }
+            p.updatedAt = Date()
+            person = p
+        case .create(let name, let inst):
+            let p = Person(name: name)
+            if !thread.fromAddress.isEmpty { p.emails = [thread.fromAddress] }
+            p.institution = inst
+            modelContext.insert(p)
+            person = p
+        }
+        for message in thread.messages { message.person = person }
+    }
+
+    private func makeEmailProject(_ name: String) -> Project? {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let project = Project(name: trimmed)
+        modelContext.insert(project)
+        return project
+    }
+
+    // Manual refresh: fetch this day's Inbox + Sent from Mail.app, then open the ingest window so the
+    // user chooses what to keep (nothing is stored until they confirm there).
     private func refreshEmail() {
         guard !isRefreshingEmail else { return }
         let settings = EmailSettingsStore.load()
@@ -223,40 +286,15 @@ struct DayPageContent: View {
             isRefreshingEmail = false
             switch result {
             case .success(let drafts):
-                let added = upsertEmails(drafts, account: settings.accountName)
-                onShowBanner(BannerMessage(text: added == 0 ? "Email up to date" : "Fetched \(added) new message\(added == 1 ? "" : "s")"))
+                if drafts.isEmpty {
+                    onShowBanner(BannerMessage(text: "No email found for this day"))
+                } else {
+                    ingestRequest = EmailIngestRequest(drafts: drafts, account: settings.accountName)
+                }
             case .failure(let error):
                 onShowBanner(BannerMessage(text: error.userMessage, isError: true))
             }
         }
-    }
-
-    /// Inserts fetched messages not already cached (dedupe by Mail's per-message id). Returns the count added.
-    private func upsertEmails(_ drafts: [MailMessageDraft], account: String) -> Int {
-        var existing = Set(allEmails.map {
-            MailScriptParsing.dedupeKey(messageId: $0.messageId, account: $0.account, mailbox: $0.mailbox,
-                                        date: $0.date, fromAddress: $0.fromAddress, subject: $0.subject)
-        })
-        let peopleRefs = allPeople.map { PersonRef(id: $0.id, name: $0.name, emails: $0.emails) }
-        var added = 0
-        for d in drafts {
-            let mailbox = d.direction == .inbox ? "INBOX" : "Sent"
-            let key = MailScriptParsing.dedupeKey(messageId: d.messageId, account: account, mailbox: mailbox,
-                                                  date: d.date, fromAddress: d.address, subject: d.subject)
-            guard !existing.contains(key) else { continue }
-            existing.insert(key)
-            let msg = EmailMessage(messageId: d.messageId, account: account, mailbox: mailbox,
-                                   direction: d.direction, fromAddress: d.address, fromName: d.name,
-                                   subject: d.subject, date: d.date)
-            modelContext.insert(msg)
-            // Auto-link the "other party" when the address already belongs to a Person.
-            if let personID = EmailPersonMatching.personID(forAddress: d.address, in: peopleRefs),
-               let person = allPeople.first(where: { $0.id == personID }) {
-                msg.person = person
-            }
-            added += 1
-        }
-        return added
     }
 
     // MARK: - Sections

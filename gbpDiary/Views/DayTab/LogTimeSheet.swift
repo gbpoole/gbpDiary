@@ -7,6 +7,8 @@ struct LogTimeSheet: View {
 
     var presetTask: Task? = nil
     var presetDate: Date = Date()
+    // When set, the entry logs time against a sent email (no task required).
+    var presetEmail: EmailMessage? = nil
     // When set, the sheet edits the existing entry rather than creating a new one.
     var existingEntry: TaskTimeEntry? = nil
 
@@ -45,10 +47,14 @@ struct LogTimeSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    if !isEditing && presetTask == nil {
-                        projectFilterSection
+                    if let email = presetEmail ?? existingEntry?.email {
+                        emailContextSection(email)
+                    } else {
+                        if !isEditing && presetTask == nil {
+                            projectFilterSection
+                        }
+                        taskSection
                     }
-                    taskSection
                     commentSection
                     durationSection
                     timeSection
@@ -177,7 +183,19 @@ struct LogTimeSheet: View {
     // MARK: - Helpers
 
     private var canSave: Bool {
-        effectiveTask != nil && Duration.parse(durationText) != nil
+        let hasTarget = effectiveTask != nil || presetEmail != nil || existingEntry?.email != nil
+        return hasTarget && Duration.parse(durationText) != nil
+    }
+
+    private func emailContextSection(_ email: EmailMessage) -> some View {
+        GroupBox("Email") {
+            HStack(spacing: 6) {
+                Image(systemName: "paperplane").foregroundStyle(.secondary)
+                Text(email.subject.isEmpty ? "(no subject)" : email.subject).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     private func currentTimeOn(_ date: Date) -> Date {
@@ -202,6 +220,12 @@ struct LogTimeSheet: View {
             entry.comment = comment.isEmpty ? nil : comment
             // Don't touch focusBlock here — the Activity section re-buckets by time when the time
             // changes. Reassigning here (without the day's blocks) would wrongly drop the entry.
+        } else if let email = presetEmail {
+            let nextOrder = (email.timeEntries.map(\.sortOrder).max() ?? -1) + 1
+            let entry = TaskTimeEntry(date: entryDate, duration: duration,
+                                      comment: comment.isEmpty ? nil : comment, sortOrder: nextOrder)
+            entry.email = email
+            modelContext.insert(entry)
         } else {
             guard let task = effectiveTask else { return }
             let nextOrder = (task.timeEntries.map(\.sortOrder).max() ?? -1) + 1

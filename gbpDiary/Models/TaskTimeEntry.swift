@@ -12,6 +12,8 @@ import SwiftData
     // Singular-side relationship — Task declares the inverse. Block membership is derived by time
     // at the view layer (FocusBlockAssignment), never stored.
     var task: Task?
+    // When set, this entry logs time spent on a sent email (no task); EmailMessage declares the inverse.
+    var email: EmailMessage?
 
     init(date: Date, duration: Duration, comment: String? = nil,
          sortOrder: Int = 0, id: UUID = UUID()) {

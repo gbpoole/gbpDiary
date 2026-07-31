@@ -10,6 +10,7 @@ struct ActivitySection: View {
     var todayEntries: [TaskTimeEntry]
     var meetings: [DayEntry] = []
     var completedTasks: [Task] = []
+    var sentEmails: [EmailMessage] = []
     // Lazily creates the DayRecord for `date` if it does not exist yet.
     var findOrCreateDayRecord: (() -> DayRecord)? = nil
     /// Trigger bindings wired from DayPageContent's action bar.
@@ -32,22 +33,36 @@ struct ActivitySection: View {
 
     // Block membership is derived purely from each entry's time — nothing is stored. The block
     // whose range contains the time owns the entry; entries covered by no block are standalone.
+    // Task-backed time entries (email-linked entries are shown on their sent-email rows instead).
+    private var taskEntries: [TaskTimeEntry] { todayEntries.filter { $0.email == nil } }
+
     private func entries(for block: FocusBlock) -> [TaskTimeEntry] {
-        todayEntries.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks)?.id == block.id }
+        taskEntries.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks)?.id == block.id }
     }
 
     // Entries not covered by any block's range — rendered standalone, at block indent level.
     private var standaloneEntries: [TaskTimeEntry] {
-        todayEntries.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks) == nil }
+        taskEntries.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks) == nil }
+    }
+
+    // Sent emails bucketed into the focus block covering their send time (like time entries); the rest
+    // render standalone. Their logged time counts toward that block's net (or the day total).
+    private func sentEmails(for block: FocusBlock) -> [EmailMessage] {
+        sentEmails.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks)?.id == block.id }
+    }
+    private var standaloneSentEmails: [EmailMessage] {
+        sentEmails.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks) == nil }
     }
 
     private enum ActivityRowItem: Identifiable {
         case block(FocusBlock)
         case entry(TaskTimeEntry)
+        case sentEmail(EmailMessage)
         var id: String {
             switch self {
             case .block(let b): "b-\(b.id.uuidString)"
             case .entry(let e): "e-\(e.id.uuidString)"
+            case .sentEmail(let m): "m-\(m.id.uuidString)"
             }
         }
     }
@@ -66,7 +81,8 @@ struct ActivitySection: View {
     private var activityItems: [ActivityRowItem] {
         let blockItems = blocks.map { (slotStart($0), ActivityRowItem.block($0)) }
         let entryItems = standaloneEntries.map { ($0.date, ActivityRowItem.entry($0)) }
-        return (blockItems + entryItems).sorted { $0.0 < $1.0 }.map(\.1)
+        let emailItems = standaloneSentEmails.map { ($0.date, ActivityRowItem.sentEmail($0)) }
+        return (blockItems + entryItems + emailItems).sorted { $0.0 < $1.0 }.map(\.1)
     }
 
     private func meetings(for block: FocusBlock) -> [DayEntry] {
@@ -104,7 +120,7 @@ struct ActivitySection: View {
 
     var body: some View {
         let hasContent = !blocks.isEmpty || !todayEntries.isEmpty
-            || !standaloneMeetings.isEmpty || !completedTasks.isEmpty
+            || !standaloneMeetings.isEmpty || !completedTasks.isEmpty || !sentEmails.isEmpty
 
         activityHeader
 
@@ -113,9 +129,12 @@ struct ActivitySection: View {
             ForEach(activityItems) { item in
                 switch item {
                 case .block(let block):
-                    FocusBlockRow(block: block, date: date, entries: entries(for: block), meetings: meetings(for: block))
+                    FocusBlockRow(block: block, date: date, entries: entries(for: block),
+                                  meetings: meetings(for: block), sentEmails: sentEmails(for: block))
                 case .entry(let entry):
                     ActivityEntryRow(entry: entry)
+                case .sentEmail(let email):
+                    SentEmailActivityRow(email: email)
                 }
             }
 
@@ -179,7 +198,9 @@ struct ActivitySection: View {
         let standaloneHours = standaloneEntries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
         let meetingHours = standaloneMeetings.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
         let taskHours = completedTasks.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
-        return standardBlockHours + standaloneHours + meetingHours + taskHours
+        // In-block sent emails count toward their block's net; only standalone ones add to the total.
+        let emailHours = standaloneSentEmails.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
+        return standardBlockHours + standaloneHours + meetingHours + taskHours + emailHours
     }
     private var overtimeHours: Double {
         blocks.filter { $0.isOvertime }.flatMap { entries(for: $0) }.reduce(0.0) { $0 + $1.duration.hoursNormalized }
@@ -239,6 +260,71 @@ struct ActivitySection: View {
         return cal.date(bySettingHour: hour, minute: minute, second: 0, of: date) ?? date
     }
 
+}
+
+// A sent email in the activity timeline (inside its focus block by send time, or standalone), with a
+// button to log time spent sending it (an email-linked TaskTimeEntry counted toward the block/day).
+// Internal so FocusBlockRow can render block-nested sent emails too.
+struct SentEmailActivityRow: View {
+    var email: EmailMessage
+    @State private var showingLogTime = false
+    @State private var mailService = MailScriptService()
+    @State private var openError: String?
+
+    private var loggedHours: Double {
+        email.timeEntries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 6) {
+            Color.clear.frame(width: 16, height: 1)
+            HStack(alignment: .center, spacing: 6) {
+                Button { openInMail() } label: {
+                    Image(systemName: "paperplane")
+                        .font(.system(size: 12))
+                        .foregroundStyle(AppTheme.person)
+                        .frame(width: 18)
+                }
+                .buttonStyle(.plain)
+                .help("Open in Mail")
+                Text(email.subject.isEmpty ? "(no subject)" : email.subject)
+                    .font(.subheadline)
+                    .foregroundStyle(AppTheme.text)
+                    .lineLimit(1)
+                Spacer(minLength: 8)
+                HStack(spacing: 4) {
+                    Button { showingLogTime = true } label: {
+                        Image(systemName: "plus.circle").font(.system(size: 12)).foregroundStyle(AppTheme.action)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Log time for sending this email")
+                    Chip(label: email.date.formatted(date: .omitted, time: .shortened), color: AppTheme.project)
+                    if loggedHours > 0 {
+                        Chip(label: Duration(value: loggedHours, unit: .h).displayString, color: AppTheme.duration)
+                    }
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(AppTheme.cardRaised.opacity(0.45))
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .padding(.trailing)
+        }
+        .padding(.leading)
+        .padding(.vertical, 1)
+        .sheet(isPresented: $showingLogTime) {
+            LogTimeSheet(presetDate: email.date, presetEmail: email)
+        }
+        .alert("Couldn't open email", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(openError ?? "") }
+    }
+
+    private func openInMail() {
+        mailService.openMessage(email) { result in
+            if case .failure(let error) = result { openError = error.userMessage }
+        }
+    }
 }
 
 private struct StandaloneMeetingRow: View {

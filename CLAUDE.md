@@ -125,6 +125,7 @@ TaskTimeEntry                (a single logged time entry; used in Activity secti
   comment   : String?
   sortOrder : Int
   task     → Task?           (no @Relationship — Task side declares the inverse)
+  email    → EmailMessage?   (set when logging time spent sending a sent email; EmailMessage declares the inverse)
   NOTE: no focusBlock relationship — block membership is derived from `date` at the view layer via FocusBlockAssignment.containingBlock, never stored.
 
 FocusBlock                   (a primary work block for a day; shown in Activity section)
@@ -360,9 +361,16 @@ When a meeting `DayEntry` is created, `addMeeting()` automatically creates and l
 **Import a meeting from the macOS Calendar (macOS only).** The diary add-meeting flow is unchanged (`ActivitySection.addMeeting()` → `MinutesDetailView(asSheet:true, isNew:true)`). For a **new** meeting, `MinutesDetailView`'s metadata block gains an **"Import"** row that is a standard `FuzzyPickerField` (single-select over the day's calendar events) — the same search/filter picker used for projects/people. Per-calendar filtering is expressed as **filter chips** (one per calendar with events in the window; none active → all shown), and the options are ordered by **closeness to the present** (`CalendarEventImport.sortedByProximity`). The picker spans a **multi-day window** (`CalendarService.events(around:daysBefore:daysAfter:)`, currently ±3 days, bounds from `CalendarEventImport.importWindow`) rather than a single day, so you can import an event from a nearby day (catching up the next morning, or a recurring event that only lands on certain weekdays — EventKit expands recurrences within the queried range). Each option's label shows the **day + time** (`importEventLabel`) since results span several days. Picking an event calls `applyImportedEvent` → sets summary/time/duration and resolves attendees: matched People are added; **unmatched attendees are NOT auto-created** — they appear as **yellow "Unrecognized" chips** (`AppTheme.warning`) that the user clicks to reconcile via `ResolveAttendeeSheet` (segmented "Existing person" → link and add the scraped email to that Person's list, or "New person" → name prefilled + optional institution). Unresolved flags are session-only (ephemeral `@State`); confirming the meeting with any still pending prompts a confirm alert (they're then dropped). Access is requested on appear (new meetings only); if denied, the row shows an "Enable calendar access…" button linking to System Settings. **EventKit is confined to `CalendarService`** (`Domain/CalendarService.swift`, `#if os(macOS)`): it requests access via the completion-handler API (not `async`, since `Swift.Task` is shadowed here), reads events across all calendars — which already aggregate Exchange + Gmail/CalDAV accounts registered on the Mac — and maps `EKEvent`s to platform-neutral `CalendarEventDraft`s (tagged with their `calendarId`/`calendarTitle`). The pure, testable logic lives in `Domain/CalendarEventImport.swift` (Foundation only; no EventKit/SwiftData): `minutesDraft(from:)` maps title→summary/start→meetingAt/(end−start)→duration, `sortedByProximity(_:to:)` orders by distance from a reference time, `displayName(fromEmail:)` derives a human name from an email local part ("john.smith@x.com" → "John Smith"; used when an invite has no display name), and `AttendeeMatcher.resolve(...)` matches attendees to existing People by **any email in the Person's ordered `emails` list** (case-insensitive) then name (the rest become `.create` intents the UI flags for reconciliation). `ResolveAttendeeSheet` follows the app's edit-modal style (ScrollView + GroupBox sections, rounded-border name field, styled header) and uses a `FuzzyPickerField` for the institution — which can **create a new institution** inline. Requires the `com.apple.security.personal-information.calendars` entitlement (`gbpDiary/gbpDiary.entitlements`) and the `NSCalendars*UsageDescription` Info.plist strings.
 
 **Day email summary via Mail.app / AppleScript (macOS only).** The diary day page has an **Email**
-section (`DayPageContent.emailsSection` in `DayView.swift`) with a refresh button (`DaySectionHeader`'s
-`systemImage:onAction:`) that reads that day's **Inbox + Sent** messages from **Mail.app** and lists
-them (`DayEmailRow`). We piggyback on Mail (which already holds the OAuth-authenticated Gmail/M365
+section (`DayPageContent.emailsSection` in `DayView.swift`) listing that day's ingested messages
+(`DayEmailRow`). Fetching is a **Fetch email** button in the day's top `DayActionBar` (not the section
+header). It reads that day's **Inbox + Sent** from **Mail.app** but **stores nothing immediately** —
+instead it opens the **`EmailIngestSheet`** (`Views/DayTab/`): a selection window listing the fetched
+emails cross-referenced with the store via `Domain/EmailIngestPlanning.swift` (`EmailIngestPlanning.candidates`
+→ `.ingested` / `.notChosen` / `.new`). Previously-ingested emails start **selected (highlighted)**,
+previously-skipped start unselected (chip "Previously skipped"), and unseen ones are chipped "New";
+the user toggles which to keep and confirms. Apply stores the choice on `EmailMessage.dismissed`
+(selected → `false`, unselected → `true`) — including inserting **skipped new** emails as `dismissed`
+so a later fetch shows the same state and decisions aren't repeated. We piggyback on Mail (which already holds the OAuth-authenticated Gmail/M365
 accounts) rather than doing OAuth ourselves — no credentials, no network. The account + Inbox/Sent
 mailbox names are configured in a macOS **Settings** pane (Cmd-, → `EmailSettingsView`, pickers
 populated live from Mail; persisted to `UserDefaults` via `EmailSettingsStore`) and targeting one
@@ -371,6 +379,9 @@ account keeps the query fast (the unified inbox pulls in Gmail's huge All Mail).
 *recipient*), filtered per day by `cal.isDate(email.date, inSameDayAs: date)` and upserted by Mail's
 fast per-message integer `id` (`MailScriptParsing.dedupeKey`) — **not** the RFC `message id` header,
 which forces a slow per-message fetch. `Domain/MailScriptService.swift` (`@MainActor`)
+**Inbox** messages whose sender is one of the account's own addresses (`email addresses of acc`) are
+**skipped** — these are emails you sent to a mailing list you're on that looped back to your Inbox; the
+**Sent** copy (correct recipient + direction) already represents them. `MailScriptService.swift` (`@MainActor`)
 runs an `NSAppleScript` on a background queue (the Mail `whose date…` query can be slow) and delivers
 `MailMessageDraft`s on the main actor (`MainActor.assumeIsolated`; completion-handler, no `Swift.Task`).
 The AppleScript source generation and its delimited-output parsing are pure and tested in
@@ -385,9 +396,26 @@ party" — Inbox = sender, Sent = recipient), and `projects: [Project]`↔`Proje
 `dayEmails` list **excludes `dismissed`**. On fetch, `upsertEmails` auto-links `person` when the
 sender/recipient address already belongs to a Person — `EmailPersonMatching.personID(forAddress:in:)`
 (`Domain/EmailPersonMatching.swift`, pure; address-only, case-insensitive). Unmatched → `person == nil`,
-shown as a yellow "Unrecognized" chip. `DayEmailRow` shows a person chip (green resolved / yellow
-unrecognized) + project chips; tapping a row opens **`EmailReviewSheet`** (`Views/DayTab/`), the
-management workspace: a macOS `List(selection: Set<PersistentIdentifier>)` with a **Show dismissed**
+shown as a yellow "Unrecognized" chip. The diary Email list groups the day's emails into **threads**
+(same subject ignoring Re:/Fwd: + same other party — `Domain/EmailThreading.swift`,
+`threadKey`/`normalizedSubject`) and renders each as a compact **`DayEmailThreadRow`**: direction icon
++ an interactive **person chip** (in place of the sender name — click to reconcile via
+`ResolveAttendeeSheet`, applied to every message in the thread) + an inline **project picker** (files
+the whole thread) + message-count/time on the first line, subject on the second (no "Sent" chip — the
+icon shows direction). **Clicking the leading direction icon opens the message in Mail.app** —
+`MailScriptService.openMessage(_:)` resolves the real mailbox (`EmailSettingsStore`) + account and opens
+by Mail's integer id via `MailScriptParsing.openMessageScript` (a diary thread opens its latest message);
+the same clickable icon is on `SentEmailActivityRow` and `EmailReviewRow`, with a friendly alert if the
+message can't be opened. Tapping the row background still opens **`EmailReviewSheet`** (`Views/DayTab/`). **Sent** emails also
+appear in the day's **Activity** section at their send time — **nested inside the focus block** covering
+that time (like meetings/entries; `ActivitySection.sentEmails(for:)` → `FocusBlockRow`), or standalone
+when outside every block (`SentEmailActivityRow`). A **+** button logs time for sending them via
+`LogTimeSheet(presetEmail:)` — a task-less `TaskTimeEntry` with `email` set. In-block email time reduces
+that block's **net remaining** (`FocusBlockRow.netHours` adds the emails' `timeEntries` hours); standalone
+email time adds to the day total. Email-linked entries are kept out of the plain entry bucketing/rendering
+(`taskEntries` = `email == nil`) — represented by the email row's logged-duration chip.
+
+`EmailReviewSheet` is the bulk management workspace: a macOS `List(selection: Set<PersistentIdentifier>)` with a **Show dismissed**
 toggle and bulk actions on the selection — **Dismiss** (persistent; remembered in `lastDismissed` with
 an **Undo** banner) / **Undismiss** / **Assign project…** (appends chosen projects to each selected
 email, keeping existing). Each row also has an inline `FuzzyPickerField` bound to that email's
@@ -553,8 +581,10 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Legacy email migration: `migratedEmails` promotes a non-blank legacy `email` to `[email]` only when the list is empty; nil otherwise (already migrated / blank / nil) | Person emails / migration | `gbpDiaryTests/Models/PersonEmailsTests.swift` | `migratedEmails_promotesLegacyEmail_whenListEmpty`, `migratedEmails_returnsNil_whenAlreadyHasEmails`, `migratedEmails_returnsNil_whenLegacyBlank` |
 | Deleting a Person removes it and nullifies references (Minutes.attendees, Task.assignee); the referencing entities survive | Relationship integrity | `gbpDiaryTests/Models/RelationshipIntegrityTests.swift` | `personDelete_nullifiesReferences` |
 | Deleting an Institution nullifies its members' `institution`; deleting a Project nullifies references (Task.project, Minutes.projects); referencing entities survive | Relationship integrity / entity delete | `gbpDiaryTests/Models/RelationshipIntegrityTests.swift` | `institutionDelete_nullifiesMemberInstitution`, `projectDelete_nullifiesReferences` |
-| Mail AppleScript: `script(forDay:)` embeds the day bounds + both mailboxes; `parseOutput` round-trips delimited records and rebuilds dates from components; `parseNameAddress` splits name/angle-address/bare; dedupe key (message-id based) | Email summary / Mail.app | `gbpDiaryTests/Domain/MailScriptParsingTests.swift` | `script_containsDayBoundsAndBothMailboxes`, `parseOutput_*`, `parseNameAddress_*`, `dedupeKey_*` |
+| Mail AppleScript: `script(forDay:)` embeds the day bounds + both mailboxes; `parseOutput` round-trips delimited records and rebuilds dates from components; `parseNameAddress` splits name/angle-address/bare; dedupe key (message-id based); `openMessageScript(account:mailbox:id:)` embeds the escaped account + mailbox and the unquoted integer id, and opens + activates Mail | Email summary / Mail.app | `gbpDiaryTests/Domain/MailScriptParsingTests.swift` | `script_containsDayBoundsAndBothMailboxes`, `parseOutput_*`, `parseNameAddress_*`, `dedupeKey_*`, `openMessageScript_embedsAccountMailboxIdAndOpens` |
 | Email→Person matching: `EmailPersonMatching.personID(forAddress:in:)` returns the id of the Person whose ordered `emails` contain the address (case-insensitive, whitespace-trimmed); nil for no match or blank address | Email management / auto-resolve person | `gbpDiaryTests/Domain/EmailPersonMatchingTests.swift` | `personID_matchesPrimaryAddress`, `personID_matchesSecondaryAddress`, `personID_isCaseInsensitive`, `personID_nilWhenNoMatch`, `personID_nilForBlankAddress`, `personID_trimsWhitespaceBeforeMatching` |
+| Email ingest classification: `EmailIngestPlanning.candidates(drafts:account:existing:)` marks each fetched draft `.ingested` / `.notChosen` / `.new` by its dedupe key against the existing-email map (key→dismissed); `defaultSelected` is on for new + ingested, off for previously-skipped; `mailbox(for:)` maps direction→INBOX/Sent | Email ingest window | `gbpDiaryTests/Domain/EmailIngestPlanningTests.swift` | `candidates_classifiesNewIngestedAndSkipped`, `defaultSelected_onForNewAndIngested_offForSkipped`, `mailbox_mapsDirection` |
+| Email threading: `EmailThreading.normalizedSubject` strips repeated Re:/Fwd:/Fw: prefixes (trim+lowercase); `threadKey(subject:party:)` combines the normalized subject with the lowercased party so replies with the same other party share a key | Diary email threading | `gbpDiaryTests/Domain/EmailThreadingTests.swift` | `normalizedSubject_stripsReplyAndForwardPrefixes`, `threadKey_sameSubjectAndParty_matchAcrossReplies`, `threadKey_differentParty_differs` |
 | Deleting a Person nullifies `EmailMessage.person`; deleting a Project removes it from `EmailMessage.projects`; the referenced email survives in both cases | Email management / relationship integrity | `gbpDiaryTests/Models/RelationshipIntegrityTests.swift` | `personDelete_nullifiesEmailPerson`, `projectDelete_removesEmailProjectLink` |
 | Diary day rollover: `DiaryDayRollover.rolledForwardDate` returns today's start-of-day only when `tracksToday` and the shown day is in the past; nil when not tracking, same day, or a future day (so deliberate navigation to another day is preserved) | Diary navigation / day rollover | `gbpDiaryTests/Domain/DiaryDayRolloverTests.swift` | `tracksToday_pastDay_rollsForwardToToday`, `tracksToday_sameDay_staysPut`, `notTracking_pastDay_staysPut`, `tracksToday_futureDay_staysPut` |
 | `FuzzyPickerSelection.toggling` adds an item (matched by `id`) when absent and removes it when present; single-select (`maxSelections == 1`) replaces the whole selection, multi-select appends only while under the cap (else unchanged). Shared by item taps and create-on-the-fly (`onCreateItem`) so creating a new item honors single- vs multi-select | Picker selection semantics | `gbpDiaryTests/Views/FuzzyPickerSelectionTests.swift` | `toggling_multiSelect_addsWhenAbsent`, `toggling_multiSelect_removesWhenPresent`, `toggling_multiSelect_atCap_leavesUnchanged`, `toggling_singleSelect_replacesExistingSelection`, `toggling_singleSelect_fromEmpty_selectsItem`, `toggling_singleSelect_removesWhenSameItemPresent` |

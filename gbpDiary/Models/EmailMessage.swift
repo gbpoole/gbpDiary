@@ -22,6 +22,8 @@ import SwiftData
     var person: Person?
     // Projects this email is filed under.
     @Relationship(inverse: \Project.emails) var projects: [Project] = []
+    // Time entries logged against sending this email (count toward the day's activity total).
+    @Relationship(deleteRule: .nullify, inverse: \TaskTimeEntry.email) var timeEntries: [TaskTimeEntry] = []
 
     init(messageId: String, account: String, mailbox: String, direction: EmailDirection,
          fromAddress: String, fromName: String?, subject: String, date: Date, id: UUID = UUID()) {
