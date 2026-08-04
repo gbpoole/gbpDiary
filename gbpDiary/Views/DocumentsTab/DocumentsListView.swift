@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 struct DocumentsListView: View {
     @Query(sort: \Document.createdAt, order: .reverse) private var allDocuments: [Document]
@@ -95,6 +96,8 @@ struct DocumentEditorSheet: View {
     @Environment(WorkspaceModel.self) private var workspace
 
     let document: Document?
+    /// When true, at least one attached file is required before the document can be saved.
+    var requireAttachment: Bool = false
 
     @Query(sort: \Project.name) private var allProjects: [Project]
 
@@ -102,6 +105,7 @@ struct DocumentEditorSheet: View {
     @State private var docDescription = ""
     @State private var selectedProjects: [Project] = []
     @State private var showingDeleteConfirm = false
+    @State private var showingFilePicker = false
 
     var body: some View {
         NavigationStack {
@@ -127,9 +131,13 @@ struct DocumentEditorSheet: View {
                             emptyLabel: "None — tap to link projects"
                         )
                     }
+                    if let d = document { filesSection(d) }
                 }
                 .padding()
             }
+            .fileImporter(isPresented: $showingFilePicker,
+                          allowedContentTypes: [.pdf, .image, .plainText, .json, .item],
+                          allowsMultipleSelection: true) { handleImport($0) }
             .navigationTitle(document == nil ? "New Document" : "Edit Document")
             .toolbar {
                 if document != nil {
@@ -141,6 +149,7 @@ struct DocumentEditorSheet: View {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
                     Button(document == nil ? "Add" : "Save") { save() }
+                        .disabled(requireAttachment && (document?.attachments.isEmpty ?? true))
                 }
             }
             .alert("Delete Document?", isPresented: $showingDeleteConfirm) {
@@ -160,6 +169,72 @@ struct DocumentEditorSheet: View {
         #if os(macOS)
         .frame(minWidth: 420, minHeight: 360)
         #endif
+    }
+
+    private func filesSection(_ d: Document) -> some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 8) {
+                if d.attachments.isEmpty {
+                    Text("No files yet — add at least one.").font(.callout).foregroundStyle(.secondary)
+                } else {
+                    ForEach(d.attachments) { att in
+                        HStack(spacing: 6) {
+                            Image(systemName: icon(for: att.kind)).foregroundStyle(.secondary).font(.system(size: 13))
+                            Text(att.fileName).lineLimit(1)
+                            Spacer(minLength: 0)
+                            Button { removeAttachment(att, from: d) } label: {
+                                Image(systemName: "xmark").font(.system(size: 9, weight: .bold)).foregroundStyle(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                Button("Add file…") { showingFilePicker = true }
+                    .font(.callout).foregroundStyle(AppTheme.accent).buttonStyle(.plain)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text(requireAttachment ? "Files (required)" : "Files")
+        }
+    }
+
+    private func icon(for kind: AttachmentKind) -> String {
+        switch kind {
+        case .pdf:   "doc.richtext"
+        case .image: "photo"
+        case .text:  "doc.text"
+        case .other: "doc"
+        }
+    }
+
+    private func handleImport(_ result: Result<[URL], Error>) {
+        guard case .success(let urls) = result, let d = document else { return }
+        let textExtensions: Set<String> = [
+            "txt","md","markdown","csv","json","yaml","yml","swift","py","js","ts","rb","sh","xml","html","htm"
+        ]
+        for url in urls {
+            guard url.startAccessingSecurityScopedResource() else { continue }
+            let fileId = UUID()
+            let copied = try? AttachmentStorage.store(from: url, fileId: fileId)
+            url.stopAccessingSecurityScopedResource()
+            guard let copied else { continue }
+            let ext = url.pathExtension.lowercased()
+            let kind: AttachmentKind = ext == "pdf" ? .pdf
+                : ["png","jpg","jpeg","heic","gif","tiff","webp"].contains(ext) ? .image
+                : textExtensions.contains(ext) ? .text : .other
+            let att = Attachment(fileName: url.lastPathComponent, fileURL: copied, kind: kind)
+            att.fileSizeBytes = (try? copied.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? nil
+            att.document = d
+            modelContext.insert(att)
+            d.attachments.append(att)
+        }
+        d.updatedAt = Date()
+    }
+
+    private func removeAttachment(_ att: Attachment, from d: Document) {
+        AttachmentStorage.delete(at: att.fileURL)
+        modelContext.delete(att)
+        d.updatedAt = Date()
     }
 
     // Create a new Project on the fly while linking one (auto-added to the selection).

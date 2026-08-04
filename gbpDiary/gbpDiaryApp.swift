@@ -58,7 +58,15 @@ struct gbpDiaryApp: App {
         }
         #if os(macOS)
         Settings {
-            EmailSettingsView()
+            TabView {
+                GeneralSettingsView()
+                    .tabItem { Label("General", systemImage: "gearshape") }
+                CalendarSettingsView()
+                    .tabItem { Label("Calendar", systemImage: "calendar") }
+                EmailSettingsView()
+                    .tabItem { Label("Email", systemImage: "envelope") }
+            }
+            .modelContainer(sharedModelContainer)
         }
         #endif
     }

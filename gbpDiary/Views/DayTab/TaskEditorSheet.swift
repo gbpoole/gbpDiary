@@ -8,6 +8,13 @@ struct TaskEditorSheet: View {
     let task: Task?
     let defaultDate: Date
     var onTaskCreated: ((Task) -> Void)? = nil
+    /// Meeting action-item presets: pre-select the project, link the new task to the meeting, and
+    /// offer its attendees as one-tap assignees.
+    var presetProject: Project? = nil
+    var originMinutes: Minutes? = nil
+    var attendees: [Person] = []
+    /// When true (meeting action items), an assignee must be chosen before saving.
+    var requireAssignee: Bool = false
 
     @Query(sort: \Project.name) private var projects: [Project]
     @Query(sort: \Person.name) private var people: [Person]
@@ -22,6 +29,10 @@ struct TaskEditorSheet: View {
     @State private var showingDeleteConfirm = false
 
     private var isNew: Bool { task == nil }
+
+    private var canSave: Bool {
+        !summary.trimmingCharacters(in: .whitespaces).isEmpty && (!requireAssignee || selectedAssignee != nil)
+    }
 
     var body: some View {
         NavigationStack {
@@ -52,8 +63,7 @@ struct TaskEditorSheet: View {
                     Button("Cancel") { dismiss() }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button(isNew ? "Add" : "Save") { save() }
-                        .disabled(summary.trimmingCharacters(in: .whitespaces).isEmpty)
+                    Button(isNew ? "Add" : "Save") { save() }.disabled(!canSave)
                 }
             }
             .alert("Delete Task?", isPresented: $showingDeleteConfirm) {
@@ -67,7 +77,9 @@ struct TaskEditorSheet: View {
             if task != nil {
                 populateFromTask()
             } else {
-                selectedAssignee = people.first(where: { $0.name == "Greg Poole" })
+                // Default the assignee to the "Me" person configured in Settings (nil if unset).
+                selectedAssignee = people.first(where: { $0.id == AppSettingsStore.myPersonID })
+                selectedProject = presetProject
             }
         }
         .sheet(isPresented: $showingLogTime) {
@@ -144,18 +156,42 @@ struct TaskEditorSheet: View {
             }
         filters += instFilters
         let defaultId = selectedProject.map { "project:\($0.id.uuidString)" }
+
+        // With an attendee list, the chips are the primary assignee control; the picker below is only
+        // for assigning someone who isn't an attendee — so it stays empty (no duplicate green chip)
+        // when the assignee is one of the attendees.
+        let attendeeIDs = Set(attendees.map(\.id))
+        let otherPeople = attendees.isEmpty ? people : people.filter { !attendeeIDs.contains($0.id) }
+        let pickerBinding: Binding<Person?> = attendees.isEmpty ? $selectedAssignee : Binding(
+            get: { selectedAssignee.flatMap { attendeeIDs.contains($0.id) ? nil : $0 } },
+            set: { selectedAssignee = $0 }
+        )
         return GroupBox("Assignee") {
-            FuzzyPickerField(
-                allItems: people,
-                selectedItem: $selectedAssignee,
-                label: { $0.name },
-                chipColor: AppTheme.person,
-                onCreateItem: { makePerson($0) },
-                tapArea: true,
-                emptyLabel: "None — tap to assign",
-                filters: filters.isEmpty ? nil : filters,
-                defaultFilterId: defaultId
-            )
+            VStack(alignment: .leading, spacing: 8) {
+                if !attendees.isEmpty {
+                    // One-tap assign to a meeting attendee: neutral = off, green = the chosen assignee.
+                    FlowLayout(spacing: 6) {
+                        ForEach(attendees) { person in
+                            let isOn = selectedAssignee?.id == person.id
+                            Button { selectedAssignee = isOn ? nil : person } label: {
+                                Chip(label: person.name, color: isOn ? AppTheme.person : AppTheme.mutedText)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                FuzzyPickerField(
+                    allItems: otherPeople,
+                    selectedItem: pickerBinding,
+                    label: { $0.name },
+                    chipColor: AppTheme.person,
+                    onCreateItem: { makePerson($0) },
+                    tapArea: true,
+                    emptyLabel: attendees.isEmpty ? "None — tap to assign" : "Assign someone else…",
+                    filters: filters.isEmpty ? nil : filters,
+                    defaultFilterId: defaultId
+                )
+            }
         }
     }
 
@@ -300,6 +336,10 @@ struct TaskEditorSheet: View {
             newTask.project = selectedProject
             newTask.assignee = selectedAssignee
             newTask.tags = tags
+            if let origin = originMinutes {
+                newTask.originMinutes = origin
+                newTask.meetingTaskSortOrder = (origin.newTasks.map(\.meetingTaskSortOrder).max() ?? -1) + 1
+            }
             modelContext.insert(newTask)
             onTaskCreated?(newTask)
         }

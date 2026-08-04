@@ -40,6 +40,12 @@ struct PersonRef: Equatable {
     var emails: [String]
 }
 
+/// A calendar the user has (id + title), for the Settings default-calendar picker.
+struct CalendarInfo: Identifiable, Equatable {
+    var id: String
+    var title: String
+}
+
 /// The outcome of matching one event attendee against existing People.
 enum AttendeeResolution: Equatable {
     case matched(existingId: UUID)          // reuse this existing Person

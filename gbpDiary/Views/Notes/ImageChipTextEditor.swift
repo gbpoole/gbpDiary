@@ -43,6 +43,16 @@ struct ImageChipTextEditor: NSViewRepresentable {
     /// same text still triggers. The host bumps the token to request an insertion.
     var insertionText: String? = nil
     var insertionToken: Int = 0
+    /// When true the editor handles formatting shortcuts (⌘B, etc.) and applies toolbar commands.
+    var formattingEnabled: Bool = false
+    /// A formatting command to apply at the current selection; paired with `formatToken` (the host
+    /// bumps the token to request it), mirroring the `insertionText`/`insertionToken` pattern.
+    var formatCommand: FormatCommand? = nil
+    var formatToken: Int = 0
+    /// Insert text on a new line after the caret's line (continuing a list marker if applicable),
+    /// paired with `newLineInsertionToken`.
+    var newLineInsertion: String? = nil
+    var newLineInsertionToken: Int = 0
 
     static let minHeight: CGFloat = 120
 
@@ -77,13 +87,38 @@ struct ImageChipTextEditor: NSViewRepresentable {
         tv.textContainerInset = .zero
         tv.font = Self.bodyFont
         tv.typingAttributes = Self.textAttributes
+        // Spell-check while editing (minutes); no autocorrect/substitutions that would mangle markdown.
+        tv.isContinuousSpellCheckingEnabled = formattingEnabled
+        tv.isAutomaticSpellingCorrectionEnabled = false
+        tv.isAutomaticQuoteSubstitutionEnabled = false
+        tv.isAutomaticDashSubstitutionEnabled = false
+        tv.isAutomaticTextReplacementEnabled = false
         tv.onTapImage = onTapImage
         tv.onTapNoteLink = onTapNoteLink
         tv.onInsertImageFiles = onInsertImageFiles
         tv.onInsertImageData = onInsertImageData
         tv.onWidthChange = { [weak coordinator = context.coordinator] in coordinator?.scheduleHeightPush() }
+        tv.formattingEnabled = formattingEnabled
+        tv.onFormatCommand = { [weak coordinator = context.coordinator] cmd in
+            guard let c = coordinator, let tv = c.textView else { return }
+            c.applyFormat(cmd, into: tv)
+        }
+        tv.onReturn = { [weak coordinator = context.coordinator] in
+            guard let c = coordinator, let tv = c.textView else { return false }
+            return c.handleReturn(in: tv)
+        }
+        tv.onIndent = { [weak coordinator = context.coordinator] outdent in
+            guard let c = coordinator, let tv = c.textView else { return false }
+            return c.handleIndent(outdent: outdent, in: tv)
+        }
+        tv.onBackspace = { [weak coordinator = context.coordinator] in
+            guard let c = coordinator, let tv = c.textView else { return false }
+            return c.handleBackspace(in: tv)
+        }
         context.coordinator.textView = tv
         context.coordinator.lastInsertionToken = insertionToken
+        context.coordinator.lastFormatToken = formatToken
+        context.coordinator.lastNewLineToken = newLineInsertionToken
         context.coordinator.apply(markdown: text, into: tv)
         if startFocused {
             DispatchQueue.main.async { [weak tv] in
@@ -101,6 +136,7 @@ struct ImageChipTextEditor: NSViewRepresentable {
         tv.onTapNoteLink = onTapNoteLink
         tv.onInsertImageFiles = onInsertImageFiles
         tv.onInsertImageData = onInsertImageData
+        tv.formattingEnabled = formattingEnabled
         // Only rebuild on an external text change or an explicit refresh — never while the user is
         // typing (textDidChange keeps lastMarkdown in sync so this comparison is false then).
         if text != context.coordinator.lastMarkdown || refreshToken != context.coordinator.lastRefresh {
@@ -112,6 +148,20 @@ struct ImageChipTextEditor: NSViewRepresentable {
             context.coordinator.lastInsertionToken = insertionToken
             if let fragment = insertionText, !fragment.isEmpty {
                 context.coordinator.insert(fragment, into: tv)
+            }
+        }
+        // Host requested a formatting command from the toolbar.
+        if formatToken != context.coordinator.lastFormatToken {
+            context.coordinator.lastFormatToken = formatToken
+            if let command = formatCommand {
+                context.coordinator.applyFormat(command, into: tv)
+            }
+        }
+        // Host requested a new-line insertion (e.g. a meeting action line).
+        if newLineInsertionToken != context.coordinator.lastNewLineToken {
+            context.coordinator.lastNewLineToken = newLineInsertionToken
+            if let text = newLineInsertion, !text.isEmpty {
+                context.coordinator.insertOnNewLine(text, into: tv)
             }
         }
     }
@@ -131,6 +181,8 @@ struct ImageChipTextEditor: NSViewRepresentable {
         var lastMarkdown = ""
         var lastRefresh = Int.min
         var lastInsertionToken = Int.min
+        var lastFormatToken = Int.min
+        var lastNewLineToken = Int.min
         private var heightPushScheduled = false
 
         init(_ parent: ImageChipTextEditor) { self.parent = parent }
@@ -250,6 +302,96 @@ struct ImageChipTextEditor: NSViewRepresentable {
             tv.setSelectedRange(NSRange(location: range.location + attrFragment.length, length: 0))
             let markdown = serialize(storage)
             apply(markdown: markdown, into: tv)  // rebuild so the inserted ref renders as a chip
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if self.parent.text != markdown { self.parent.text = markdown }
+            }
+        }
+
+        // Apply a formatting command to the current selection. Works on the text view's *display*
+        // string (chips are single U+FFFC placeholder characters) via the pure `MarkdownFormatting`
+        // helper, then rebuilds the attributed string restoring chips in order (formatting never
+        // adds/removes chips). Undoable, and serialized back to the markdown binding like `insert`.
+        func applyFormat(_ command: FormatCommand, into tv: ChipTextView) {
+            applyResult(MarkdownFormatting.apply(command, to: tv.string, selection: tv.selectedRange()), into: tv)
+        }
+
+        // Continue a markdown list when Return is pressed on a list item (new item + indent, or end
+        // the list on an empty item). Returns true when handled, so the text view skips its default
+        // newline; false falls through to a normal newline.
+        func handleReturn(in tv: ChipTextView) -> Bool {
+            guard let result = MarkdownFormatting.returnInList(text: tv.string, selection: tv.selectedRange()) else { return false }
+            applyResult(result, into: tv)
+            return true
+        }
+
+        // Tab / Shift-Tab: indent or outdent list items. Returns false (fall through) on non-list lines.
+        func handleIndent(outdent: Bool, in tv: ChipTextView) -> Bool {
+            guard let result = MarkdownFormatting.indentLines(text: tv.string, selection: tv.selectedRange(), outdent: outdent) else { return false }
+            applyResult(result, into: tv)
+            return true
+        }
+
+        // Insert text on a new line after the caret's line (continuing a list marker if applicable).
+        func insertOnNewLine(_ text: String, into tv: ChipTextView) {
+            applyResult(MarkdownFormatting.insertOnNewLine(text: tv.string, selection: tv.selectedRange(), insert: text), into: tv)
+        }
+
+        // Backspace at a list marker: outdent one level or clear the marker.
+        func handleBackspace(in tv: ChipTextView) -> Bool {
+            guard let result = MarkdownFormatting.backspaceInList(text: tv.string, selection: tv.selectedRange()) else { return false }
+            applyResult(result, into: tv)
+            return true
+        }
+
+        // Apply a MarkdownFormatting result to the text view: rebuild the attributed string restoring
+        // chips in order (formatting never adds/removes chips), undoably, then restore the selection
+        // and serialize back to the markdown binding like `insert`.
+        func applyResult(_ result: MarkdownFormatting.Result, into tv: ChipTextView) {
+            guard let storage = tv.textStorage else { return }
+
+            // Existing chips in document order, to re-attach at the placeholder characters.
+            var chips: [NSTextAttachment] = []
+            storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, _, _ in
+                if let a = value as? NSTextAttachment { chips.append(a) }
+            }
+            let attachmentChar: unichar = 0xFFFC
+            let rebuilt = NSMutableAttributedString()
+            let ns = result.text as NSString
+            var chipIndex = 0
+            var runStart = 0
+            for i in 0..<ns.length {
+                if ns.character(at: i) == attachmentChar {
+                    if i > runStart {
+                        rebuilt.append(NSAttributedString(string: ns.substring(with: NSRange(location: runStart, length: i - runStart)),
+                                                          attributes: ImageChipTextEditor.textAttributes))
+                    }
+                    if chipIndex < chips.count {
+                        let chipStr = NSMutableAttributedString(attachment: chips[chipIndex])
+                        chipStr.addAttributes(ImageChipTextEditor.textAttributes, range: NSRange(location: 0, length: chipStr.length))
+                        rebuilt.append(chipStr)
+                        chipIndex += 1
+                    }
+                    runStart = i + 1
+                }
+            }
+            if runStart < ns.length {
+                rebuilt.append(NSAttributedString(string: ns.substring(from: runStart),
+                                                  attributes: ImageChipTextEditor.textAttributes))
+            }
+
+            let full = NSRange(location: 0, length: storage.length)
+            guard tv.shouldChangeText(in: full, replacementString: result.text) else { return }
+            storage.setAttributedString(rebuilt)
+            tv.typingAttributes = ImageChipTextEditor.textAttributes
+            let selLoc = min(result.selection.location, rebuilt.length)
+            let selLen = min(result.selection.length, rebuilt.length - selLoc)
+            tv.setSelectedRange(NSRange(location: selLoc, length: selLen))
+            tv.didChangeText()
+
+            let markdown = serialize(storage)
+            lastMarkdown = markdown
+            scheduleHeightPush()
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
                 if self.parent.text != markdown { self.parent.text = markdown }
@@ -430,7 +572,68 @@ final class ChipTextView: NSTextView {
     var onWidthChange: (() -> Void)?
     var onInsertImageFiles: (([URL], Int) -> Void)?
     var onInsertImageData: ((Data, Int) -> Void)?
+    var formattingEnabled = false
+    var onFormatCommand: ((FormatCommand) -> Void)?
+    var onReturn: (() -> Bool)?
+    var onIndent: ((Bool) -> Bool)?     // outdent flag → handled?
+    var onBackspace: (() -> Bool)?
     private var lastWidth: CGFloat = 0
+
+    // Smart list continuation: on a list item, Return starts the next item (or ends the list). The
+    // handler returns true when it consumed the key; otherwise fall back to the normal newline.
+    override func insertNewline(_ sender: Any?) {
+        if formattingEnabled, onReturn?() == true { return }
+        super.insertNewline(sender)
+    }
+
+    // Tab / Shift-Tab indent or outdent list items (falls through on non-list lines).
+    override func insertTab(_ sender: Any?) {
+        if formattingEnabled, onIndent?(false) == true { return }
+        super.insertTab(sender)
+    }
+
+    override func insertBacktab(_ sender: Any?) {
+        if formattingEnabled, onIndent?(true) == true { return }
+        super.insertBacktab(sender)
+    }
+
+    // Backspace at a list marker outdents / clears the marker (falls through otherwise).
+    override func deleteBackward(_ sender: Any?) {
+        if formattingEnabled, onBackspace?() == true { return }
+        super.deleteBackward(sender)
+    }
+
+    // Intercept formatting shortcuts before NSTextView's rich-text handling (e.g. ⌘B → NSFontManager
+    // bold) so they insert markdown instead. Only when formatting is enabled for this editor.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if formattingEnabled, let command = ChipTextView.formatCommand(for: event) {
+            onFormatCommand?(command)
+            return true
+        }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    static func formatCommand(for event: NSEvent) -> FormatCommand? {
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        guard flags.contains(.command) else { return nil }
+        let shift = flags.contains(.shift)
+        let option = flags.contains(.option)
+        let key = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        switch (key, shift, option) {
+        case ("b", false, false): return .bold
+        case ("i", false, false): return .italic
+        case ("c", true, false):  return .inlineCode
+        case ("l", true, false):  return .bulletList
+        case ("o", true, false):  return .numberedList
+        case ("u", true, false):  return .checkbox
+        case ("q", true, false):  return .quote
+        case ("t", true, false):  return .table
+        case ("1", false, true):  return .heading(1)
+        case ("2", false, true):  return .heading(2)
+        case ("3", false, true):  return .heading(3)
+        default: return nil
+        }
+    }
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)

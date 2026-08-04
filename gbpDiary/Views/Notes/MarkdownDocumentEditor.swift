@@ -24,6 +24,13 @@ struct MarkdownDocumentEditor: View {
     /// When false, the project/tags metadata rows are omitted (the host provides its own header,
     /// as in ContentNoteDetailView); the editing controls bar is still shown.
     var showsHeader: Bool = true
+    /// When true (macOS), a markdown formatting toolbar + keyboard shortcuts are shown while editing.
+    /// Enabled for meeting minutes; off for other note contexts.
+    var showsFormattingToolbar: Bool = false
+    /// A host request to insert text at the cursor (enters edit mode if needed). Bump with a new id.
+    var insertionRequest: EditorInsertionRequest? = nil
+
+    struct EditorInsertionRequest: Equatable { let id: UUID; let text: String }
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.horizontalSizeClass) private var hSizeClass
@@ -48,6 +55,11 @@ struct MarkdownDocumentEditor: View {
     @State private var insertionText: String?
     @State private var insertionToken = 0
     @State private var editingLink: EditingLink?
+    @State private var formatCommand: FormatCommand?
+    @State private var formatToken = 0
+    @State private var pendingInsertion: String?
+    @State private var newLineInsertText: String?
+    @State private var newLineInsertToken = 0
 
     private struct EditingLink: Identifiable { let id: UUID }
 
@@ -77,6 +89,9 @@ struct MarkdownDocumentEditor: View {
         VStack(alignment: .leading, spacing: 6) {
             header
             if isEditing {
+                #if os(macOS)
+                if showsFormattingToolbar { formattingToolbar }
+                #endif
                 editingBody
             } else {
                 previewBody
@@ -113,6 +128,18 @@ struct MarkdownDocumentEditor: View {
             #if os(macOS)
             escapeMonitor.stop()
             #endif
+        }
+        .onChange(of: insertionRequest) { _, req in
+            guard let req else { return }
+            pendingInsertion = req.text
+            if isEditing {
+                flushPendingInsertion()
+            } else {
+                // Enter edit mode first; the source editor is created this render, so insert next tick.
+                beginEditing()
+                autoFocusPending = true
+                DispatchQueue.main.async { flushPendingInsertion() }
+            }
         }
         .fileImporter(isPresented: $showingImageImporter,
                       allowedContentTypes: [.image], allowsMultipleSelection: true) { result in
@@ -222,6 +249,57 @@ struct MarkdownDocumentEditor: View {
         insertionToken += 1
     }
 
+    private func flushPendingInsertion() {
+        guard let text = pendingInsertion else { return }
+        newLineInsertText = text
+        newLineInsertToken += 1
+        pendingInsertion = nil
+    }
+
+    #if os(macOS)
+    // Markdown formatting toolbar shown above the source pane while editing (minutes only). Each
+    // button requests a FormatCommand via the token pair; keyboard shortcuts do the same in-editor.
+    private var formattingToolbar: some View {
+        FlowLayout(spacing: 6) {
+            formatButton("bold", "Bold (⌘B)", .bold)
+            formatButton("italic", "Italic (⌘I)", .italic)
+            formatButton("chevron.left.forwardslash.chevron.right", "Inline code (⌘⇧C)", .inlineCode)
+            headingButton(1); headingButton(2); headingButton(3)
+            formatButton("list.bullet", "Bulleted list (⌘⇧L)", .bulletList)
+            formatButton("list.number", "Numbered list (⌘⇧O)", .numberedList)
+            formatButton("checklist", "Checklist (⌘⇧U)", .checkbox)
+            formatButton("text.quote", "Quote (⌘⇧Q)", .quote)
+            formatButton("curlybraces", "Code block", .codeBlock)
+            formatButton("tablecells", "Table (⌘⇧T)", .table)
+        }
+        .padding(6)
+        .background(AppTheme.cardRaised.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func runFormat(_ command: FormatCommand) {
+        formatCommand = command
+        formatToken += 1
+    }
+
+    private func formatButton(_ systemImage: String, _ help: String, _ command: FormatCommand) -> some View {
+        Button { runFormat(command) } label: {
+            Image(systemName: systemImage).font(.system(size: 12)).frame(width: 20, height: 18)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(AppTheme.action)
+        .help(help)
+    }
+
+    private func headingButton(_ level: Int) -> some View {
+        Button { runFormat(.heading(level)) } label: {
+            Text("H\(level)").font(.system(size: 11, weight: .semibold)).frame(width: 20, height: 18)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(AppTheme.action)
+        .help("Heading \(level) (⌘⌥\(level))")
+    }
+    #endif
+
     private func metaRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
         // Center-aligned with a fixed min height (≈ chip height) so switching between a chip and the
         // placeholder text doesn't change the row height or shift it vertically.
@@ -329,7 +407,12 @@ struct MarkdownDocumentEditor: View {
                 noteTitle: { noteLinkTitle($0) },
                 onTapNoteLink: { editingLink = EditingLink(id: $0) },
                 insertionText: insertionText,
-                insertionToken: insertionToken
+                insertionToken: insertionToken,
+                formattingEnabled: showsFormattingToolbar,
+                formatCommand: formatCommand,
+                formatToken: formatToken,
+                newLineInsertion: newLineInsertText,
+                newLineInsertionToken: newLineInsertToken
             )
             .frame(height: sourceHeight)
             #else
@@ -364,6 +447,7 @@ struct MarkdownDocumentEditor: View {
                 markdown: NotePreviewMarkdown.render(previewDraft, resolve: fileURL(forAttachmentID:)),
                 syntaxExtensions: [.math]
             )
+            .minutesHeadingStyle(showsFormattingToolbar)   // innermost so it overrides the bundled style
             .textual.textSelection(.enabled)
             .textual.structuredTextStyle(.gitHub)
             .font(.body)
@@ -391,6 +475,11 @@ struct MarkdownDocumentEditor: View {
     }
 
     private func exitEditing() {
+        // Trim leading/trailing whitespace on exit (minutes editor).
+        if showsFormattingToolbar {
+            let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed != draft { draft = trimmed }
+        }
         commit()
         isEditing = false
         autoFocusPending = false

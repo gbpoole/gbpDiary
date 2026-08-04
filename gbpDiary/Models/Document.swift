@@ -14,6 +14,8 @@ import SwiftData
     @Relationship(inverse: \Project.documents)
     var projects: [Project]
 
+    var meetings: [Minutes]
+
     var dayRecord: DayRecord?
 
     init(id: UUID = UUID(), summary: String? = nil) {
@@ -21,6 +23,7 @@ import SwiftData
         self.summary = summary
         self.attachments = []
         self.projects = []
+        self.meetings = []
         let now = Date()
         self.createdAt = now
         self.updatedAt = now
