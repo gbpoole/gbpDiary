@@ -25,6 +25,11 @@ import SwiftData
     // Time entries logged against sending this email (count toward the day's activity total).
     @Relationship(deleteRule: .nullify, inverse: \TaskTimeEntry.email) var timeEntries: [TaskTimeEntry] = []
 
+    // On-device AI summary (the body is fetched transiently and never stored — only this summary is).
+    var summary: String?
+    // Raw of EmailSummaryState: "pending" (needs one) | "done" | "failed" | "unavailable".
+    var summaryState: String = EmailSummaryState.pending.rawValue
+
     init(messageId: String, account: String, mailbox: String, direction: EmailDirection,
          fromAddress: String, fromName: String?, subject: String, date: Date, id: UUID = UUID()) {
         self.id = id

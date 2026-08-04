@@ -53,6 +53,27 @@ enum MailScriptError: Error, Equatable {
         openMessage(account: account, mailbox: mailbox, id: id, completion: completion)
     }
 
+    /// Fetches one email's plain-text body from local Mail (transient — for on-device summarisation;
+    /// never stored). Resolves the real mailbox/account like `openMessage(_:)`.
+    func fetchContent(_ email: EmailMessage, completion: @escaping (Result<String, MailScriptError>) -> Void) {
+        let settings = EmailSettingsStore.load()
+        let mailbox = email.direction == .inbox ? settings.inboxMailbox : settings.sentMailbox
+        let account = email.account.isEmpty ? settings.accountName : email.account
+        let id = email.messageId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !id.isEmpty else {
+            completion(.failure(.scriptError("this email has no stored message id")))
+            return
+        }
+        #if os(macOS)
+        let source = MailScriptParsing.messageContentScript(account: account, mailbox: mailbox, id: id)
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { completion(Self.run(source)) }
+        }
+        #else
+        completion(.failure(.mailUnavailable))
+        #endif
+    }
+
     /// Opens a message by account + mailbox + Mail integer id, bringing Mail forward.
     func openMessage(account: String, mailbox: String, id: String,
                      completion: @escaping (Result<Void, MailScriptError>) -> Void) {

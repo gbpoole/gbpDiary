@@ -56,6 +56,7 @@ struct WorkspaceView: View {
         }
         .environment(workspace.active.diaryState)
         .kanagawaAppBackground()
+        .background { EmailSummaryDriver() }   // global on-device email summarisation
         .sheet(isPresented: $showingNewContent) { ContentNoteEditorSheet(note: nil) }
         .onAppear { migratePersonEmails() }
     }

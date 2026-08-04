@@ -153,6 +153,20 @@ enum MailScriptParsing {
         """
     }
 
+    /// AppleScript returning the plain-text body (`content`) of one message, located by account +
+    /// mailbox + Mail's integer id. Used transiently for on-device summarisation (never stored).
+    nonisolated static func messageContentScript(account: String, mailbox: String, id: String) -> String {
+        """
+        with timeout of 30 seconds
+            tell application "Mail"
+                set acc to account "\(escape(account))"
+                set theMsg to (first message of mailbox "\(escape(mailbox))" of acc whose id is \(id))
+                return (content of theMsg) as string
+            end tell
+        end timeout
+        """
+    }
+
     /// AppleScript returning the names of every Mail account, one per line.
     nonisolated static func accountsScript() -> String {
         """

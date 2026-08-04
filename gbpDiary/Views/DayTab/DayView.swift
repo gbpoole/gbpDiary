@@ -227,6 +227,15 @@ struct DayPageContent: View {
 
     @ViewBuilder private var emailsSection: some View {
         DaySectionHeader(title: "Email")
+        // If summaries can't run (Apple Intelligence off / model downloading), tell the user why.
+        if !dayEmails.isEmpty, dayEmails.contains(where: { $0.summaryState == EmailSummaryState.pending.rawValue }),
+           let reason = FoundationModelsSummarizer().unavailableReason {
+            Label(reason, systemImage: "sparkles")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+                .padding(.vertical, 4)
+        }
         if dayEmails.isEmpty {
             Text(isRefreshingEmail ? "Fetching email…" : "No email fetched for this day.")
                 .font(.callout)

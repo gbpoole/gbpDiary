@@ -17,6 +17,10 @@ struct EmailThread: Identifiable {
     var count: Int { messages.count }
     var date: Date { latest.date }
 
+    /// On-device AI summary (the latest message's) and whether it's still being generated.
+    var summary: String? { latest.summary }
+    var isSummarizing: Bool { latest.summaryState == EmailSummaryState.pending.rawValue }
+
     /// Union of projects across the thread's messages (de-duplicated, order preserved).
     var projects: [Project] {
         var seen = Set<PersistentIdentifier>()
@@ -61,17 +65,26 @@ struct DayEmailThreadRow: View {
                     Text(thread.date.formatted(date: .omitted, time: .shortened))
                         .font(.caption2).foregroundStyle(.secondary)
                 }
-                Text(thread.subject)
-                    .font(.callout)
-                    .lineLimit(1)
+                EmailContentLine(subject: thread.subject, summary: thread.summary,
+                                 isSummarizing: thread.isSummarizing)
             }
         }
         .padding(.horizontal)
         .padding(.vertical, 3)
         .contentShape(Rectangle())
+        .contextMenu {
+            Button("Regenerate summary", systemImage: "sparkles") { regenerateSummary() }
+        }
         .alert("Couldn't open email", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(openError ?? "") }
+    }
+
+    private func regenerateSummary() {
+        for message in thread.messages {
+            message.summary = nil
+            message.summaryState = EmailSummaryState.pending.rawValue
+        }
     }
 
     private func openInMail() {
@@ -108,5 +121,44 @@ struct DayEmailThreadRow: View {
             chipColor: AppTheme.project,
             onCreateItem: makeProject
         )
+    }
+}
+
+// The email's content line: shows the on-device AI **summary** when ready (prefixed with a sparkles
+// icon so it clearly reads as a summary, not the subject), otherwise falls back to the **subject**
+// (de-emphasised, with a "summarising…" hint while one is being generated).
+struct EmailContentLine: View {
+    let subject: String
+    let summary: String?
+    var isSummarizing: Bool = false
+    var font: Font = .callout
+    var lineLimit: Int = 2
+
+    var body: some View {
+        if let summary, !summary.isEmpty {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 10))
+                    .foregroundStyle(AppTheme.accent)
+                Text(summary)
+                    .font(font)
+                    .lineLimit(lineLimit)
+            }
+            .help("AI summary")
+        } else {
+            HStack(alignment: .firstTextBaseline, spacing: 5) {
+                Text(subject.isEmpty ? "(no subject)" : subject)
+                    .font(font)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                if isSummarizing {
+                    Text("summarising…")
+                        .font(.caption2)
+                        .italic()
+                        .foregroundStyle(.tertiary)
+                }
+            }
+            .help(isSummarizing ? "Subject — summary is being generated" : "Subject")
+        }
     }
 }

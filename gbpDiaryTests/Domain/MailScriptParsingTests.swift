@@ -42,6 +42,14 @@ struct MailScriptParsingTests {
         #expect(s.contains("activate"))
     }
 
+    @Test func messageContentScript_embedsAccountMailboxIdAndReturnsContent() {
+        let s = MailScriptParsing.messageContentScript(account: "Exchange", mailbox: "Inbox", id: "999")
+        #expect(s.contains("account \"Exchange\""))
+        #expect(s.contains("mailbox \"Inbox\""))
+        #expect(s.contains("whose id is 999"))
+        #expect(s.contains("content of theMsg"))
+    }
+
     @Test func mailboxesScript_embedsEscapedAccountName() {
         let s = MailScriptParsing.mailboxesScript(accountName: "My \"Work\" Acct")
         #expect(s.contains("account \"My \\\"Work\\\" Acct\""))

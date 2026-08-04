@@ -232,8 +232,9 @@ private struct EmailReviewRow: View {
                     Text(email.date.formatted(date: .omitted, time: .shortened))
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Text(email.subject.isEmpty ? "(no subject)" : email.subject)
-                    .font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                EmailContentLine(subject: email.subject, summary: email.summary,
+                                 isSummarizing: email.summaryState == EmailSummaryState.pending.rawValue,
+                                 font: .caption, lineLimit: 3)
                 HStack(spacing: 10) {
                     personChip
                     projectPicker
@@ -241,6 +242,12 @@ private struct EmailReviewRow: View {
             }
         }
         .padding(.vertical, 2)
+        .contextMenu {
+            Button("Regenerate summary", systemImage: "sparkles") {
+                email.summary = nil
+                email.summaryState = EmailSummaryState.pending.rawValue
+            }
+        }
         .alert("Couldn't open email", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(openError ?? "") }

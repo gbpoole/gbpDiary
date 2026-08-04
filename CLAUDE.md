@@ -388,7 +388,22 @@ The AppleScript source generation and its delimited-output parsing are pure and 
 `Domain/MailScriptParsing.swift` (`script(forDay:)`, `parseOutput`, `parseNameAddress`, `dedupeKey`).
 Requires the `com.apple.security.automation.apple-events` entitlement + `NSAppleEventsUsageDescription`;
 first refresh triggers the one-time macOS **Automation** permission prompt (Privacy & Security →
-Automation). v1 = manual refresh, envelope metadata only. Future: AI-generated summaries over the cache.
+Automation). v1 = manual refresh, envelope metadata only.
+
+**On-device AI email summaries (macOS 26 + Apple Intelligence).** `EmailMessage` gains `summary: String?`
++ `summaryState` (`EmailSummaryState`: pending/done/failed/unavailable). A **global** invisible
+`EmailSummaryDriver` (placed once in `WorkspaceView`) `@Query`s non-dismissed `pending` emails and, via
+the SwiftUI **`.task` modifier** (the `Task` type is shadowed by the `@Model Task`), summarises them
+**one at a time**: `MailScriptService.fetchContent(_:)` reads the body from **local Mail** (transient —
+never stored), and `FoundationModelsSummarizer` (`#if canImport(FoundationModels)`, `@available(macOS 26, *)`,
+**on-device `SystemLanguageModel.default` only — no Private Cloud Compute, no network**) generates the
+summary via `LanguageModelSession`. Pure/testable pieces live in `Domain/EmailSummary.swift`
+(`EmailSummaryPrompt.build`/`clampBody`, `EmailSummaryText.clean`, `EmailSummaryState`,
+`EmailSummaryPlanning.needsSummary`, `EmailSummarizing`). Summaries show as a dimmed caption on
+`DayEmailThreadRow`/`EmailReviewRow` ("Summarising…" while pending); a **Regenerate summary** context
+menu resets `summaryState` to pending. **HARD CONSTRAINT: everything stays on device** — body read from
+local Mail, on-device model, local SwiftData; body is never persisted. This is the first step of a
+planned on-device RAG (future: `NaturalLanguage` embeddings + a local index — no external services).
 
 **Managing the day's email (clean / file / connect).** `EmailMessage` carries three management fields
 (all defaulted for lightweight migration): `dismissed: Bool`, `person: Person?` (the resolved "other
@@ -585,6 +600,8 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Email→Person matching: `EmailPersonMatching.personID(forAddress:in:)` returns the id of the Person whose ordered `emails` contain the address (case-insensitive, whitespace-trimmed); nil for no match or blank address | Email management / auto-resolve person | `gbpDiaryTests/Domain/EmailPersonMatchingTests.swift` | `personID_matchesPrimaryAddress`, `personID_matchesSecondaryAddress`, `personID_isCaseInsensitive`, `personID_nilWhenNoMatch`, `personID_nilForBlankAddress`, `personID_trimsWhitespaceBeforeMatching` |
 | Email ingest classification: `EmailIngestPlanning.candidates(drafts:account:existing:)` marks each fetched draft `.ingested` / `.notChosen` / `.new` by its dedupe key against the existing-email map (key→dismissed); `defaultSelected` is on for new + ingested, off for previously-skipped; `mailbox(for:)` maps direction→INBOX/Sent | Email ingest window | `gbpDiaryTests/Domain/EmailIngestPlanningTests.swift` | `candidates_classifiesNewIngestedAndSkipped`, `defaultSelected_onForNewAndIngested_offForSkipped`, `mailbox_mapsDirection` |
 | Email threading: `EmailThreading.normalizedSubject` strips repeated Re:/Fwd:/Fw: prefixes (trim+lowercase); `threadKey(subject:party:)` combines the normalized subject with the lowercased party so replies with the same other party share a key | Diary email threading | `gbpDiaryTests/Domain/EmailThreadingTests.swift` | `normalizedSubject_stripsReplyAndForwardPrefixes`, `threadKey_sameSubjectAndParty_matchAcrossReplies`, `threadKey_differentParty_differs` |
+| AI email summaries: `EmailSummaryPrompt.build` embeds subject (placeholder when blank) + sender + capped body; `clampBody` trims + prefix-caps; `EmailSummaryText.clean` trims/collapses whitespace + caps with an ellipsis; `EmailSummaryState` raw round-trips; `EmailSummaryPlanning.needsSummary` is true only for a non-dismissed pending email | On-device email summaries | `gbpDiaryTests/Domain/EmailSummaryTests.swift` | `prompt_includesSubjectAndSender`, `prompt_blankSubject_usesPlaceholder`, `clampBody_capsLengthAndTrims`, `clean_trimsCollapsesAndCaps`, `state_rawRoundTrips`, `needsSummary_onlyPendingAndNotDismissed` |
+| Mail body fetch: `MailScriptParsing.messageContentScript(account:mailbox:id:)` embeds the escaped account + mailbox and the unquoted integer id and returns `content of` the message | On-device email summaries / body fetch | `gbpDiaryTests/Domain/MailScriptParsingTests.swift` | `messageContentScript_embedsAccountMailboxIdAndReturnsContent` |
 | Deleting a Person nullifies `EmailMessage.person`; deleting a Project removes it from `EmailMessage.projects`; the referenced email survives in both cases | Email management / relationship integrity | `gbpDiaryTests/Models/RelationshipIntegrityTests.swift` | `personDelete_nullifiesEmailPerson`, `projectDelete_removesEmailProjectLink` |
 | Diary day rollover: `DiaryDayRollover.rolledForwardDate` returns today's start-of-day only when `tracksToday` and the shown day is in the past; nil when not tracking, same day, or a future day (so deliberate navigation to another day is preserved) | Diary navigation / day rollover | `gbpDiaryTests/Domain/DiaryDayRolloverTests.swift` | `tracksToday_pastDay_rollsForwardToToday`, `tracksToday_sameDay_staysPut`, `notTracking_pastDay_staysPut`, `tracksToday_futureDay_staysPut` |
 | `FuzzyPickerSelection.toggling` adds an item (matched by `id`) when absent and removes it when present; single-select (`maxSelections == 1`) replaces the whole selection, multi-select appends only while under the cap (else unchanged). Shared by item taps and create-on-the-fly (`onCreateItem`) so creating a new item honors single- vs multi-select | Picker selection semantics | `gbpDiaryTests/Views/FuzzyPickerSelectionTests.swift` | `toggling_multiSelect_addsWhenAbsent`, `toggling_multiSelect_removesWhenPresent`, `toggling_multiSelect_atCap_leavesUnchanged`, `toggling_singleSelect_replacesExistingSelection`, `toggling_singleSelect_fromEmpty_selectsItem`, `toggling_singleSelect_removesWhenSameItemPresent` |
