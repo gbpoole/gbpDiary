@@ -39,18 +39,29 @@ struct FoundationModelsSummarizer: EmailSummarizing {
         return "On-device summaries need macOS 26 with Apple Intelligence."
     }
 
-    func summarize(subject: String, from: String, body: String) async throws -> String {
+    func summarize(context: SummaryContext, subject: String, body: String) async throws -> String {
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw EmailSummaryError.emptyBody }
 
         #if canImport(FoundationModels)
         if #available(macOS 26, *), SystemLanguageModel.default.availability == .available {
             let session = LanguageModelSession(instructions: EmailSummaryPrompt.instructions)
-            let prompt = EmailSummaryPrompt.build(subject: subject, from: from, body: trimmed)
-            let response = try await session.respond(to: prompt)
-            return EmailSummaryText.clean(response.content)
+            let prompt = EmailSummaryPrompt.build(context: context, subject: subject, body: trimmed)
+            // Guided generation + low temperature + a hard token cap → strict, concise, consistent output.
+            let options = GenerationOptions(temperature: 0.3, maximumResponseTokens: 90)
+            let response = try await session.respond(to: prompt, generating: EmailSummaryOutput.self, options: options)
+            return EmailSummaryText.clean(response.content.summary)
         }
         #endif
         throw EmailSummaryError.modelUnavailable
     }
 }
+
+#if canImport(FoundationModels)
+@available(macOS 26, *)
+@Generable
+struct EmailSummaryOutput {
+    @Guide(description: "One or two concise sentences (≤ ~40 words) for a diary, referring to the reader as \"you\"; no titles, affiliations, signatures, or markdown.")
+    var summary: String
+}
+#endif

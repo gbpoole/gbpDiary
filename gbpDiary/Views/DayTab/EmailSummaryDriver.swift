@@ -14,6 +14,7 @@ import OSLog
 struct EmailSummaryDriver: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var pending: [EmailMessage]
+    @Query private var allPeople: [Person]
     @State private var mailService = MailScriptService()
     @State private var kick = 0
     @State private var isRunning = false
@@ -21,9 +22,15 @@ struct EmailSummaryDriver: View {
     private let log = Logger(subsystem: "gbpDiary", category: "EmailSummary")
 
     init() {
+        // Needs a summary: non-dismissed AND (pending, OR done with a stale prompt version → re-summarise).
         let pendingRaw = EmailSummaryState.pending.rawValue
+        let doneRaw = EmailSummaryState.done.rawValue
+        let currentVersion = EmailSummaryPrompt.promptVersion
         _pending = Query(
-            filter: #Predicate<EmailMessage> { $0.summaryState == pendingRaw && !$0.dismissed },
+            filter: #Predicate<EmailMessage> {
+                !$0.dismissed && ($0.summaryState == pendingRaw
+                    || ($0.summaryState == doneRaw && $0.summaryPromptVersion < currentVersion))
+            },
             sort: \EmailMessage.date, order: .reverse
         )
     }
@@ -49,7 +56,9 @@ struct EmailSummaryDriver: View {
         // Snapshot the pending set; mutating models won't cancel this task (id is `kick`, unchanged here).
         for email in pending {
             guard summarizer.isAvailable else { break }
-            guard email.summaryState == EmailSummaryState.pending.rawValue else { continue }
+            let state = EmailSummaryState(rawValue: email.summaryState) ?? .pending
+            guard EmailSummaryPlanning.needsSummary(state: state, dismissed: email.dismissed,
+                                                    version: email.summaryPromptVersion) else { continue }
             await summarizeOne(email)
         }
     }
@@ -70,16 +79,41 @@ struct EmailSummaryDriver: View {
         }
         do {
             let text = try await summarizer.summarize(
+                context: makeContext(for: email),
                 subject: email.subject,
-                from: email.fromName?.isEmpty == false ? email.fromName! : email.fromAddress,
                 body: trimmed
             )
             email.summary = text.isEmpty ? nil : text
             email.summaryState = (text.isEmpty ? EmailSummaryState.failed : .done).rawValue
+            email.summaryPromptVersion = EmailSummaryPrompt.promptVersion
         } catch {
             log.error("Summarise failed: \(error.localizedDescription, privacy: .public)")
             email.summaryState = EmailSummaryState.failed.rawValue
         }
+    }
+
+    // System context for the prompt: the user ("me"), the other party, direction, and a known-people roster.
+    private func makeContext(for email: EmailMessage) -> SummaryContext {
+        let mePerson = AppSettingsStore.myPersonID.flatMap { id in allPeople.first { $0.id == id } }
+        let me = mePerson.map { SummaryPerson(name: $0.name, emails: $0.emails) }
+        let other = email.person.map { SummaryPerson(name: $0.name, emails: $0.emails) }
+
+        // Priority roster members: the other party + anyone on a team of one of the email's projects.
+        var priorityIDs = Set<UUID>()
+        if let p = email.person { priorityIDs.insert(p.id) }
+        for project in email.projects {
+            for person in project.devTeam + project.sciTeam { priorityIDs.insert(person.id) }
+        }
+        let meID = mePerson?.id
+        let candidates = allPeople
+            .filter { $0.id != meID }   // "me" is identified separately as "you"
+            .map { person in
+                EmailSummaryRoster.Candidate(id: person.id, name: person.name, emails: person.emails,
+                                             isPriority: priorityIDs.contains(person.id))
+            }
+        let roster = EmailSummaryRoster.build(candidates)
+        return SummaryContext(me: me, other: other,
+                              directionIsSent: email.direction == .sent, roster: roster)
     }
 
     // Bridge the completion-handler Mail bridge to async (no `Task {}` — we're inside `.task`).

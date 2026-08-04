@@ -29,6 +29,8 @@ import SwiftData
     var summary: String?
     // Raw of EmailSummaryState: "pending" (needs one) | "done" | "failed" | "unavailable".
     var summaryState: String = EmailSummaryState.pending.rawValue
+    // Prompt version used for the stored summary; a bump re-summarises (see EmailSummaryPlanning).
+    var summaryPromptVersion: Int = 0
 
     init(messageId: String, account: String, mailbox: String, direction: EmailDirection,
          fromAddress: String, fromName: String?, subject: String, date: Date, id: UUID = UUID()) {
