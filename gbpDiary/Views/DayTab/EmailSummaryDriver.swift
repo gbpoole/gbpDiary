@@ -15,6 +15,7 @@ struct EmailSummaryDriver: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var pending: [EmailMessage]
     @Query private var allPeople: [Person]
+    @Query(sort: \Project.name) private var allProjects: [Project]
     @State private var mailService = MailScriptService()
     @State private var kick = 0
     @State private var isRunning = false
@@ -86,9 +87,21 @@ struct EmailSummaryDriver: View {
             email.summary = text.isEmpty ? nil : text
             email.summaryState = (text.isEmpty ? EmailSummaryState.failed : .done).rawValue
             email.summaryPromptVersion = EmailSummaryPrompt.promptVersion
+            await pickProject(for: email, summary: text)
         } catch {
             log.error("Summarise failed: \(error.localizedDescription, privacy: .public)")
             email.summaryState = EmailSummaryState.failed.rawValue
+        }
+    }
+
+    // Best-effort on-device project pick for triage suggestions (never auto-applied). Skipped when
+    // there are no projects or the email is already filed.
+    private func pickProject(for email: EmailMessage, summary: String) async {
+        guard email.projects.isEmpty, !allProjects.isEmpty, !summary.isEmpty else { return }
+        let names = allProjects.map(\.name)
+        if let name = await summarizer.suggestProjectName(summary: summary, projectNames: names),
+           let project = allProjects.first(where: { $0.name == name }) {
+            email.suggestedProjectID = project.id
         }
     }
 

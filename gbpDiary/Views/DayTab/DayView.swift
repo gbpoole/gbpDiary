@@ -41,15 +41,12 @@ struct DayPageContent: View {
     @State private var notesDropTargetIndex: Int?
     @State private var newlyAddedNoteId: UUID?
     @State private var addNoteRecord: DayRecord?
-    @State private var mailService = MailScriptService()
-    @State private var isRefreshingEmail = false
 
     @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allTimeEntries: [TaskTimeEntry]
     @Query(sort: \EmailMessage.date, order: .reverse) private var allEmails: [EmailMessage]
     @Query private var allPeople: [Person]
     @Query(sort: \Project.name) private var allEmailProjects: [Project]
-    @State private var reviewingDay: Date?
-    @State private var ingestRequest: EmailIngestRequest?
+    @State private var showingTriage = false
     @State private var reconcilingThread: EmailThread?
 
     private var todayTimeEntries: [TaskTimeEntry] {
@@ -74,9 +71,16 @@ struct DayPageContent: View {
         dayEmails.filter { $0.direction == .sent }
     }
 
+    // Only accepted emails reach the diary; unclassified ones wait in the triage window.
     private var dayEmails: [EmailMessage] {
         let cal = Calendar.current
-        return allEmails.filter { cal.isDate($0.date, inSameDayAs: date) && !$0.dismissed }
+        return allEmails.filter { cal.isDate($0.date, inSameDayAs: date) && $0.triageState == .accepted }
+    }
+
+    // Count of this day's still-unclassified emails, surfaced as a "to triage" hint.
+    private var dayUnclassifiedCount: Int {
+        let cal = Calendar.current
+        return allEmails.filter { cal.isDate($0.date, inSameDayAs: date) && $0.triageState == .unclassified }.count
     }
 
     private var dayStart: Date { DayTaskFiltering.dayBounds(for: date).dayStart }
@@ -152,7 +156,7 @@ struct DayPageContent: View {
             DayActionItem(id: "logtime",    systemName: "timer",               color: AppTheme.duration,  tooltip: "Log time")        { activityLogTimeTrigger = true },
             DayActionItem(id: "task",       systemName: "checkmark.square",    color: AppTheme.completed, tooltip: "Add task")        { showingAddTask = true },
             DayActionItem(id: "note",       systemName: "square.and.pencil",   color: AppTheme.accent,    tooltip: "Add note")        { addNote() },
-            DayActionItem(id: "email",      systemName: "tray.and.arrow.down", color: AppTheme.person,    tooltip: "Fetch email", isEnabled: !isRefreshingEmail) { refreshEmail() },
+            DayActionItem(id: "email",      systemName: "tray.full",           color: AppTheme.person,    tooltip: "Triage email") { showingTriage = true },
         ]
     }
 
@@ -203,14 +207,7 @@ struct DayPageContent: View {
         .sheet(item: $addNoteRecord) { record in
             ContentNoteEditorSheet(dayRecord: record, onCreated: { newlyAddedNoteId = $0.id })
         }
-        .sheet(isPresented: Binding(get: { reviewingDay != nil }, set: { if !$0 { reviewingDay = nil } })) {
-            if let day = reviewingDay {
-                EmailReviewSheet(day: day)
-            }
-        }
-        .sheet(item: $ingestRequest) { req in
-            EmailIngestSheet(day: date, drafts: req.drafts, account: req.account)
-        }
+        .sheet(isPresented: $showingTriage) { EmailTriageSheet() }
         .sheet(item: $reconcilingThread) { thread in
             ResolveAttendeeSheet(
                 attendee: CalendarAttendee(name: thread.fromName ?? "", email: thread.fromAddress),
@@ -227,6 +224,16 @@ struct DayPageContent: View {
 
     @ViewBuilder private var emailsSection: some View {
         DaySectionHeader(title: "Email")
+        // Unprocessed emails waiting to be accepted/dismissed — tap to open the triage window.
+        if dayUnclassifiedCount > 0 {
+            Button { showingTriage = true } label: {
+                Label("\(dayUnclassifiedCount) email\(dayUnclassifiedCount == 1 ? "" : "s") to triage",
+                      systemImage: "tray.full")
+                    .font(.caption).foregroundStyle(AppTheme.accent)
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal).padding(.vertical, 4)
+        }
         // If summaries can't run (Apple Intelligence off / model downloading), tell the user why.
         if !dayEmails.isEmpty, dayEmails.contains(where: { $0.summaryState == EmailSummaryState.pending.rawValue }),
            let reason = FoundationModelsSummarizer().unavailableReason {
@@ -237,7 +244,7 @@ struct DayPageContent: View {
                 .padding(.vertical, 4)
         }
         if dayEmails.isEmpty {
-            Text(isRefreshingEmail ? "Fetching email…" : "No email fetched for this day.")
+            Text("No email fetched for this day.")
                 .font(.callout)
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal)
@@ -250,7 +257,6 @@ struct DayPageContent: View {
                     onReconcile: { reconcilingThread = thread },
                     makeProject: makeEmailProject
                 )
-                .onTapGesture { reviewingDay = date }
             }
         }
     }
@@ -279,31 +285,6 @@ struct DayPageContent: View {
         let project = Project(name: trimmed)
         modelContext.insert(project)
         return project
-    }
-
-    // Manual refresh: fetch this day's Inbox + Sent from Mail.app, then open the ingest window so the
-    // user chooses what to keep (nothing is stored until they confirm there).
-    private func refreshEmail() {
-        guard !isRefreshingEmail else { return }
-        let settings = EmailSettingsStore.load()
-        guard settings.isConfigured else {
-            onShowBanner(BannerMessage(text: "Set your email account in Settings (⌘,)", isError: true))
-            return
-        }
-        isRefreshingEmail = true
-        mailService.fetchDay(date, settings: settings) { result in
-            isRefreshingEmail = false
-            switch result {
-            case .success(let drafts):
-                if drafts.isEmpty {
-                    onShowBanner(BannerMessage(text: "No email found for this day"))
-                } else {
-                    ingestRequest = EmailIngestRequest(drafts: drafts, account: settings.accountName)
-                }
-            case .failure(let error):
-                onShowBanner(BannerMessage(text: error.userMessage, isError: true))
-            }
-        }
     }
 
     // MARK: - Sections

@@ -39,6 +39,24 @@ enum MailScriptError: Error, Equatable {
         #endif
     }
 
+    /// Fetches Inbox + Sent over the half-open day window `[rangeStart, rangeEnd)` in one AppleScript
+    /// call (used by auto-ingest to catch up several days). Delivered on the main actor.
+    func fetchRange(rangeStart: Date, rangeEnd: Date, settings: EmailSettings,
+                    completion: @escaping (Result<[MailMessageDraft], MailScriptError>) -> Void) {
+        #if os(macOS)
+        let source = MailScriptParsing.script(rangeStart: rangeStart, rangeEnd: rangeEnd,
+                                              accountName: settings.accountName,
+                                              inboxMailbox: settings.inboxMailbox, sentMailbox: settings.sentMailbox)
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated {
+                completion(Self.run(source).map { MailScriptParsing.parseOutput($0) })
+            }
+        }
+        #else
+        completion(.failure(.mailUnavailable))
+        #endif
+    }
+
     /// Opens a stored email in Mail: resolves the real mailbox/account (the stored `mailbox` is a
     /// placeholder), then opens by Mail's integer id. Completion is delivered on the main actor.
     func openMessage(_ email: EmailMessage, completion: @escaping (Result<Void, MailScriptError>) -> Void) {

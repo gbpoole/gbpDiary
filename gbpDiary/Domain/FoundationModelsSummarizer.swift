@@ -55,6 +55,28 @@ struct FoundationModelsSummarizer: EmailSummarizing {
         #endif
         throw EmailSummaryError.modelUnavailable
     }
+
+    /// Asks the on-device model to pick the single best-matching project name for an email (from the
+    /// provided list) or nil for "none". Returns the exact matching entry from `projectNames`. Best
+    /// effort — any error / unavailability returns nil (heuristics still provide suggestions).
+    func suggestProjectName(summary: String, projectNames: [String]) async -> String? {
+        guard !projectNames.isEmpty, !summary.isEmpty else { return nil }
+        #if canImport(FoundationModels)
+        if #available(macOS 26, *), SystemLanguageModel.default.availability == .available {
+            let list = projectNames.joined(separator: "; ")
+            let instructions = "You match an email to a project. Reply with exactly one project name from the list, copied verbatim, or the single word none. No other text."
+            let prompt = "Projects: \(list)\n\nEmail summary: \(summary)\n\nBest-matching project name (or none):"
+            let session = LanguageModelSession(instructions: instructions)
+            let options = GenerationOptions(temperature: 0.0, maximumResponseTokens: 16)
+            guard let response = try? await session.respond(to: prompt, options: options) else { return nil }
+            let answer = response.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if answer.lowercased() == "none" { return nil }
+            // Map the model's answer back to an exact project name (case-insensitive).
+            return projectNames.first { $0.caseInsensitiveCompare(answer) == .orderedSame }
+        }
+        #endif
+        return nil
+    }
 }
 
 #if canImport(FoundationModels)

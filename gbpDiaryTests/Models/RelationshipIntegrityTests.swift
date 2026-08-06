@@ -142,6 +142,29 @@ struct RelationshipIntegrityTests {
         #expect(remaining.first?.person == nil)
     }
 
+    @Test func emailDelete_nullifiesTaskOriginEmail_taskSurvives() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+
+        let email = EmailMessage(messageId: "<m3>", account: "acct", mailbox: "INBOX",
+                                 direction: .inbox, fromAddress: "a@x.com", fromName: "A",
+                                 subject: "do this", date: FixedDates.reference)
+        let task = Task(summary: "do this")
+        task.originEmail = email
+        context.insert(email)
+        context.insert(task)
+        try context.save()
+
+        context.delete(email)
+        try context.save()
+
+        // The email is gone; the todo survives with its origin nullified.
+        #expect(try context.fetch(FetchDescriptor<EmailMessage>()).isEmpty)
+        let remaining = try context.fetch(FetchDescriptor<Task>())
+        #expect(remaining.count == 1)
+        #expect(remaining.first?.originEmail == nil)
+    }
+
     @Test func projectDelete_removesEmailProjectLink() throws {
         let container = try TestModelContainer.make()
         let context = ModelContext(container)

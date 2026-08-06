@@ -46,14 +46,10 @@ struct DayEmailThreadRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            Button { openInMail() } label: {
-                Image(systemName: thread.direction == .sent ? "paperplane" : "envelope")
-                    .foregroundStyle(.secondary)
-                    .font(.system(size: 13))
-                    .frame(width: 18)
-            }
-            .buttonStyle(.plain)
-            .help("Open in Mail")
+            Image(systemName: thread.direction == .sent ? "paperplane" : "envelope")
+                .foregroundStyle(.secondary)
+                .font(.system(size: 13))
+                .frame(width: 18)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     personChip
@@ -72,7 +68,9 @@ struct DayEmailThreadRow: View {
         .padding(.horizontal)
         .padding(.vertical, 3)
         .contentShape(Rectangle())
+        .onTapGesture { openInMail() }   // tapping the email opens it in Mail (the default action)
         .contextMenu {
+            Button("Open in Mail", systemImage: "envelope.open") { openInMail() }
             Button("Regenerate summary", systemImage: "sparkles") { regenerateSummary() }
         }
         .alert("Couldn't open email", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {

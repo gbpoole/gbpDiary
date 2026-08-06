@@ -23,8 +23,8 @@ struct MailScriptParsingTests {
     @Test func script_containsDayBoundsAccountAndMailboxes() {
         let s = MailScriptParsing.script(forDay: day(2026, 7, 29), accountName: "Exchange",
                                          inboxMailbox: "Inbox", sentMailbox: "Sent Items", calendar: utc)
-        #expect(s.contains("mkDate(2026, 7, 29)"))
-        #expect(s.contains("mkDate(2026, 7, 30)"))   // next day (exclusive upper bound)
+        #expect(s.contains("mkDateTime(2026, 7, 29, 0, 0, 0)"))
+        #expect(s.contains("mkDateTime(2026, 7, 30, 0, 0, 0)"))   // next day (exclusive upper bound)
         #expect(s.contains("account \"Exchange\""))
         #expect(s.contains("mailbox \"Inbox\""))
         #expect(s.contains("mailbox \"Sent Items\""))
@@ -40,6 +40,16 @@ struct MailScriptParsingTests {
         #expect(s.contains("whose id is 12345"))   // integer, unquoted
         #expect(s.contains("open theMsg"))
         #expect(s.contains("activate"))
+    }
+
+    @Test func scriptRange_embedsBothDayBounds() {
+        // A 3-day window [Jul 27 00:00, Jul 30 00:00) → mkDateTime bounds.
+        let s = MailScriptParsing.script(rangeStart: day(2026, 7, 27), rangeEnd: day(2026, 7, 30),
+                                         accountName: "Exchange", inboxMailbox: "Inbox",
+                                         sentMailbox: "Sent Items", calendar: utc)
+        #expect(s.contains("mkDateTime(2026, 7, 27, 0, 0, 0)"))
+        #expect(s.contains("mkDateTime(2026, 7, 30, 0, 0, 0)"))
+        #expect(s.contains("mailbox \"Inbox\""))
     }
 
     @Test func messageContentScript_embedsAccountMailboxIdAndReturnsContent() {

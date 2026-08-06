@@ -16,14 +16,24 @@ import SwiftData
     var date: Date = Date.distantPast
     var fetchedAt: Date = Date()
 
-    // Cleaned out of the day's list (persists across refreshes; undoable).
+    // Triage: `dismissed` hides the email; `accepted` promotes it to the diary. Neither → unclassified
+    // (needs triage). See EmailTriageState. `accepted` defaults false; a one-time migration marks
+    // pre-existing non-dismissed emails accepted so they stay on the diary.
     var dismissed: Bool = false
+    var accepted: Bool = false
+
+    var triageState: EmailTriageState { .from(dismissed: dismissed, accepted: accepted) }
+    func accept() { accepted = true; dismissed = false }
+    func triageDismiss() { dismissed = true }
+    func unclassify() { accepted = false; dismissed = false }
     // The resolved "other party" (Inbox = sender, Sent = recipient); nil until matched/reconciled.
     var person: Person?
     // Projects this email is filed under.
     @Relationship(inverse: \Project.emails) var projects: [Project] = []
     // Time entries logged against sending this email (count toward the day's activity total).
     @Relationship(deleteRule: .nullify, inverse: \TaskTimeEntry.email) var timeEntries: [TaskTimeEntry] = []
+    // Todos made from this email (nullify — deleting the email leaves the tasks, just unlinked).
+    @Relationship(deleteRule: .nullify, inverse: \Task.originEmail) var tasks: [Task] = []
 
     // On-device AI summary (the body is fetched transiently and never stored — only this summary is).
     var summary: String?
@@ -31,6 +41,8 @@ import SwiftData
     var summaryState: String = EmailSummaryState.pending.rawValue
     // Prompt version used for the stored summary; a bump re-summarises (see EmailSummaryPlanning).
     var summaryPromptVersion: Int = 0
+    // On-device model's picked project for triage suggestions (never auto-applied); nil if none/unknown.
+    var suggestedProjectID: UUID?
 
     init(messageId: String, account: String, mailbox: String, direction: EmailDirection,
          fromAddress: String, fromName: String?, subject: String, date: Date, id: UUID = UUID()) {

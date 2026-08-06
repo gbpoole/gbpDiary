@@ -35,6 +35,7 @@ import SwiftData
     var project: Project?
     var originDay: DayRecord?
     var originMinutes: Minutes?
+    var originEmail: EmailMessage?   // set when the task was made from a triaged email (EmailMessage declares the inverse)
     var meetingTaskSortOrder: Int = 0
     var parent: Task?
     @Relationship(deleteRule: .cascade, inverse: \Task.parent)

@@ -11,6 +11,8 @@ struct EmailSettingsView: View {
     @State private var mailboxes: [String] = []
     @State private var service = MailScriptService()
     @State private var status: String?
+    @State private var excludeRules: [String] = []
+    @State private var newRule = ""
 
     var body: some View {
         ScrollView {
@@ -28,6 +30,30 @@ struct EmailSettingsView: View {
                         row("Sent", selection: $sentMailbox, options: options(mailboxes, sentMailbox))
                     }
                 }
+                GroupBox("Excluded senders") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Emails from these senders are dismissed automatically when fetched. A rule is a full address (news@x.com) or a domain (x.com or @x.com). Applies to newly-fetched email only.")
+                            .font(.caption).foregroundStyle(.secondary)
+                        ForEach(excludeRules, id: \.self) { rule in
+                            HStack(spacing: 6) {
+                                Text(rule).font(.callout)
+                                Spacer(minLength: 0)
+                                Button { removeRule(rule) } label: {
+                                    Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                                }
+                                .buttonStyle(.plain)
+                            }
+                        }
+                        HStack(spacing: 6) {
+                            TextField("address or domain…", text: $newRule)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { addRule() }
+                            Button("Add") { addRule() }
+                                .disabled(EmailExcludeMatching.normalize(newRule) == nil)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
                 HStack(spacing: 12) {
                     Button("Save") { save() }.keyboardShortcut(.defaultAction)
                     if let status { Text(status).font(.caption).foregroundStyle(.secondary) }
@@ -42,8 +68,20 @@ struct EmailSettingsView: View {
         .onAppear {
             let s = EmailSettingsStore.load()
             accountName = s.accountName; inboxMailbox = s.inboxMailbox; sentMailbox = s.sentMailbox
+            excludeRules = EmailExcludeStore.load()
             loadAccounts()
         }
+    }
+
+    private func addRule() {
+        EmailExcludeStore.add(newRule)
+        excludeRules = EmailExcludeStore.load()
+        newRule = ""
+    }
+
+    private func removeRule(_ rule: String) {
+        EmailExcludeStore.remove(rule)
+        excludeRules = EmailExcludeStore.load()
     }
 
     private func row(_ label: String, selection: Binding<String>, options: [String]) -> some View {

@@ -15,6 +15,9 @@ struct TaskEditorSheet: View {
     var attendees: [Person] = []
     /// When true (meeting action items), an assignee must be chosen before saving.
     var requireAssignee: Bool = false
+    /// Pre-seed the summary/notes for a new task (e.g. from an email being turned into a todo).
+    var presetSummary: String? = nil
+    var presetNotes: String? = nil
 
     @Query(sort: \Project.name) private var projects: [Project]
     @Query(sort: \Person.name) private var people: [Person]
@@ -80,6 +83,8 @@ struct TaskEditorSheet: View {
                 // Default the assignee to the "Me" person configured in Settings (nil if unset).
                 selectedAssignee = people.first(where: { $0.id == AppSettingsStore.myPersonID })
                 selectedProject = presetProject
+                if let s = presetSummary { summary = s }
+                if let n = presetNotes { notes = n }
             }
         }
         .sheet(isPresented: $showingLogTime) {

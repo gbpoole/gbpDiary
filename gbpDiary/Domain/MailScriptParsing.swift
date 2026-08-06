@@ -28,10 +28,23 @@ enum MailScriptParsing {
                                    calendar: Calendar = .current) -> String {
         let start = calendar.startOfDay(for: day)
         let next = calendar.date(byAdding: .day, value: 1, to: start) ?? start
-        let s = calendar.dateComponents([.year, .month, .day], from: start)
-        let n = calendar.dateComponents([.year, .month, .day], from: next)
-        let d1 = "mkDate(\(s.year!), \(s.month!), \(s.day!))"
-        let d2 = "mkDate(\(n.year!), \(n.month!), \(n.day!))"
+        return script(rangeStart: start, rangeEnd: next, accountName: accountName,
+                      inboxMailbox: inboxMailbox, sentMailbox: sentMailbox, calendar: calendar)
+    }
+
+    /// Like `script(forDay:)` but over a half-open `[rangeStart, rangeEnd)` window (both normalised to
+    /// start-of-day) — used to fetch several days at once (auto-ingest).
+    nonisolated static func script(rangeStart: Date, rangeEnd: Date,
+                                   accountName: String = "Exchange",
+                                   inboxMailbox: String = "Inbox",
+                                   sentMailbox: String = "Sent Items",
+                                   calendar: Calendar = .current) -> String {
+        // Full datetime bounds (not day-normalised) so an incremental "since last fetch" window works.
+        let fields: Set<Calendar.Component> = [.year, .month, .day, .hour, .minute, .second]
+        let s = calendar.dateComponents(fields, from: rangeStart)
+        let n = calendar.dateComponents(fields, from: rangeEnd)
+        let d1 = "mkDateTime(\(s.year!), \(s.month!), \(s.day!), \(s.hour!), \(s.minute!), \(s.second!))"
+        let d2 = "mkDateTime(\(n.year!), \(n.month!), \(n.day!), \(n.hour!), \(n.minute!), \(n.second!))"
         let acc = escape(accountName), inbox = escape(inboxMailbox), sent = escape(sentMailbox)
         return """
         set FS to (ASCII character 31)
@@ -68,15 +81,15 @@ enum MailScriptParsing {
         end timeout
         return out
 
-        on mkDate(y, mo, d)
+        on mkDateTime(y, mo, d, h, mi, s)
             set dt to current date
             set day of dt to 1
             set year of dt to y
             set month of dt to mo
             set day of dt to d
-            set time of dt to 0
+            set time of dt to (h * 3600 + mi * 60 + s)
             return dt
-        end mkDate
+        end mkDateTime
 
         on senderIsMine(m, myAddrs)
             set snd to ""

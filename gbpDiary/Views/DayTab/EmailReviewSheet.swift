@@ -1,34 +1,33 @@
 import SwiftUI
 import SwiftData
 
-// The email "workspace" for one diary day: a multi-select list where the user cleans (dismisses),
-// files (assigns projects), and connects each email to a Person. Dismiss persists on the model and is
-// undoable (banner + Show-dismissed → Undismiss). Person reconciliation reuses the calendar-attendee
-// flow (ResolveAttendeeSheet). A sheet may use a List freely — unlike the diary's VStack sections.
-struct EmailReviewSheet: View {
+// The email triage workspace: a rolling last-3-days list segmented by triage state
+// (To triage / Accepted / Dismissed). Each row has quick accept/dismiss/unclassify icons, opens in
+// Mail, files projects (with tap-to-apply suggestions), reconciles the person, and can exclude the
+// sender. A Refresh button fetches new mail since the last fetch.
+struct EmailTriageSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    let day: Date
-
     @Query(sort: \EmailMessage.date, order: .reverse) private var allEmails: [EmailMessage]
     @Query(sort: \Project.name) private var allProjects: [Project]
+    @Query private var allPeople: [Person]
 
-    @State private var showDismissed = false
-    @State private var selection: Set<PersistentIdentifier> = []
+    @State private var filter: EmailTriageState = .unclassified
     @State private var reconciling: EmailMessage?
-    @State private var showingBulkProjects = false
-    @State private var bulkProjects: [Project] = []
-    @State private var lastDismissed: [PersistentIdentifier] = []
-    @State private var undoVisible = false
+    @State private var makingTodoFor: EmailMessage?
+    @State private var service = MailScriptService()
+    @State private var isFetching = false
+    @State private var status: String?
 
-    private var dayEmails: [EmailMessage] {
-        let cal = Calendar.current
-        return allEmails.filter { cal.isDate($0.date, inSameDayAs: day) && (showDismissed || !$0.dismissed) }
+    private var windowStart: Date { EmailIngest.window().start }
+
+    private var windowEmails: [EmailMessage] {
+        allEmails.filter { $0.date >= windowStart && $0.triageState == filter }
     }
 
-    private var selectedEmails: [EmailMessage] {
-        dayEmails.filter { selection.contains($0.persistentModelID) }
+    private func count(_ state: EmailTriageState) -> Int {
+        allEmails.filter { $0.date >= windowStart && $0.triageState == state }.count
     }
 
     var body: some View {
@@ -36,22 +35,25 @@ struct EmailReviewSheet: View {
             VStack(spacing: 0) {
                 controlBar
                 Divider()
-                if dayEmails.isEmpty {
-                    Text(showDismissed ? "No email for this day." : "No active email — everything is dismissed.")
-                        .font(.callout).foregroundStyle(.secondary)
+                if windowEmails.isEmpty {
+                    Text(emptyLabel).font(.callout).foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
-                    List(selection: $selection) {
-                        ForEach(dayEmails, id: \.persistentModelID) { email in
-                            EmailReviewRow(email: email, allProjects: allProjects,
+                    List {
+                        ForEach(windowEmails, id: \.persistentModelID) { email in
+                            EmailTriageRow(email: email, allProjects: allProjects,
+                                           suggestions: suggestions(for: email),
                                            makeProject: makeProject,
-                                           onReconcile: { reconciling = email })
+                                           onApplySuggestion: { apply($0, to: email) },
+                                           onReconcile: { reconciling = email },
+                                           onExcludeAddress: { excludeSender(email, domain: false) },
+                                           onExcludeDomain: { excludeSender(email, domain: true) },
+                                           onMakeTodo: { makingTodoFor = email })
                         }
                     }
                 }
             }
-            .safeAreaInset(edge: .bottom) { if undoVisible { undoBar } }
-            .navigationTitle("Review Email — \(day.formatted(date: .abbreviated, time: .omitted))")
+            .navigationTitle("Triage Email — last 3 days")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
@@ -61,115 +63,109 @@ struct EmailReviewSheet: View {
                     onResolve: { resolvePerson(email, $0) }
                 )
             }
-            .sheet(isPresented: $showingBulkProjects) { bulkProjectSheet }
+            .sheet(item: $makingTodoFor) { email in
+                TaskEditorSheet(
+                    task: nil,
+                    defaultDate: email.date,
+                    onTaskCreated: { task in task.originEmail = email; email.accept() },
+                    presetProject: email.projects.first,
+                    presetSummary: email.subject.isEmpty ? nil : email.subject,
+                    presetNotes: email.summary
+                )
+            }
         }
         #if os(macOS)
-        .frame(minWidth: 640, minHeight: 480)
+        .frame(minWidth: 700, minHeight: 520)
         #endif
+    }
+
+    private var emptyLabel: String {
+        switch filter {
+        case .unclassified: "Nothing to triage — you're all caught up."
+        case .accepted:     "No accepted email in the last 3 days."
+        case .dismissed:    "No dismissed email in the last 3 days."
+        }
     }
 
     // MARK: - Control bar
 
     private var controlBar: some View {
         HStack(spacing: 12) {
-            Toggle("Show dismissed", isOn: $showDismissed)
-                #if os(macOS)
-                .toggleStyle(.checkbox)
-                #endif
-            Spacer()
-            if !selection.isEmpty {
-                Text("\(selection.count) selected").font(.caption).foregroundStyle(.secondary)
-                if selectedEmails.contains(where: { !$0.dismissed }) {
-                    Button("Dismiss") { dismissSelected() }
-                }
-                if selectedEmails.contains(where: { $0.dismissed }) {
-                    Button("Undismiss") { undismissSelected() }
-                }
-                Button("Assign project…") { bulkProjects = []; showingBulkProjects = true }
-                Button("Clear") { selection.removeAll() }
+            Button { refresh() } label: {
+                Label(isFetching ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise")
             }
+            .disabled(isFetching)
+            Picker("", selection: $filter) {
+                ForEach(EmailTriageState.allCases, id: \.self) { s in
+                    Text("\(s.label) (\(count(s)))").tag(s)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            if let status { Text(status).font(.caption).foregroundStyle(.secondary) }
+            Spacer()
         }
         .padding(.horizontal).padding(.vertical, 8)
     }
 
-    private var undoBar: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.uturn.backward.circle")
-            Text("Dismissed \(lastDismissed.count) message\(lastDismissed.count == 1 ? "" : "s")")
-            Button("Undo") { undoDismiss() }
-            Spacer()
-            Button { undoVisible = false } label: { Image(systemName: "xmark") }
-                .buttonStyle(.plain).foregroundStyle(.secondary)
+    // MARK: - Suggestions
+
+    private func suggestions(for email: EmailMessage) -> [ProjectRef] {
+        let projects = allProjects.map { ProjectRef(id: $0.id, name: $0.name) }
+        let assigned = email.projects.map(\.id)
+        let senderProjects = (email.person.map { $0.devProjects + $0.sciProjects } ?? []).map(\.id)
+        let key = EmailThreading.threadKey(subject: email.subject,
+                                           party: email.person?.id.uuidString ?? email.fromAddress)
+        var prior: [UUID] = []
+        for other in allEmails where other.id != email.id {
+            let sameSender = !email.fromAddress.isEmpty
+                && other.fromAddress.caseInsensitiveCompare(email.fromAddress) == .orderedSame
+            let sameThread = EmailThreading.threadKey(subject: other.subject,
+                                                      party: other.person?.id.uuidString ?? other.fromAddress) == key
+            if sameSender || sameThread { prior.append(contentsOf: other.projects.map(\.id)) }
         }
-        .font(.callout)
-        .padding(.horizontal, 14).padding(.vertical, 10)
-        .background(.thinMaterial)
+        let input = EmailProjectSuggestions.Input(assignedIDs: assigned, senderProjectIDs: senderProjects,
+                                                  priorProjectIDs: prior, aiSuggestedID: email.suggestedProjectID)
+        return EmailProjectSuggestions.rank(input, projects: projects)
     }
 
-    // MARK: - Bulk project sheet
+    private func apply(_ ref: ProjectRef, to email: EmailMessage) {
+        guard let project = allProjects.first(where: { $0.id == ref.id }),
+              !email.projects.contains(where: { $0.id == project.id }) else { return }
+        email.projects.append(project)
+    }
 
-    private var bulkProjectSheet: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Assign these projects to \(selection.count) email\(selection.count == 1 ? "" : "s"). Existing projects are kept.")
-                    .font(.callout).foregroundStyle(.secondary)
-                FuzzyPickerField(
-                    allItems: allProjects,
-                    selected: $bulkProjects,
-                    label: \.name,
-                    chipColor: AppTheme.project,
-                    onCreateItem: { makeProject($0) },
-                    tapArea: true,
-                    emptyLabel: "Tap to choose or add projects"
-                )
-                Spacer()
-            }
-            .padding()
-            .navigationTitle("Assign Project")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { showingBulkProjects = false } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Assign") { assignBulkProjects() }.disabled(bulkProjects.isEmpty)
-                }
-            }
+    // MARK: - Refresh / exclude
+
+    private func refresh() {
+        let settings = EmailSettingsStore.load()
+        guard settings.isConfigured, !isFetching else {
+            if !settings.isConfigured { status = "Set your email account in Settings (⌘,)" }
+            return
         }
-        #if os(macOS)
-        .frame(minWidth: 420, minHeight: 260)
-        #endif
-    }
-
-    // MARK: - Actions
-
-    private func dismissSelected() {
-        let targets = selectedEmails.filter { !$0.dismissed }
-        guard !targets.isEmpty else { return }
-        for e in targets { e.dismissed = true }
-        lastDismissed = targets.map { $0.persistentModelID }
-        selection.removeAll()
-        undoVisible = true
-    }
-
-    private func undismissSelected() {
-        for e in selectedEmails where e.dismissed { e.dismissed = false }
-        selection.removeAll()
-    }
-
-    private func undoDismiss() {
-        for id in lastDismissed {
-            if let e = allEmails.first(where: { $0.persistentModelID == id }) { e.dismissed = false }
-        }
-        lastDismissed = []
-        undoVisible = false
-    }
-
-    private func assignBulkProjects() {
-        for email in selectedEmails {
-            for p in bulkProjects where !email.projects.contains(where: { $0.persistentModelID == p.persistentModelID }) {
-                email.projects.append(p)
+        isFetching = true; status = nil
+        let bounds = EmailIngest.fetchBounds(lastFetchedAt: EmailFetchStateStore.lastFetchedAt())
+        service.fetchRange(rangeStart: bounds.start, rangeEnd: bounds.end, settings: settings) { result in
+            isFetching = false
+            switch result {
+            case .success(let drafts):
+                let added = EmailIngest.upsert(drafts, account: settings.accountName,
+                                               existing: allEmails, people: allPeople, context: modelContext)
+                EmailFetchStateStore.setLastFetchedAt(Date())
+                status = added == 0 ? "Up to date" : "Fetched \(added) new"
+            case .failure(let error):
+                status = error.userMessage
             }
         }
-        showingBulkProjects = false
-        selection.removeAll()
+    }
+
+    // Add an exclude rule (address or domain) — future-only — and dismiss this email now.
+    private func excludeSender(_ email: EmailMessage, domain: Bool) {
+        let opts = EmailExcludeMatching.suggestions(forAddress: email.fromAddress)
+        let rule = domain ? opts.last : opts.first
+        if let rule { EmailExcludeStore.add(rule) }
+        email.triageDismiss()
     }
 
     // Mirrors MinutesDetailView.resolveAttendee: link → add the address to that Person; create → new Person.
@@ -197,60 +193,77 @@ struct EmailReviewSheet: View {
     }
 }
 
-// One selectable email in the review list: direction, sender/subject/time, a person chip (tap to
-// link/create), and an inline project picker. Dismissed rows show a gray marker.
-private struct EmailReviewRow: View {
-    let email: EmailMessage
+// One triage row: quick accept/dismiss/unclassify icons, open-in-Mail, sender/summary/time, a person
+// chip (reconcile), project chips + inline picker, and tap-to-apply project suggestions.
+private struct EmailTriageRow: View {
+    @Bindable var email: EmailMessage
     let allProjects: [Project]
+    let suggestions: [ProjectRef]
     let makeProject: (String) -> Project?
+    let onApplySuggestion: (ProjectRef) -> Void
     let onReconcile: () -> Void
+    let onExcludeAddress: () -> Void
+    let onExcludeDomain: () -> Void
+    let onMakeTodo: () -> Void
 
     @State private var mailService = MailScriptService()
     @State private var openError: String?
 
-    private var sender: String {
-        if let name = email.fromName, !name.isEmpty { return name }
-        return email.fromAddress.isEmpty ? "Unknown sender" : email.fromAddress
-    }
-
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
+            triageIcons
             Button { openInMail() } label: {
                 Image(systemName: email.direction == .sent ? "paperplane" : "envelope")
-                    .foregroundStyle(.secondary)
-                    .font(.system(size: 14))
-                    .frame(width: 20)
+                    .foregroundStyle(.secondary).font(.system(size: 13)).frame(width: 18)
             }
-            .buttonStyle(.plain)
-            .help("Open in Mail")
-            VStack(alignment: .leading, spacing: 4) {
+            .buttonStyle(.plain).help("Open in Mail")
+            VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
-                    Text(sender).lineLimit(1).fontWeight(.medium)
-                    if email.direction == .sent { Chip(label: "Sent", color: .gray) }
-                    if email.dismissed { Chip(label: "Dismissed", color: .gray) }
-                    Spacer(minLength: 0)
+                    personChip
+                    suggestionChips
+                    projectPicker
                     Text(email.date.formatted(date: .omitted, time: .shortened))
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption2).foregroundStyle(.secondary)
                 }
                 EmailContentLine(subject: email.subject, summary: email.summary,
-                                 isSummarizing: email.summaryState == EmailSummaryState.pending.rawValue,
-                                 font: .caption, lineLimit: 3)
-                HStack(spacing: 10) {
-                    personChip
-                    projectPicker
-                }
+                                 isSummarizing: email.summaryState == EmailSummaryState.pending.rawValue)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 1)
         .contextMenu {
-            Button("Regenerate summary", systemImage: "sparkles") {
-                email.summary = nil
-                email.summaryState = EmailSummaryState.pending.rawValue
-            }
+            Button("Exclude sender (\(email.fromAddress))") { onExcludeAddress() }
+            Button("Exclude domain") { onExcludeDomain() }
         }
         .alert("Couldn't open email", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(openError ?? "") }
+    }
+
+    // Move-to-state icons + "make todo": shows the actions that change the current state, plus a
+    // create-todo action available in any state.
+    @ViewBuilder private var triageIcons: some View {
+        VStack(spacing: 6) {
+            if email.triageState != .accepted {
+                iconButton("checkmark.circle.fill", AppTheme.completed, "Accept") { email.accept() }
+            }
+            if email.triageState != .dismissed {
+                iconButton("xmark.circle.fill", AppTheme.mutedText, "Dismiss") { email.triageDismiss() }
+            }
+            if email.triageState != .unclassified {
+                iconButton("tray.full", AppTheme.accent, "Move back to triage") { email.unclassify() }
+            }
+            iconButton(email.tasks.isEmpty ? "checklist" : "checklist.checked", AppTheme.action,
+                       email.tasks.isEmpty ? "Make a todo from this email" : "Make another todo (\(email.tasks.count) linked)",
+                       onMakeTodo)
+        }
+        .frame(width: 22)
+    }
+
+    private func iconButton(_ system: String, _ color: Color, _ help: String, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: system).font(.system(size: 15)).foregroundStyle(color)
+        }
+        .buttonStyle(.plain).help(help)
     }
 
     private func openInMail() {
@@ -264,13 +277,27 @@ private struct EmailReviewRow: View {
             if let person = email.person {
                 Chip(label: person.name, color: AppTheme.person)
             } else {
-                Chip(label: "Unrecognized", color: AppTheme.warning)
+                let label = email.fromName?.isEmpty == false ? email.fromName!
+                    : (email.fromAddress.isEmpty ? "Unrecognized" : email.fromAddress)
+                Chip(label: label, color: AppTheme.warning)
             }
         }
         .buttonStyle(.plain)
-        .help(email.person == nil
-              ? "Unrecognized — click to link an existing person or create a new one"
-              : "Linked person — click to change")
+        .help(email.person == nil ? "Unrecognized — click to link/create a person" : "Linked person — click to change")
+    }
+
+    // Suggested projects (before the picker): tap a chip to file the email under it. Never auto-applied.
+    @ViewBuilder private var suggestionChips: some View {
+        if !suggestions.isEmpty {
+            Image(systemName: "sparkles").font(.system(size: 9)).foregroundStyle(AppTheme.accent)
+            ForEach(suggestions, id: \.id) { s in
+                Button { onApplySuggestion(s) } label: {
+                    Chip(label: "+ \(s.name)", color: AppTheme.project)
+                }
+                .buttonStyle(.plain)
+                .help("Suggested — click to file under \(s.name)")
+            }
+        }
     }
 
     private var projectPicker: some View {
@@ -281,7 +308,7 @@ private struct EmailReviewRow: View {
             chipColor: AppTheme.project,
             onCreateItem: makeProject,
             tapArea: true,
-            emptyLabel: "Projects…"
+            emptyLabel: "None — tap to file under a project"
         )
     }
 }
