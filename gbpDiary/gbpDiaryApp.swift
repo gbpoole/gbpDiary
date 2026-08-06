@@ -10,6 +10,7 @@ import AppKit
 struct gbpDiaryApp: App {
     @State private var didRunBundleImport = false
     @State private var workspace = WorkspaceModel()
+    @AppStorage(SettingsTab.storageKey) private var settingsTab = SettingsTab.general
 
     var sharedModelContainer: ModelContainer = {
         let isUITesting = ProcessInfo.processInfo.arguments.contains("-ui-testing")
@@ -58,13 +59,16 @@ struct gbpDiaryApp: App {
         }
         #if os(macOS)
         Settings {
-            TabView {
+            TabView(selection: $settingsTab) {
                 GeneralSettingsView()
                     .tabItem { Label("General", systemImage: "gearshape") }
+                    .tag(SettingsTab.general)
                 CalendarSettingsView()
                     .tabItem { Label("Calendar", systemImage: "calendar") }
+                    .tag(SettingsTab.calendar)
                 EmailSettingsView()
                     .tabItem { Label("Email", systemImage: "envelope") }
+                    .tag(SettingsTab.email)
             }
             .modelContainer(sharedModelContainer)
         }

@@ -106,6 +106,10 @@ struct EmailTriageSheet: View {
             .fixedSize()
             if let status { Text(status).font(.caption).foregroundStyle(.secondary) }
             Spacer()
+            Button { SettingsTab.open(SettingsTab.email) } label: {
+                Label("Spam rules…", systemImage: "gearshape")
+            }
+            .help("Manage spam rules in Email settings")
         }
         .padding(.horizontal).padding(.vertical, 8)
     }
@@ -161,11 +165,10 @@ struct EmailTriageSheet: View {
         }
     }
 
-    // Add an exclude rule (address or domain) — future-only — and dismiss this email now.
+    // Add a sender spam rule (address or domain) — future-only — and dismiss this email now.
     private func excludeSender(_ email: EmailMessage, domain: Bool) {
         let opts = EmailExcludeMatching.suggestions(forAddress: email.fromAddress)
-        let rule = domain ? opts.last : opts.first
-        if let rule { EmailExcludeStore.add(rule) }
+        if let rule = domain ? opts.last : opts.first { EmailExcludeStore.addSender(rule) }
         email.triageDismiss()
     }
 

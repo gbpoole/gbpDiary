@@ -48,8 +48,8 @@ enum EmailIngest {
             let msg = EmailMessage(messageId: d.messageId, account: account, mailbox: mailbox,
                                    direction: d.direction, fromAddress: d.address, fromName: d.name,
                                    subject: d.subject, date: d.date)
-            // Excluded sender → dismissed; sent mail → auto-accepted (you sent it); received → unclassified.
-            if EmailExcludeMatching.isExcluded(address: d.address, rules: rules) {
+            // Matches a spam rule → dismissed; sent mail → auto-accepted (you sent it); received → unclassified.
+            if EmailExcludeMatching.isExcluded(fromAddress: d.address, subject: d.subject, rules: rules) {
                 msg.dismissed = true
             } else if d.direction == .sent {
                 msg.accepted = true

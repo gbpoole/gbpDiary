@@ -11,7 +11,8 @@ struct EmailSettingsView: View {
     @State private var mailboxes: [String] = []
     @State private var service = MailScriptService()
     @State private var status: String?
-    @State private var excludeRules: [String] = []
+    @State private var excludeRules: [EmailExcludeRule] = []
+    @State private var newField: EmailExcludeField = .sender
     @State private var newRule = ""
 
     var body: some View {
@@ -30,13 +31,16 @@ struct EmailSettingsView: View {
                         row("Sent", selection: $sentMailbox, options: options(mailboxes, sentMailbox))
                     }
                 }
-                GroupBox("Excluded senders") {
+                GroupBox("Spam rules") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Emails from these senders are dismissed automatically when fetched. A rule is a full address (news@x.com) or a domain (x.com or @x.com). Applies to newly-fetched email only.")
+                        Text("Emails matching a rule are dismissed automatically when fetched. A Sender rule matches a full address (news@x.com) or a domain (x.com or @x.com). A Subject rule matches any email whose subject contains the text (e.g. [lsc-all]). Applies to newly-fetched email only.")
                             .font(.caption).foregroundStyle(.secondary)
-                        ForEach(excludeRules, id: \.self) { rule in
+                        ForEach(excludeRules) { rule in
                             HStack(spacing: 6) {
-                                Text(rule).font(.callout)
+                                Text(rule.field.label)
+                                    .font(.caption2).foregroundStyle(.secondary)
+                                    .frame(width: 56, alignment: .leading)
+                                Text(rule.pattern).font(.callout)
                                 Spacer(minLength: 0)
                                 Button { removeRule(rule) } label: {
                                     Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
@@ -45,11 +49,15 @@ struct EmailSettingsView: View {
                             }
                         }
                         HStack(spacing: 6) {
-                            TextField("address or domain…", text: $newRule)
+                            Picker("", selection: $newField) {
+                                ForEach(EmailExcludeField.allCases, id: \.self) { Text($0.label).tag($0) }
+                            }
+                            .labelsHidden().fixedSize()
+                            TextField(newField == .sender ? "address or domain…" : "subject contains…", text: $newRule)
                                 .textFieldStyle(.roundedBorder)
                                 .onSubmit { addRule() }
                             Button("Add") { addRule() }
-                                .disabled(EmailExcludeMatching.normalize(newRule) == nil)
+                                .disabled(EmailExcludeMatching.normalizePattern(newRule, field: newField) == nil)
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -74,12 +82,12 @@ struct EmailSettingsView: View {
     }
 
     private func addRule() {
-        EmailExcludeStore.add(newRule)
+        EmailExcludeStore.add(field: newField, pattern: newRule)
         excludeRules = EmailExcludeStore.load()
         newRule = ""
     }
 
-    private func removeRule(_ rule: String) {
+    private func removeRule(_ rule: EmailExcludeRule) {
         EmailExcludeStore.remove(rule)
         excludeRules = EmailExcludeStore.load()
     }
