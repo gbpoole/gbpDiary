@@ -447,10 +447,10 @@ that block's **net remaining** (`FocusBlockRow.netHours` adds the emails' `timeE
 email time adds to the day total. Email-linked entries are kept out of the plain entry bucketing/rendering
 (`taskEntries` = `email == nil`) — represented by the email row's logged-duration chip.
 
-**`EmailTriageSheet`** (opened from the day's email action button or the "N to triage" hint) is the
-accept/dismiss workspace: a rolling **last 3 days** list **segmented by triage state** (To triage /
-Accepted / Dismissed, each with a count; default To-triage), and a **Refresh** button (incremental
-fetch-now). There is no multi-select/bulk toolbar — each row (`EmailTriageRow`) has **quick action
+**`EmailTriageSheet(day:)`** (opened from the day's email action button or the "N to triage" hint) is
+the accept/dismiss workspace, **scoped to the displayed diary day** (`isDate(_:inSameDayAs:)`),
+**segmented by triage state** (To triage / Accepted / Dismissed, each with a count; default To-triage),
+with a **Refresh** button (incremental fetch-now; new mail lands on its own day). There is no multi-select/bulk toolbar — each row (`EmailTriageRow`) has **quick action
 icons** (Accept ✓ / Dismiss ✕ / move-back-to-triage — only the ones that change the current state
 show), opens in Mail, shows the summary line, an inline project `FuzzyPickerField`, a person chip →
 `ResolveAttendeeSheet` (`resolvePerson` mirrors `MinutesDetailView.resolveAttendee`), a context menu to

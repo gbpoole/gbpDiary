@@ -45,7 +45,6 @@ struct DayPageContent: View {
     @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allTimeEntries: [TaskTimeEntry]
     @Query(sort: \EmailMessage.date, order: .reverse) private var allEmails: [EmailMessage]
     @Query private var allPeople: [Person]
-    @Query(sort: \Project.name) private var allEmailProjects: [Project]
     @State private var showingTriage = false
     @State private var reconcilingThread: EmailThread?
 
@@ -77,10 +76,19 @@ struct DayPageContent: View {
         return allEmails.filter { cal.isDate($0.date, inSameDayAs: date) && $0.triageState == .accepted }
     }
 
-    // Count of this day's still-unclassified emails, surfaced as a "to triage" hint.
-    private var dayUnclassifiedCount: Int {
+    private func dayEmailCount(_ state: EmailTriageState) -> Int {
         let cal = Calendar.current
-        return allEmails.filter { cal.isDate($0.date, inSameDayAs: date) && $0.triageState == .unclassified }.count
+        return allEmails.filter { cal.isDate($0.date, inSameDayAs: date) && $0.triageState == state }.count
+    }
+    private var dayUnclassifiedCount: Int { dayEmailCount(.unclassified) }
+    private var dayDismissedCount: Int { dayEmailCount(.dismissed) }
+
+    // A "N to triage · M dismissed" summary of this day's hidden (non-accepted) emails, or nil if none.
+    private var hiddenEmailSummary: String? {
+        var parts: [String] = []
+        if dayUnclassifiedCount > 0 { parts.append("\(dayUnclassifiedCount) to triage") }
+        if dayDismissedCount > 0 { parts.append("\(dayDismissedCount) dismissed") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     private var dayStart: Date { DayTaskFiltering.dayBounds(for: date).dayStart }
@@ -207,7 +215,7 @@ struct DayPageContent: View {
         .sheet(item: $addNoteRecord) { record in
             ContentNoteEditorSheet(dayRecord: record, onCreated: { newlyAddedNoteId = $0.id })
         }
-        .sheet(isPresented: $showingTriage) { EmailTriageSheet() }
+        .sheet(isPresented: $showingTriage) { EmailTriageSheet(day: date) }
         .sheet(item: $reconcilingThread) { thread in
             ResolveAttendeeSheet(
                 attendee: CalendarAttendee(name: thread.fromName ?? "", email: thread.fromAddress),
@@ -224,11 +232,10 @@ struct DayPageContent: View {
 
     @ViewBuilder private var emailsSection: some View {
         DaySectionHeader(title: "Email")
-        // Unprocessed emails waiting to be accepted/dismissed — tap to open the triage window.
-        if dayUnclassifiedCount > 0 {
+        // Hidden (non-accepted) emails for this day — tap to open the triage window.
+        if let hidden = hiddenEmailSummary {
             Button { showingTriage = true } label: {
-                Label("\(dayUnclassifiedCount) email\(dayUnclassifiedCount == 1 ? "" : "s") to triage",
-                      systemImage: "tray.full")
+                Label(hidden, systemImage: "tray.full")
                     .font(.caption).foregroundStyle(AppTheme.accent)
             }
             .buttonStyle(.plain)
@@ -244,19 +251,14 @@ struct DayPageContent: View {
                 .padding(.vertical, 4)
         }
         if dayEmails.isEmpty {
-            Text("No email fetched for this day.")
+            Text(hiddenEmailSummary == nil ? "No emails for this day." : "No emails on the diary for this day.")
                 .font(.callout)
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal)
                 .padding(.vertical, 6)
         } else {
             ForEach(dayEmailThreads) { thread in
-                DayEmailThreadRow(
-                    thread: thread,
-                    allProjects: allEmailProjects,
-                    onReconcile: { reconcilingThread = thread },
-                    makeProject: makeEmailProject
-                )
+                DayEmailThreadRow(thread: thread, onReconcile: { reconcilingThread = thread })
             }
         }
     }
@@ -277,14 +279,6 @@ struct DayPageContent: View {
             person = p
         }
         for message in thread.messages { message.person = person }
-    }
-
-    private func makeEmailProject(_ name: String) -> Project? {
-        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let project = Project(name: trimmed)
-        modelContext.insert(project)
-        return project
     }
 
     // MARK: - Sections

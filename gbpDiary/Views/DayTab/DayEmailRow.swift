@@ -37,9 +37,7 @@ struct EmailThread: Identifiable {
 // (ResolveAttendeeSheet); the project picker files the whole thread. No "Sent" chip — the icon shows it.
 struct DayEmailThreadRow: View {
     let thread: EmailThread
-    let allProjects: [Project]
     let onReconcile: () -> Void
-    let makeProject: (String) -> Project?
 
     @State private var mailService = MailScriptService()
     @State private var openError: String?
@@ -53,7 +51,9 @@ struct DayEmailThreadRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     personChip
-                    projectPicker
+                    ForEach(thread.projects, id: \.persistentModelID) { project in
+                        Chip(label: project.name, color: AppTheme.project)
+                    }
                     Spacer(minLength: 0)
                     if thread.count > 1 {
                         Chip(label: "\(thread.count)", color: .gray)
@@ -106,25 +106,10 @@ struct DayEmailThreadRow: View {
               ? "Unrecognized — click to link an existing person or create a new one"
               : "Linked person — click to change")
     }
-
-    // Compact (icon-style) project picker: shows project chips + a small add button; edits all messages.
-    private var projectPicker: some View {
-        FuzzyPickerField(
-            allItems: allProjects,
-            selected: Binding(
-                get: { thread.projects },
-                set: { newValue in for m in thread.messages { m.projects = newValue } }
-            ),
-            label: \.name,
-            chipColor: AppTheme.project,
-            onCreateItem: makeProject
-        )
-    }
 }
 
-// The email's content line: shows the on-device AI **summary** when ready (prefixed with a sparkles
-// icon so it clearly reads as a summary, not the subject), otherwise falls back to the **subject**
-// (de-emphasised, with a "summarising…" hint while one is being generated).
+// The email's content line: shows the on-device AI **summary** when ready (primary text), otherwise
+// falls back to the **subject** (de-emphasised, with a "summarising…" hint while one is generated).
 struct EmailContentLine: View {
     let subject: String
     let summary: String?
@@ -134,15 +119,10 @@ struct EmailContentLine: View {
 
     var body: some View {
         if let summary, !summary.isEmpty {
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Image(systemName: "sparkles")
-                    .font(.system(size: 10))
-                    .foregroundStyle(AppTheme.accent)
-                Text(summary)
-                    .font(font)
-                    .lineLimit(lineLimit)
-            }
-            .help("AI summary")
+            Text(summary)
+                .font(font)
+                .lineLimit(lineLimit)
+                .help("AI summary")
         } else {
             HStack(alignment: .firstTextBaseline, spacing: 5) {
                 Text(subject.isEmpty ? "(no subject)" : subject)

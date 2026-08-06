@@ -6,6 +6,8 @@ import SwiftData
 // Mail, files projects (with tap-to-apply suggestions), reconciles the person, and can exclude the
 // sender. A Refresh button fetches new mail since the last fetch.
 struct EmailTriageSheet: View {
+    let day: Date
+
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
@@ -20,15 +22,14 @@ struct EmailTriageSheet: View {
     @State private var isFetching = false
     @State private var status: String?
 
-    private var windowStart: Date { EmailIngest.window().start }
-
-    private var windowEmails: [EmailMessage] {
-        allEmails.filter { $0.date >= windowStart && $0.triageState == filter }
+    // Triage manages the displayed diary day only.
+    private func dayEmails(_ state: EmailTriageState) -> [EmailMessage] {
+        let cal = Calendar.current
+        return allEmails.filter { cal.isDate($0.date, inSameDayAs: day) && $0.triageState == state }
     }
 
-    private func count(_ state: EmailTriageState) -> Int {
-        allEmails.filter { $0.date >= windowStart && $0.triageState == state }.count
-    }
+    private var windowEmails: [EmailMessage] { dayEmails(filter) }
+    private func count(_ state: EmailTriageState) -> Int { dayEmails(state).count }
 
     var body: some View {
         NavigationStack {
@@ -53,7 +54,7 @@ struct EmailTriageSheet: View {
                     }
                 }
             }
-            .navigationTitle("Triage Email — last 3 days")
+            .navigationTitle("Triage Email — \(day.formatted(date: .abbreviated, time: .omitted))")
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
             }
@@ -81,9 +82,9 @@ struct EmailTriageSheet: View {
 
     private var emptyLabel: String {
         switch filter {
-        case .unclassified: "Nothing to triage — you're all caught up."
-        case .accepted:     "No accepted email in the last 3 days."
-        case .dismissed:    "No dismissed email in the last 3 days."
+        case .unclassified: "Nothing to triage for this day."
+        case .accepted:     "No accepted email for this day."
+        case .dismissed:    "No dismissed email for this day."
         }
     }
 
@@ -208,10 +209,10 @@ private struct EmailTriageRow: View {
 
     @State private var mailService = MailScriptService()
     @State private var openError: String?
+    @State private var editingProject = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            triageIcons
             Button { openInMail() } label: {
                 Image(systemName: email.direction == .sent ? "paperplane" : "envelope")
                     .foregroundStyle(.secondary).font(.system(size: 13)).frame(width: 18)
@@ -220,10 +221,11 @@ private struct EmailTriageRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
                     personChip
-                    suggestionChips
-                    projectPicker
+                    projectChip
+                    Spacer(minLength: 8)
                     Text(email.date.formatted(date: .omitted, time: .shortened))
                         .font(.caption2).foregroundStyle(.secondary)
+                    triageActions
                 }
                 EmailContentLine(subject: email.subject, summary: email.summary,
                                  isSummarizing: email.summaryState == EmailSummaryState.pending.rawValue)
@@ -239,10 +241,10 @@ private struct EmailTriageRow: View {
         } message: { Text(openError ?? "") }
     }
 
-    // Move-to-state icons + "make todo": shows the actions that change the current state, plus a
-    // create-todo action available in any state.
-    @ViewBuilder private var triageIcons: some View {
-        VStack(spacing: 6) {
+    // Move-to-state actions + "make todo", trailing the first line: only the actions that change the
+    // current state show, plus a create-todo action available in any state.
+    @ViewBuilder private var triageActions: some View {
+        HStack(spacing: 8) {
             if email.triageState != .accepted {
                 iconButton("checkmark.circle.fill", AppTheme.completed, "Accept") { email.accept() }
             }
@@ -256,7 +258,6 @@ private struct EmailTriageRow: View {
                        email.tasks.isEmpty ? "Make a todo from this email" : "Make another todo (\(email.tasks.count) linked)",
                        onMakeTodo)
         }
-        .frame(width: 22)
     }
 
     private func iconButton(_ system: String, _ color: Color, _ help: String, _ action: @escaping () -> Void) -> some View {
@@ -286,29 +287,48 @@ private struct EmailTriageRow: View {
         .help(email.person == nil ? "Unrecognized — click to link/create a person" : "Linked person — click to change")
     }
 
-    // Suggested projects (before the picker): tap a chip to file the email under it. Never auto-applied.
-    @ViewBuilder private var suggestionChips: some View {
-        if !suggestions.isEmpty {
-            Image(systemName: "sparkles").font(.system(size: 9)).foregroundStyle(AppTheme.accent)
-            ForEach(suggestions, id: \.id) { s in
-                Button { onApplySuggestion(s) } label: {
-                    Chip(label: "+ \(s.name)", color: AppTheme.project)
-                }
-                .buttonStyle(.plain)
-                .help("Suggested — click to file under \(s.name)")
+    // A single project chip. Assigned → the project (tap to edit). Not assigned but recommended →
+    // "+ <Project>" (tap applies the recommendation; tap again to edit). Otherwise a neutral
+    // "No Project" (tap to choose). Editing opens the standard project picker anchored to the chip.
+    @ViewBuilder private var projectChip: some View {
+        Button { projectTap() } label: {
+            if let project = email.projects.first {
+                Chip(label: project.name, color: AppTheme.project)
+            } else if let rec = suggestions.first {
+                Chip(label: "+ \(rec.name)", color: AppTheme.project)
+            } else {
+                Chip(label: "No Project", color: AppTheme.mutedText)
             }
+        }
+        .buttonStyle(.plain)
+        .help(projectHelp)
+        .overlay(alignment: .bottomLeading) {
+            // Invisible anchor hosting the picker popover (driven by editingProject).
+            FuzzyPickerField(
+                allItems: allProjects,
+                selected: Binding(get: { email.projects }, set: { email.projects = $0 }),
+                label: \.name,
+                chipColor: AppTheme.project,
+                onCreateItem: makeProject,
+                isPresented: $editingProject
+            )
+            .frame(width: 1, height: 1)
+            .opacity(0.001)
+            .allowsHitTesting(false)
         }
     }
 
-    private var projectPicker: some View {
-        FuzzyPickerField(
-            allItems: allProjects,
-            selected: Binding(get: { email.projects }, set: { email.projects = $0 }),
-            label: \.name,
-            chipColor: AppTheme.project,
-            onCreateItem: makeProject,
-            tapArea: true,
-            emptyLabel: "None — tap to file under a project"
-        )
+    private var projectHelp: String {
+        if !email.projects.isEmpty { return "Project — click to change" }
+        if suggestions.first != nil { return "Suggested project — click to apply (click again to change)" }
+        return "No project — click to choose"
+    }
+
+    private func projectTap() {
+        if email.projects.isEmpty, let rec = suggestions.first {
+            onApplySuggestion(rec)      // first tap accepts the recommendation
+        } else {
+            editingProject = true       // choose / change / remove
+        }
     }
 }
