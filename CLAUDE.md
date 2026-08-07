@@ -448,10 +448,15 @@ that block's **net remaining** (`FocusBlockRow.netHours` adds the emails' `timeE
 email time adds to the day total. Email-linked entries are kept out of the plain entry bucketing/rendering
 (`taskEntries` = `email == nil`) — represented by the email row's logged-duration chip.
 
-**`EmailTriageSheet(day:)`** (opened from the day's email action button or the "N to triage" hint) is
-the accept/dismiss workspace, **scoped to the displayed diary day** (`isDate(_:inSameDayAs:)`),
-**segmented by triage state** (To triage / Accepted / Dismissed, each with a count; default To-triage),
-with a **Refresh** button (incremental fetch-now; new mail lands on its own day). There is no multi-select/bulk toolbar — each row (`EmailTriageRow`) has **quick action
+**`EmailTriageSheet(day:)`** (opened from the **Email section header's tray button** or the "N to triage"
+hint — there is no longer an email button in the day toolbar) is the accept/dismiss workspace, **scoped
+to the displayed diary day** (`isDate(_:inSameDayAs:)`), **segmented into four mutually-exclusive
+buckets** (`EmailTriageCategory`: **To triage / Accepted / Tasks / Dismissed**, each with a count;
+default To-triage). A to-do'd email is still `accepted` but shows under **Tasks**
+(`EmailTriageCategory.classify(state:hasTasks:)`). There's a **Refresh** button (incremental fetch-now).
+Each row with a to-do shows a **to-do status chip** (open = `AppTheme.action` / done = green) that opens
+the linked task; its **context menu deletes the to-do** (undo make-todo — the email survives and falls
+back to the **Accepted** bucket). There is no multi-select/bulk toolbar — each row (`EmailTriageRow`) has **quick action
 icons** (Accept ✓ / Dismiss ✕ / move-back-to-triage — only the ones that change the current state
 show), opens in Mail, shows the summary line, an inline project `FuzzyPickerField`, a person chip →
 `ResolveAttendeeSheet` (`resolvePerson` mirrors `MinutesDetailView.resolveAttendee`), a context menu to
@@ -462,8 +467,15 @@ summary, project = the email's assigned project) and on create links `Task.origi
 **accepted**, and **tap-to-apply project suggestion chips** (never auto-applied):
 `Domain/EmailProjectSuggestions.swift` (`rank`) combines the sender's Person projects + projects on
 prior same-sender/thread emails + an **on-device AI pick** (`EmailMessage.suggestedProjectID`, set by
-`EmailSummaryDriver` via `FoundationModelsSummarizer.suggestProjectName`). Deleting a Person nullifies
-`EmailMessage.person`; deleting a Project removes it from `EmailMessage.projects` (the email survives).
+`EmailSummaryDriver` via `FoundationModelsSummarizer.suggestProjectName`). The email↔to-do link is
+**visible both ways**: `TaskEditorSheet` shows a **"From email"** section (sender + subject + Open in
+Mail via `MailScriptService.openMessage`), `TaskRowView` shows an **envelope glyph** when
+`task.originEmail != nil`, and the diary `DayEmailThreadRow` shows a **to-do marker**
+(`checklist`/`checklist.checked` + count, `EmailThread.taskCount`/`hasOpenTasks`). Incomplete email
+to-dos are found via the Tasks page **Source → "From email"** filter combined with the Status filters
+(`Task.isOpen` = not completed/cancelled; `EmailMessage.hasTasks`/`hasOpenTask`). Deleting a Person
+nullifies `EmailMessage.person`; deleting a Project removes it from `EmailMessage.projects` (the email
+survives).
 
 ### Shared UI components
 
@@ -634,6 +646,8 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Email project suggestions: `EmailProjectSuggestions.rank` orders AI pick first, then prior sender/thread projects by frequency, then the sender's Person projects; excludes already-assigned; dedups by id; caps | Email triage / suggestions | `gbpDiaryTests/Domain/EmailProjectSuggestionsTests.swift` | `rank_aiFirstThenPriorThenSender`, `rank_priorFrequencyAccumulates`, `rank_excludesAlreadyAssigned`, `rank_capsAndIgnoresUnknownIDs` |
 | Mail range fetch: `MailScriptParsing.script(rangeStart:rangeEnd:)` embeds both datetime bounds (`mkDateTime`) for the auto-ingest window | Email auto-ingest | `gbpDiaryTests/Domain/MailScriptParsingTests.swift` | `scriptRange_embedsBothDayBounds`, `script_containsDayBoundsAccountAndMailboxes` |
 | Email triage state: `EmailTriageState.from(dismissed:accepted:)` — dismissed wins, else accepted→accepted / neither→unclassified | Email triage | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `state_dismissedWins`, `state_acceptedThenUnclassified` |
+| Triage bucket: `EmailTriageCategory.classify(state:hasTasks:)` — dismissed wins; else a linked to-do → Tasks; else accepted → Accepted; else To triage | Email triage / task bucket | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `category_classify_bucketsByStateAndTasks` |
+| `Task.isOpen` is false only when completed/cancelled; `EmailMessage.hasTasks`/`hasOpenTask` reflect linked task presence/openness | Email→task visibility | `gbpDiaryTests/Models/TaskComputedPropertyTests.swift` | `isOpen_trueUntilCompletedOrCancelled`, `email_hasOpenTask_reflectsLinkedTaskStatuses` |
 | Incremental fetch: `EmailIngest.fetchBounds(lastFetchedAt:now:)` — first run = full 3-day window; otherwise from `last − 10-min overlap` (clamped to the window start) to end-of-today | Email auto-ingest | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `fetchBounds_firstRun_usesFullWindow`, `fetchBounds_incremental_startsJustBeforeLastFetch`, `fetchBounds_longGap_clampsToWindowStart` |
 | Deleting an email nullifies its todos' `Task.originEmail` (the tasks survive, unlinked) | Email triage / make-todo | `gbpDiaryTests/Models/RelationshipIntegrityTests.swift` | `emailDelete_nullifiesTaskOriginEmail_taskSurvives` |
 | AI email summaries: `EmailSummaryPrompt.build(context:…)` embeds subject (placeholder when blank) + clamped body + identity/direction/roster (omitting missing pieces); instructions state the self="you"/no-titles/no-signatures rules; `EmailSummaryRoster.build` caps + orders priority-first, dedups by id; `EmailSummaryText.clean` trims/collapses/caps; `EmailSummaryState` raw round-trips; `EmailSummaryPlanning.needsSummary` is true for a non-dismissed pending email OR a done email with a stale prompt version | On-device email summaries | `gbpDiaryTests/Domain/EmailSummaryTests.swift` | `prompt_includesSubjectAndBody`, `prompt_blankSubject_usesPlaceholder`, `prompt_includesIdentityDirectionAndRoster`, `prompt_omitsMissingPieces`, `instructions_containKeyRules`, `roster_capsAndOrdersPriorityFirst`, `roster_dedupsById`, `clampBody_capsLengthAndTrims`, `clean_trimsCollapsesAndCaps`, `state_rawRoundTrips`, `needsSummary_pendingDismissedAndStaleVersion` |

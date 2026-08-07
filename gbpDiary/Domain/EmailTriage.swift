@@ -24,3 +24,30 @@ enum EmailTriageState: String, CaseIterable {
         return accepted ? .accepted : .unclassified
     }
 }
+
+// The triage window's view buckets (mutually exclusive). Distinct from the stored `EmailTriageState`
+// because a to-do'd email is still `accepted` but shown in its own **Tasks** bucket.
+enum EmailTriageCategory: String, CaseIterable {
+    case toTriage
+    case accepted
+    case tasks
+    case dismissed
+
+    var label: String {
+        switch self {
+        case .toTriage:  "To triage"
+        case .accepted:  "Accepted"
+        case .tasks:     "Tasks"
+        case .dismissed: "Dismissed"
+        }
+    }
+
+    /// Bucket an email: dismissed wins; else a linked to-do → Tasks; else accepted → Accepted; else To triage.
+    static func classify(state: EmailTriageState, hasTasks: Bool) -> EmailTriageCategory {
+        switch state {
+        case .dismissed: return .dismissed
+        case .accepted:  return hasTasks ? .tasks : .accepted
+        case .unclassified: return hasTasks ? .tasks : .toTriage
+        }
+    }
+}

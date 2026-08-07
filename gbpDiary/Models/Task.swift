@@ -88,6 +88,9 @@ extension Task {
         !children.isEmpty || (notes.map { !$0.isEmpty } ?? false)
     }
 
+    /// Not yet finished (i.e. still actionable): status is neither completed nor cancelled.
+    var isOpen: Bool { status != .completed && status != .cancelled }
+
     func markCompleted() {
         let now = Date()
         status = .completed

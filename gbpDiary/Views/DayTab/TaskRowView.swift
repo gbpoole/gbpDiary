@@ -114,6 +114,11 @@ struct TaskRowView: View {
     private var contentRow: some View {
         HStack(alignment: .center, spacing: 6) {
             inlineTitleView
+            if task.originEmail != nil {
+                Image(systemName: "envelope")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .help("From an email")
+            }
             if let project = task.project {
                 Chip(label: project.name, color: AppTheme.project)
             }

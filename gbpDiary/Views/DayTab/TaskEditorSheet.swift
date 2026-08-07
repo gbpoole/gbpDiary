@@ -30,6 +30,8 @@ struct TaskEditorSheet: View {
     @State private var tagsText = ""
     @State private var showingLogTime = false
     @State private var showingDeleteConfirm = false
+    @State private var mailService = MailScriptService()
+    @State private var openEmailError: String?
 
     private var isNew: Bool { task == nil }
 
@@ -42,6 +44,7 @@ struct TaskEditorSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     summarySection
+                    if let email = task?.originEmail { fromEmailSection(email) }
                     projectSection
                     assigneeSection
                     tagsSection
@@ -103,6 +106,34 @@ struct TaskEditorSheet: View {
         GroupBox("Task") {
             TextField("Summary", text: $summary)
                 .textFieldStyle(.plain)
+        }
+    }
+
+    // Shown when the task was created from an email — links back to the source, openable in Mail.
+    private func fromEmailSection(_ email: EmailMessage) -> some View {
+        GroupBox("From email") {
+            HStack(spacing: 8) {
+                Image(systemName: email.direction == .sent ? "paperplane" : "envelope")
+                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(email.fromName?.isEmpty == false ? email.fromName! : email.fromAddress)
+                        .font(.callout).lineLimit(1)
+                    Text(email.subject.isEmpty ? "(no subject)" : email.subject)
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer(minLength: 8)
+                Button { openEmail(email) } label: { Label("Open in Mail", systemImage: "arrow.up.right.square") }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .alert("Couldn't open email", isPresented: Binding(get: { openEmailError != nil }, set: { if !$0 { openEmailError = nil } })) {
+                Button("OK", role: .cancel) {}
+            } message: { Text(openEmailError ?? "") }
+        }
+    }
+
+    private func openEmail(_ email: EmailMessage) {
+        mailService.openMessage(email) { result in
+            if case .failure(let error) = result { openEmailError = error.userMessage }
         }
     }
 

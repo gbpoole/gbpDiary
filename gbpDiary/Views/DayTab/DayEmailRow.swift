@@ -21,6 +21,11 @@ struct EmailThread: Identifiable {
     var summary: String? { latest.summary }
     var isSummarizing: Bool { latest.summaryState == EmailSummaryState.pending.rawValue }
 
+    /// To-dos made from any message in the thread.
+    var tasks: [Task] { messages.flatMap(\.tasks) }
+    var taskCount: Int { tasks.count }
+    var hasOpenTasks: Bool { tasks.contains(where: \.isOpen) }
+
     /// Union of projects across the thread's messages (de-duplicated, order preserved).
     var projects: [Project] {
         var seen = Set<PersistentIdentifier>()
@@ -55,6 +60,12 @@ struct DayEmailThreadRow: View {
                         Chip(label: project.name, color: AppTheme.project)
                     }
                     Spacer(minLength: 0)
+                    if thread.taskCount > 0 {
+                        Label("\(thread.taskCount)", systemImage: thread.hasOpenTasks ? "checklist" : "checklist.checked")
+                            .font(.caption2)
+                            .foregroundStyle(thread.hasOpenTasks ? AppTheme.action : AppTheme.completed)
+                            .help(thread.hasOpenTasks ? "Has an open to-do" : "To-do completed")
+                    }
                     if thread.count > 1 {
                         Chip(label: "\(thread.count)", color: .gray)
                     }

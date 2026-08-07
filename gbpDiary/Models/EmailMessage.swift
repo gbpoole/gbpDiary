@@ -35,6 +35,9 @@ import SwiftData
     // Todos made from this email (nullify — deleting the email leaves the tasks, just unlinked).
     @Relationship(deleteRule: .nullify, inverse: \Task.originEmail) var tasks: [Task] = []
 
+    var hasTasks: Bool { !tasks.isEmpty }
+    var hasOpenTask: Bool { tasks.contains(where: \.isOpen) }
+
     // On-device AI summary (the body is fetched transiently and never stored — only this summary is).
     var summary: String?
     // Raw of EmailSummaryState: "pending" (needs one) | "done" | "failed" | "unavailable".

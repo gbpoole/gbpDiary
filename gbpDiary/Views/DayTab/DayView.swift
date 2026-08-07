@@ -164,7 +164,6 @@ struct DayPageContent: View {
             DayActionItem(id: "logtime",    systemName: "timer",               color: AppTheme.duration,  tooltip: "Log time")        { activityLogTimeTrigger = true },
             DayActionItem(id: "task",       systemName: "checkmark.square",    color: AppTheme.completed, tooltip: "Add task")        { showingAddTask = true },
             DayActionItem(id: "note",       systemName: "square.and.pencil",   color: AppTheme.accent,    tooltip: "Add note")        { addNote() },
-            DayActionItem(id: "email",      systemName: "tray.full",           color: AppTheme.person,    tooltip: "Triage email") { showingTriage = true },
         ]
     }
 
@@ -231,7 +230,7 @@ struct DayPageContent: View {
     // MARK: - Email
 
     @ViewBuilder private var emailsSection: some View {
-        DaySectionHeader(title: "Email")
+        DaySectionHeader(title: "Email", systemImage: "tray.full", onAction: { showingTriage = true })
         // Hidden (non-accepted) emails for this day — tap to open the triage window.
         if let hidden = hiddenEmailSummary {
             Button { showingTriage = true } label: {

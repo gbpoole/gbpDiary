@@ -15,21 +15,25 @@ struct EmailTriageSheet: View {
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Query private var allPeople: [Person]
 
-    @State private var filter: EmailTriageState = .unclassified
+    @State private var filter: EmailTriageCategory = .toTriage
     @State private var reconciling: EmailMessage?
     @State private var makingTodoFor: EmailMessage?
+    @State private var openingTask: Task?
     @State private var service = MailScriptService()
     @State private var isFetching = false
     @State private var status: String?
 
-    // Triage manages the displayed diary day only.
-    private func dayEmails(_ state: EmailTriageState) -> [EmailMessage] {
+    // Triage manages the displayed diary day only, bucketed by view category.
+    private func dayEmails(_ category: EmailTriageCategory) -> [EmailMessage] {
         let cal = Calendar.current
-        return allEmails.filter { cal.isDate($0.date, inSameDayAs: day) && $0.triageState == state }
+        return allEmails.filter {
+            cal.isDate($0.date, inSameDayAs: day)
+                && EmailTriageCategory.classify(state: $0.triageState, hasTasks: $0.hasTasks) == category
+        }
     }
 
     private var windowEmails: [EmailMessage] { dayEmails(filter) }
-    private func count(_ state: EmailTriageState) -> Int { dayEmails(state).count }
+    private func count(_ category: EmailTriageCategory) -> Int { dayEmails(category).count }
 
     var body: some View {
         NavigationStack {
@@ -49,7 +53,9 @@ struct EmailTriageSheet: View {
                                            onReconcile: { reconciling = email },
                                            onExcludeAddress: { excludeSender(email, domain: false) },
                                            onExcludeDomain: { excludeSender(email, domain: true) },
-                                           onMakeTodo: { makingTodoFor = email })
+                                           onMakeTodo: { makingTodoFor = email },
+                                           onOpenTask: { openingTask = email.tasks.first },
+                                           onDeleteTasks: { deleteTasks(of: email) })
                         }
                     }
                 }
@@ -74,6 +80,9 @@ struct EmailTriageSheet: View {
                     presetNotes: email.summary
                 )
             }
+            .sheet(item: $openingTask) { task in
+                TaskEditorSheet(task: task, defaultDate: task.originEmail?.date ?? Date())
+            }
         }
         #if os(macOS)
         .frame(minWidth: 700, minHeight: 520)
@@ -82,10 +91,15 @@ struct EmailTriageSheet: View {
 
     private var emptyLabel: String {
         switch filter {
-        case .unclassified: "Nothing to triage for this day."
-        case .accepted:     "No accepted email for this day."
-        case .dismissed:    "No dismissed email for this day."
+        case .toTriage:  "Nothing to triage for this day."
+        case .accepted:  "No accepted email for this day."
+        case .tasks:     "No email to-dos for this day."
+        case .dismissed: "No dismissed email for this day."
         }
+    }
+
+    private func deleteTasks(of email: EmailMessage) {
+        for task in email.tasks { modelContext.delete(task) }
     }
 
     // MARK: - Control bar
@@ -97,8 +111,8 @@ struct EmailTriageSheet: View {
             }
             .disabled(isFetching)
             Picker("", selection: $filter) {
-                ForEach(EmailTriageState.allCases, id: \.self) { s in
-                    Text("\(s.label) (\(count(s)))").tag(s)
+                ForEach(EmailTriageCategory.allCases, id: \.self) { c in
+                    Text("\(c.label) (\(count(c)))").tag(c)
                 }
             }
             .pickerStyle(.segmented)
@@ -209,10 +223,13 @@ private struct EmailTriageRow: View {
     let onExcludeAddress: () -> Void
     let onExcludeDomain: () -> Void
     let onMakeTodo: () -> Void
+    let onOpenTask: () -> Void
+    let onDeleteTasks: () -> Void
 
     @State private var mailService = MailScriptService()
     @State private var openError: String?
     @State private var editingProject = false
+    @State private var confirmingDeleteTasks = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -225,6 +242,7 @@ private struct EmailTriageRow: View {
                 HStack(spacing: 6) {
                     personChip
                     projectChip
+                    todoChip
                     Spacer(minLength: 8)
                     Text(email.date.formatted(date: .omitted, time: .shortened))
                         .font(.caption2).foregroundStyle(.secondary)
@@ -242,6 +260,29 @@ private struct EmailTriageRow: View {
         .alert("Couldn't open email", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(openError ?? "") }
+        .alert("Delete \(email.tasks.count == 1 ? "to-do" : "to-dos")?", isPresented: $confirmingDeleteTasks) {
+            Button("Delete", role: .destructive) { onDeleteTasks() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This deletes the to-do\(email.tasks.count == 1 ? "" : "s") made from this email. The email is kept.") }
+    }
+
+    // The email's linked-to-do status: opens the to-do (tap); context menu deletes it (undo make-todo).
+    @ViewBuilder private var todoChip: some View {
+        if email.hasTasks {
+            let n = email.tasks.count
+            let label = email.hasOpenTask ? (n == 1 ? "to-do" : "\(n) to-dos") : "done"
+            Button { onOpenTask() } label: {
+                Chip(label: label, color: email.hasOpenTask ? AppTheme.action : AppTheme.completed)
+            }
+            .buttonStyle(.plain)
+            .help(email.hasOpenTask ? "Open the linked to-do" : "To-do completed — click to open")
+            .contextMenu {
+                Button("Open to-do") { onOpenTask() }
+                Button(n == 1 ? "Delete to-do" : "Delete to-dos (\(n))", role: .destructive) {
+                    confirmingDeleteTasks = true
+                }
+            }
+        }
     }
 
     // Move-to-state actions + "make todo", trailing the first line: only the actions that change the

@@ -61,6 +61,29 @@ struct TaskComputedPropertyTests {
         #expect(!task.needsChevron)
     }
 
+    // MARK: - isOpen / email hasOpenTask
+
+    @Test func isOpen_trueUntilCompletedOrCancelled() {
+        let task = Task(summary: "t")
+        #expect(task.isOpen)                       // todo
+        task.status = .started;         #expect(task.isOpen)
+        task.status = .followUpPending; #expect(task.isOpen)
+        task.status = .completed;       #expect(!task.isOpen)
+        task.status = .cancelled;       #expect(!task.isOpen)
+    }
+
+    @Test func email_hasOpenTask_reflectsLinkedTaskStatuses() {
+        let email = EmailMessage(messageId: "<m>", account: "a", mailbox: "INBOX", direction: .inbox,
+                                 fromAddress: "x@y.com", fromName: nil, subject: "s", date: .now)
+        #expect(!email.hasTasks)
+        let task = Task(summary: "do")
+        task.originEmail = email
+        #expect(email.hasTasks)
+        #expect(email.hasOpenTask)
+        task.status = .completed
+        #expect(!email.hasOpenTask)
+    }
+
     // MARK: - isInlineSummaryEmpty
 
     @Test func isInlineSummaryEmpty_trueForWhitespaceOnlySummary() {

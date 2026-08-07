@@ -21,7 +21,10 @@ struct TasksView: View {
         let assignees = allPeople.map { p in
             PickerFilter<Task>(id: "assignee.\(p.id)", label: p.name, chipColor: AppTheme.person, group: "Assignee") { $0.assignee?.id == p.id }
         }
-        return status + projects + assignees
+        let source = [
+            PickerFilter<Task>(id: "source.email", label: "From email", chipColor: AppTheme.person, group: "Source") { $0.originEmail != nil }
+        ]
+        return status + projects + assignees + source
     }
 
     private var filteredTasks: [Task] {

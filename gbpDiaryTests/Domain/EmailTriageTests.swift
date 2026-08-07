@@ -14,6 +14,18 @@ struct EmailTriageTests {
         #expect(EmailTriageState.from(dismissed: false, accepted: false) == .unclassified)
     }
 
+    @Test func category_classify_bucketsByStateAndTasks() {
+        // Dismissed wins regardless of tasks.
+        #expect(EmailTriageCategory.classify(state: .dismissed, hasTasks: false) == .dismissed)
+        #expect(EmailTriageCategory.classify(state: .dismissed, hasTasks: true) == .dismissed)
+        // Accepted splits by whether it has a to-do.
+        #expect(EmailTriageCategory.classify(state: .accepted, hasTasks: false) == .accepted)
+        #expect(EmailTriageCategory.classify(state: .accepted, hasTasks: true) == .tasks)
+        // Unclassified with a to-do still surfaces under Tasks; otherwise To triage.
+        #expect(EmailTriageCategory.classify(state: .unclassified, hasTasks: false) == .toTriage)
+        #expect(EmailTriageCategory.classify(state: .unclassified, hasTasks: true) == .tasks)
+    }
+
     // MARK: - Incremental fetch bounds
 
     private let cal: Calendar = {
