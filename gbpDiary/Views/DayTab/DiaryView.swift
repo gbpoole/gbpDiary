@@ -52,32 +52,37 @@ struct DiaryView: View {
         return HStack(spacing: 12) {
             // Date stepper — a single, colour-tinted control (calendar icon + prominent date) so
             // it reads clearly as day/week navigation, distinct from the tab back/forward above.
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 Button { stepDate(-1) } label: {
                     Image(systemName: "chevron.left").font(.system(size: 12, weight: .bold))
                 }
                 .buttonStyle(.plain)
-                Image(systemName: "calendar")
-                    .font(.system(size: 13))
+                // Tapping the date jumps to today. Icon fills in on the current period; colour
+                // (green today / accent otherwise) keeps "today" instantly recognisable.
+                Button { diary.goTo(Date()) } label: {
+                    HStack(spacing: 7) {
+                        Image(systemName: isCurrentPeriod ? "calendar.circle.fill" : "calendar")
+                            .font(.system(size: 13))
+                        Text(dateLabel)
+                            .font(AppTheme.interfaceFont(size: 15, weight: .semibold))
+                            .tracking(0.2)
+                            .lineLimit(1)
+                            .frame(width: 232, alignment: .center)   // fixed so the control doesn't jump
+                    }
                     .foregroundStyle(dateColor)
-                Text(dateLabel)
-                    .font(AppTheme.interfaceFont(size: 16, weight: .bold))
-                    .foregroundStyle(dateColor)
-                    .lineLimit(1)
-                    .frame(width: 240, alignment: .center)   // fixed so the control doesn't jump as the date changes
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(isCurrentPeriod ? "Viewing today" : "Go to today")
                 Button { stepDate(1) } label: {
                     Image(systemName: "chevron.right").font(.system(size: 12, weight: .bold))
                 }
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(dateColor.opacity(0.12), in: Capsule())
-
-            Button("Today") { diary.goTo(Date()) }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .disabled(isCurrentPeriod)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(dateColor.opacity(0.10), in: Capsule())
+            .overlay(Capsule().strokeBorder(dateColor.opacity(0.28), lineWidth: 1))
 
             Spacer()
 

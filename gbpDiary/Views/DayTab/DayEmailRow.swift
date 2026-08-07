@@ -46,6 +46,7 @@ struct DayEmailThreadRow: View {
 
     @State private var mailService = MailScriptService()
     @State private var openError: String?
+    @State private var openingTask: Task?
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
@@ -59,13 +60,11 @@ struct DayEmailThreadRow: View {
                     ForEach(thread.projects, id: \.persistentModelID) { project in
                         Chip(label: project.name, color: AppTheme.project)
                     }
-                    Spacer(minLength: 0)
                     if thread.taskCount > 0 {
-                        Label("\(thread.taskCount)", systemImage: thread.hasOpenTasks ? "checklist" : "checklist.checked")
-                            .font(.caption2)
-                            .foregroundStyle(thread.hasOpenTasks ? AppTheme.action : AppTheme.completed)
-                            .help(thread.hasOpenTasks ? "Has an open to-do" : "To-do completed")
+                        EmailTodoChip(count: thread.taskCount, hasOpen: thread.hasOpenTasks,
+                                      onOpen: { openingTask = thread.tasks.first })
                     }
+                    Spacer(minLength: 0)
                     if thread.count > 1 {
                         Chip(label: "\(thread.count)", color: .gray)
                     }
@@ -87,6 +86,9 @@ struct DayEmailThreadRow: View {
         .alert("Couldn't open email", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(openError ?? "") }
+        .sheet(item: $openingTask) { task in
+            TaskEditorSheet(task: task, defaultDate: task.originEmail?.date ?? Date())
+        }
     }
 
     private func regenerateSummary() {
@@ -116,6 +118,28 @@ struct DayEmailThreadRow: View {
         .help(thread.person == nil
               ? "Unrecognized — click to link an existing person or create a new one"
               : "Linked person — click to change")
+    }
+}
+
+// A chip showing an email's linked-to-do status ("to-do" / "N to-dos" while open, "done" when all
+// complete). Shared by the diary email row and the triage window. Tappable when `onOpen` is provided.
+struct EmailTodoChip: View {
+    let count: Int
+    let hasOpen: Bool
+    var onOpen: (() -> Void)? = nil
+
+    private var label: String { hasOpen ? (count == 1 ? "to-do" : "\(count) to-dos") : "done" }
+    private var color: Color { hasOpen ? AppTheme.action : AppTheme.completed }
+
+    var body: some View {
+        Group {
+            if let onOpen {
+                Button(action: onOpen) { Chip(label: label, color: color) }.buttonStyle(.plain)
+            } else {
+                Chip(label: label, color: color)
+            }
+        }
+        .help(hasOpen ? "Open the linked to-do" : "To-do completed — click to open")
     }
 }
 

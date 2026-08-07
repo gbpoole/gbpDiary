@@ -270,18 +270,13 @@ private struct EmailTriageRow: View {
     @ViewBuilder private var todoChip: some View {
         if email.hasTasks {
             let n = email.tasks.count
-            let label = email.hasOpenTask ? (n == 1 ? "to-do" : "\(n) to-dos") : "done"
-            Button { onOpenTask() } label: {
-                Chip(label: label, color: email.hasOpenTask ? AppTheme.action : AppTheme.completed)
-            }
-            .buttonStyle(.plain)
-            .help(email.hasOpenTask ? "Open the linked to-do" : "To-do completed — click to open")
-            .contextMenu {
-                Button("Open to-do") { onOpenTask() }
-                Button(n == 1 ? "Delete to-do" : "Delete to-dos (\(n))", role: .destructive) {
-                    confirmingDeleteTasks = true
+            EmailTodoChip(count: n, hasOpen: email.hasOpenTask, onOpen: onOpenTask)
+                .contextMenu {
+                    Button("Open to-do") { onOpenTask() }
+                    Button(n == 1 ? "Delete to-do" : "Delete to-dos (\(n))", role: .destructive) {
+                        confirmingDeleteTasks = true
+                    }
                 }
-            }
         }
     }
 
