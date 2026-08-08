@@ -106,6 +106,9 @@ Value types (Codable structs, not `@Model`) in `Models/ValueTypes.swift`:
 Task
   summary  : String          (was `title` in earlier versions)
   notes    : String?         (was `taskDescription` in earlier versions)
+  priority : TaskPriority     (none/low/medium/high; computed over `priorityRaw`; `weight` feeds urgency)
+  dueAt    : Date?            (deadline — distinct from `scheduledAt` which is when you plan to work it)
+  isOverdue/isDueToday       (computed via pure `TaskFlags`)
   assignee → Person?
   project  → Project?
   originDay→ DayRecord?      (where captured; not the day-view link)
@@ -660,6 +663,7 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Mail body fetch: `MailScriptParsing.messageContentScript(account:mailbox:id:)` embeds the escaped account + mailbox and the unquoted integer id and returns `content of` the message | On-device email summaries / body fetch | `gbpDiaryTests/Domain/MailScriptParsingTests.swift` | `messageContentScript_embedsAccountMailboxIdAndReturnsContent` |
 | Deleting a Person nullifies `EmailMessage.person`; deleting a Project removes it from `EmailMessage.projects`; the referenced email survives in both cases | Email management / relationship integrity | `gbpDiaryTests/Models/RelationshipIntegrityTests.swift` | `personDelete_nullifiesEmailPerson`, `projectDelete_removesEmailProjectLink` |
 | Diary day rollover: `DiaryDayRollover.rolledForwardDate` returns today's start-of-day only when `tracksToday` and the shown day is in the past; nil when not tracking, same day, or a future day (so deliberate navigation to another day is preserved) | Diary navigation / day rollover | `gbpDiaryTests/Domain/DiaryDayRolloverTests.swift` | `tracksToday_pastDay_rollsForwardToToday`, `tracksToday_sameDay_staysPut`, `notTracking_pastDay_staysPut`, `tracksToday_futureDay_staysPut` |
+| Task priority/due flags: `TaskPriority` weights (H>M>L>none) + `short` H/M/L; `TaskFlags.isOverdue(dueAt:isOpen:)` true only for an open task due before start-of-today; `TaskFlags.isDueToday(dueAt:)` true when due falls on today | Tasks / due+priority | `gbpDiaryTests/Domain/TaskFlagsTests.swift` | `isOverdue_pastDueAndOpen`, `isDueToday_sameCalendarDay`, `priority_weightsAndShort` |
 | `FuzzyPickerSelection.toggling` adds an item (matched by `id`) when absent and removes it when present; single-select (`maxSelections == 1`) replaces the whole selection, multi-select appends only while under the cap (else unchanged). Shared by item taps and create-on-the-fly (`onCreateItem`) so creating a new item honors single- vs multi-select | Picker selection semantics | `gbpDiaryTests/Views/FuzzyPickerSelectionTests.swift` | `toggling_multiSelect_addsWhenAbsent`, `toggling_multiSelect_removesWhenPresent`, `toggling_multiSelect_atCap_leavesUnchanged`, `toggling_singleSelect_replacesExistingSelection`, `toggling_singleSelect_fromEmpty_selectsItem`, `toggling_singleSelect_removesWhenSameItemPresent` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.

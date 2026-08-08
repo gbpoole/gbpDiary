@@ -75,6 +75,14 @@ struct TaskRowView: View {
         }
     }
 
+    private var priorityChipColor: Color {
+        switch task.priority {
+        case .high:   AppTheme.destructive
+        case .medium: AppTheme.followUp
+        default:      AppTheme.mutedText
+        }
+    }
+
     // True only when this specific row is the active inline editor.
     private var isFocusedInline: Bool {
         guard inlineEditing, let fb = focusBinding, let fid = focusId else { return false }
@@ -117,6 +125,13 @@ struct TaskRowView: View {
                 Image(systemName: "envelope")
                     .font(.caption2).foregroundStyle(.secondary)
                     .help("From an email")
+            }
+            if task.priority != .none {
+                Chip(label: task.priority.short, color: priorityChipColor)
+            }
+            if let due = task.dueAt {
+                Chip(label: "⚑ \(due.formatted(.dateTime.day().month()))",
+                     color: task.isOverdue ? AppTheme.destructive : AppTheme.followUp)
             }
             if let project = task.project {
                 Chip(label: project.name, color: AppTheme.project)

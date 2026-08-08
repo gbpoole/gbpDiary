@@ -27,6 +27,8 @@ struct TaskEditorSheet: View {
     @State private var selectedProject: Project?
     @State private var selectedAssignee: Person?
     @State private var scheduledDate: Date?
+    @State private var dueDate: Date?
+    @State private var priority: TaskPriority = .none
     @State private var tagsText = ""
     @State private var showingLogTime = false
     @State private var showingDeleteConfirm = false
@@ -48,7 +50,9 @@ struct TaskEditorSheet: View {
                     projectSection
                     assigneeSection
                     tagsSection
+                    prioritySection
                     scheduleSection
+                    dueSection
                     notesSection
                     if let t = task {
                         timeLogSection(t)
@@ -238,6 +242,36 @@ struct TaskEditorSheet: View {
         }
     }
 
+    private var prioritySection: some View {
+        GroupBox("Priority") {
+            Picker("", selection: $priority) {
+                ForEach(TaskPriority.allCases, id: \.self) { p in
+                    Text(p.displayName).tag(p)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var dueSection: some View {
+        GroupBox("Due") {
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Has a due date", isOn: Binding(
+                    get: { dueDate != nil },
+                    set: { if $0 { dueDate = dueDate ?? defaultDate } else { dueDate = nil } }
+                ))
+                if dueDate != nil {
+                    DatePicker("Date",
+                               selection: Binding(get: { dueDate ?? defaultDate }, set: { dueDate = $0 }),
+                               displayedComponents: .date)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private var scheduleSection: some View {
         GroupBox("Schedule") {
             VStack(alignment: .leading, spacing: 6) {
@@ -321,6 +355,8 @@ struct TaskEditorSheet: View {
         selectedProject = t.project
         selectedAssignee = t.assignee
         scheduledDate = t.scheduledAt
+        dueDate = t.dueAt
+        priority = t.priority
         tagsText = t.tags.joined(separator: ", ")
     }
 
@@ -361,6 +397,8 @@ struct TaskEditorSheet: View {
             t.summary = trimmedSummary
             t.notes = notes.isEmpty ? nil : notes
             t.scheduledAt = scheduledDate
+            t.dueAt = dueDate
+            t.priorityRaw = priority.rawValue
             t.project = selectedProject
             t.assignee = selectedAssignee
             t.tags = tags
@@ -369,6 +407,8 @@ struct TaskEditorSheet: View {
             let newTask = Task(summary: trimmedSummary)
             newTask.notes = notes.isEmpty ? nil : notes
             newTask.scheduledAt = scheduledDate
+            newTask.dueAt = dueDate
+            newTask.priorityRaw = priority.rawValue
             newTask.project = selectedProject
             newTask.assignee = selectedAssignee
             newTask.tags = tags

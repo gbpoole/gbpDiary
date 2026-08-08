@@ -25,7 +25,24 @@ struct TasksView: View {
         let source = [
             PickerFilter<Task>(id: "source.email", label: "From email", chipColor: AppTheme.person, group: "Source") { $0.originEmail != nil }
         ]
-        return status + projects + assignees + source
+        let priorities = TaskPriority.allCases.filter { $0 != .none }.map { p in
+            PickerFilter<Task>(id: "priority.\(p.rawValue)", label: p.displayName, chipColor: priorityColor(p), group: "Priority") { $0.priority == p }
+        }
+        let flags = [
+            PickerFilter<Task>(id: "flag.overdue", label: "Overdue", chipColor: AppTheme.destructive, group: "Flags") { $0.isOverdue },
+            PickerFilter<Task>(id: "flag.dueToday", label: "Due today", chipColor: AppTheme.followUp, group: "Flags") { $0.isDueToday },
+            PickerFilter<Task>(id: "flag.hasDue", label: "Has due", chipColor: AppTheme.mutedText, group: "Flags") { $0.dueAt != nil }
+        ]
+        return status + priorities + flags + projects + assignees + source
+    }
+
+    private func priorityColor(_ p: TaskPriority) -> Color {
+        switch p {
+        case .high:   AppTheme.destructive
+        case .medium: AppTheme.followUp
+        case .low:    AppTheme.mutedText
+        case .none:   AppTheme.mutedText
+        }
     }
 
     private var filteredTasks: [Task] {
@@ -76,6 +93,19 @@ struct TasksView: View {
                 }
             }
             .width(130)
+            TableColumn("Pri") { task in
+                if task.priority != .none {
+                    Chip(label: task.priority.short, color: priorityColor(task.priority))
+                }
+            }
+            .width(44)
+            TableColumn("Due") { task in
+                if let due = task.dueAt {
+                    Text(due, format: .dateTime.month(.abbreviated).day())
+                        .foregroundStyle(task.isOverdue ? AppTheme.destructive : AppTheme.mutedText)
+                }
+            }
+            .width(80)
             TableColumn("Project") { task in
                 Text(task.project?.name ?? "")
                     .foregroundStyle(AppTheme.project)

@@ -10,6 +10,10 @@ import SwiftData
     var status: TaskStatus
     var duration: Duration?
     var scheduledAt: Date?
+    // Deadline (distinct from `scheduledAt`, which is when you plan to work it). Defaulted for migration.
+    var dueAt: Date?
+    // Raw of TaskPriority; use the `priority` computed accessor.
+    var priorityRaw: String = TaskPriority.none.rawValue
     var completedAt: Date?
     var cancelledAt: Date?
     var followUpAt: Date?
@@ -90,6 +94,15 @@ extension Task {
 
     /// Not yet finished (i.e. still actionable): status is neither completed nor cancelled.
     var isOpen: Bool { status != .completed && status != .cancelled }
+
+    var priority: TaskPriority {
+        get { TaskPriority(rawValue: priorityRaw) ?? .none }
+        set { priorityRaw = newValue.rawValue; updatedAt = Date() }
+    }
+
+    /// Open and past its due date (day-granularity).
+    var isOverdue: Bool { TaskFlags.isOverdue(dueAt: dueAt, isOpen: isOpen) }
+    var isDueToday: Bool { TaskFlags.isDueToday(dueAt: dueAt) }
 
     func markCompleted() {
         let now = Date()

@@ -8,6 +8,42 @@ enum TaskStatus: String, Codable {
     case followUpPending
 }
 
+// Taskwarrior-style priority. `weight` feeds the urgency score (Stage 2); `short` is the H/M/L chip.
+enum TaskPriority: String, Codable, CaseIterable {
+    case none
+    case low
+    case medium
+    case high
+
+    var displayName: String {
+        switch self {
+        case .none:   "None"
+        case .low:    "Low"
+        case .medium: "Medium"
+        case .high:   "High"
+        }
+    }
+
+    var short: String {
+        switch self {
+        case .none:   ""
+        case .low:    "L"
+        case .medium: "M"
+        case .high:   "H"
+        }
+    }
+
+    /// Relative weight (0…1) — Taskwarrior uses H=1.0, M=0.65, L=0.3, none=0.
+    var weight: Double {
+        switch self {
+        case .none:   0.0
+        case .low:    0.3
+        case .medium: 0.65
+        case .high:   1.0
+        }
+    }
+}
+
 enum DurationUnit: String, Codable {
     case h, d, w
 
