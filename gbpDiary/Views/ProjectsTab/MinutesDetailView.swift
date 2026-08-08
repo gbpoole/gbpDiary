@@ -1161,13 +1161,12 @@ private struct MeetingActionRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 6) {
-            Button(action: toggleStatus) {
+            TaskStatusMenu(task: task) {
                 Image(systemName: statusIcon)
                     .foregroundStyle(statusColor)
                     .font(.system(size: 16))
                     .frame(width: 20, height: 20)
             }
-            .buttonStyle(.plain)
 
             Text(task.summary)
                 .lineLimit(1)
@@ -1206,13 +1205,4 @@ private struct MeetingActionRow: View {
         }
     }
 
-    private func toggleStatus() {
-        switch task.status {
-        case .todo:            task.status = .started; task.updatedAt = Date()
-        case .started:         task.markCompleted()
-        case .completed:       task.markCancelled()
-        case .followUpPending: task.markCancelled()
-        case .cancelled:       task.unmarkCancelled()
-        }
-    }
 }

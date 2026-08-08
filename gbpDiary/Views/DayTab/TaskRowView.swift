@@ -47,13 +47,12 @@ struct TaskRowView: View {
     }
 
     private var statusButton: some View {
-        Button(action: toggleStatus) {
+        TaskStatusMenu(task: task, onBeforeChange: onBeforeStatusChange) {
             Image(systemName: statusIcon)
                 .foregroundStyle(statusColor)
                 .font(.system(size: 17))
                 .frame(width: 22, height: 22)
         }
-        .buttonStyle(.plain)
     }
 
     private var statusIcon: String {
@@ -131,14 +130,6 @@ struct TaskRowView: View {
             ForEach(task.tags, id: \.self) { tag in
                 Chip(label: tag, color: AppTheme.tag)
             }
-            if task.status == .completed && task.followUpAt == nil {
-                Button(action: { showingFollowUpPicker = true }) {
-                    Image(systemName: "calendar.badge.plus")
-                        .foregroundStyle(.secondary)
-                        .font(.caption)
-                }
-                .buttonStyle(.plain)
-            }
             if let fu = task.followUpAt {
                 let overdue = fu < Calendar.current.startOfDay(for: Date())
                 Button(action: { showingFollowUpPicker = true }) {
@@ -194,22 +185,6 @@ struct TaskRowView: View {
         }
     }
 
-    private func toggleStatus() {
-        onBeforeStatusChange?()
-        switch task.status {
-        case .todo:
-            task.status = .started
-            task.updatedAt = Date()
-        case .started:
-            task.markCompleted()
-        case .completed:
-            task.markCancelled()
-        case .followUpPending:
-            task.markCancelled()
-        case .cancelled:
-            task.unmarkCancelled()
-        }
-    }
 }
 
 struct FollowUpDateSheet: View {

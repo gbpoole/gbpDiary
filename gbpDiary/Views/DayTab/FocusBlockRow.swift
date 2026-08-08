@@ -205,7 +205,6 @@ struct ActivityEntryRow: View {
 
     @Environment(\.modelContext) private var modelContext
     @State private var showingEdit = false
-    @State private var showingFollowUpPicker = false
     @State private var showingAddTime = false
     @State private var editingTask: Task?
     @State private var tapFlags = ActivityEntryTapFlags()
@@ -248,8 +247,6 @@ struct ActivityEntryRow: View {
                     editTaskIconView
                         .frame(width: 24, alignment: .center)
                     addTimeIconView
-                        .frame(width: 24, alignment: .center)
-                    followUpIconView
                         .frame(width: 24, alignment: .center)
                     Group {
                         if let project = entry.task?.project {
@@ -303,15 +300,6 @@ struct ActivityEntryRow: View {
         }
         .padding(.leading)
         .padding(.vertical, 1)
-        .sheet(isPresented: $showingFollowUpPicker) {
-            if let task = entry.task {
-                FollowUpDateSheet(
-                    initialDate: task.followUpAt ?? Calendar.current.date(byAdding: .day, value: 1, to: .now)!,
-                    onSave: { date in task.setFollowUp(date: date) },
-                    onRemove: task.status == .followUpPending ? { task.clearFollowUp() } : nil
-                )
-            }
-        }
         .onChange(of: showingAddTime) { _, isShowing in
             if !isShowing, let task = entry.task,
                task.status == .todo, !task.timeEntries.isEmpty {
@@ -354,51 +342,23 @@ struct ActivityEntryRow: View {
         }
     }
 
-    @ViewBuilder
-    private var followUpIconView: some View {
-        if let task = entry.task,
-           task.status == .started || task.status == .followUpPending {
-            Button {
-                tapFlags.didTapFollowUp = true
-                showingFollowUpPicker = true
-            } label: {
-                Image(systemName: task.status == .followUpPending ? "clock.fill" : "clock.badge")
-                    .font(.system(size: 12))
-                    .foregroundStyle(task.status == .followUpPending ? AppTheme.followUp : AppTheme.action)
-            }
-            .buttonStyle(.plain)
-            .help(task.status == .followUpPending ? "Edit follow-up date" : "Set follow-up date")
-        }
-    }
 
     @ViewBuilder
     private var statusIconView: some View {
         if let task = entry.task {
-            Button {
-                tapFlags.didTapStatus = true
-                toggleStatus(task)
-            } label: {
+            TaskStatusMenu(task: task, onBeforeChange: { tapFlags.didTapStatus = true }) {
                 Image(systemName: taskStatusIcon(task))
                     .font(.system(size: 12))
                     .foregroundStyle(taskStatusColor(task))
                     .frame(width: 18)
             }
-            .buttonStyle(.plain)
+            // Opening the menu counts as a status tap, so the row's tap-to-edit is suppressed.
+            .simultaneousGesture(TapGesture().onEnded { tapFlags.didTapStatus = true })
         } else {
             Image(systemName: "circle")
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .frame(width: 18)
-        }
-    }
-
-    private func toggleStatus(_ task: Task) {
-        switch task.status {
-        case .todo:            task.status = .started; task.updatedAt = Date()
-        case .started:         task.markCompleted()
-        case .completed:       task.markCancelled()
-        case .followUpPending: task.markCancelled()
-        case .cancelled:       task.unmarkCancelled()
         }
     }
 

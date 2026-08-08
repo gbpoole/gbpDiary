@@ -96,10 +96,19 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
 // One browsing pane: a back/forward history of destinations, like a browser tab. Sidebar
 // selection and in-place drilldowns navigate within a single tab; only explicit "open in new
 // tab" actions (e.g. meeting minutes) create another tab.
+// Per-tab Tasks-page filter state, so filters are remembered when you navigate away and back, and two
+// tabs can hold different Tasks filters at once.
+@Observable final class TasksFilterState {
+    var activeFilterIds: Set<String> = []
+    var dateRange: ClosedRange<Date>? = nil
+}
+
 @Observable final class WorkspaceTabState: Identifiable {
     let id = UUID()
     // Per-tab Diary browsing state so two tabs showing the Diary can be on different dates.
     let diaryState = DiaryState()
+    // Per-tab Tasks-page filter state (remembered across in-tab navigation).
+    let tasksFilter = TasksFilterState()
     private(set) var history: [WorkspaceTab]
     private(set) var index: Int
 

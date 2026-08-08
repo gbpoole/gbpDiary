@@ -6,8 +6,9 @@ struct TasksView: View {
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Query(sort: \Person.name) private var allPeople: [Person]
 
-    @State private var activeFilterIds: Set<String> = []
-    @State private var dateRangeFilter: ClosedRange<Date>? = nil
+    // Filter state is held on the active workspace tab so it survives navigation and differs per tab.
+    @Environment(WorkspaceModel.self) private var workspace
+    private var filterState: TasksFilterState { workspace.active.tasksFilter }
     @State private var editingTask: Task? = nil
     @State private var pendingStatusIds: Set<UUID> = []
 
@@ -28,24 +29,25 @@ struct TasksView: View {
     }
 
     private var filteredTasks: [Task] {
-        let matched = Set(FilterEngine.apply(allTasks, filters: taskFilters, activeIds: activeFilterIds).map(\.id))
+        let matched = Set(FilterEngine.apply(allTasks, filters: taskFilters, activeIds: filterState.activeFilterIds).map(\.id))
         return allTasks.filter { task in
             if pendingStatusIds.contains(task.id) { return true }
             guard matched.contains(task.id) else { return false }
-            guard let range = dateRangeFilter else { return true }
+            guard let range = filterState.dateRange else { return true }
             let completedInRange = task.completedAt.map { range.contains($0) } ?? false
             return completedInRange || range.contains(task.createdAt)
         }
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        @Bindable var filter = filterState
+        return VStack(spacing: 0) {
             FilterBar(
                 filters: taskFilters,
-                activeFilterIds: $activeFilterIds,
-                hasExtraActiveFilter: dateRangeFilter != nil,
-                extraRows: AnyView(DateRangeFilterRow(range: $dateRangeFilter)),
-                onClearAll: { activeFilterIds = []; dateRangeFilter = nil }
+                activeFilterIds: $filter.activeFilterIds,
+                hasExtraActiveFilter: filter.dateRange != nil,
+                extraRows: AnyView(DateRangeFilterRow(range: $filter.dateRange)),
+                onClearAll: { filter.activeFilterIds = []; filter.dateRange = nil }
             )
             Divider()
             taskTable
@@ -54,8 +56,8 @@ struct TasksView: View {
         .sheet(item: $editingTask) { task in
             TaskEditorSheet(task: task, defaultDate: Date())
         }
-        .onChange(of: activeFilterIds) { pendingStatusIds.removeAll() }
-        .onChange(of: dateRangeFilter) { pendingStatusIds.removeAll() }
+        .onChange(of: filterState.activeFilterIds) { pendingStatusIds.removeAll() }
+        .onChange(of: filterState.dateRange) { pendingStatusIds.removeAll() }
     }
 
     #if os(macOS)
@@ -69,12 +71,11 @@ struct TasksView: View {
                     .onTapGesture { editingTask = task }
             }
             TableColumn("Status") { task in
-                Button(action: { toggleStatus(task) }) {
+                TaskStatusMenu(task: task, onBeforeChange: { pendingStatusIds.insert(task.id) }) {
                     TaskStatusIcon(status: task.status)
                 }
-                .buttonStyle(.plain)
             }
-            .width(110)
+            .width(130)
             TableColumn("Project") { task in
                 Text(task.project?.name ?? "")
                     .foregroundStyle(AppTheme.project)
@@ -110,22 +111,6 @@ struct TasksView: View {
     }
     #endif
 
-    private func toggleStatus(_ task: Task) {
-        pendingStatusIds.insert(task.id)
-        switch task.status {
-        case .todo:
-            task.status = .started
-            task.updatedAt = Date()
-        case .started:
-            task.markCompleted()
-        case .completed:
-            task.markCancelled()
-        case .followUpPending:
-            task.markCancelled()
-        case .cancelled:
-            task.unmarkCancelled()
-        }
-    }
 }
 
 struct TaskStatusIcon: View {

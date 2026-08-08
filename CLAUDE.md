@@ -347,7 +347,13 @@ Prefer `@Query` at the top of a view for simple sorts/filters. For dynamic filte
 
 All transitions are in `Task` extension methods (`markCompleted()`, `unmarkCompleted()`, `markCancelled()`, `unmarkCancelled()`, `setFollowUp(date:)`, `markFollowUpDone()`, `setDuration(_:)`). Call these methods from views; do not mutate `status`, `completedAt`, `cancelledAt`, or `followUpAt` directly.
 
-Status cycle (via tap on status icon in `TaskRowView` or in the `TasksView` table): `.todo` → `.started` → `.completed` → `.followUpPending` → `.cancelled` → `.todo`. Long-press / context menu provides direct access to cancel, follow-up, and reopen. In `TasksView`, a tapped task stays visible during the cycle (`pendingStatusIds`) and is only removed from the filtered list when filters change.
+Status is changed via **`TaskStatusMenu`** (`Views/DayTab/TaskStatusMenu.swift`) — clicking the status
+icon opens a **menu to jump directly to any state** (To do / Started / Completed / Cancelled, current one
+check-marked) plus **Follow up…** (opens `FollowUpDateSheet`; when already pending: change/clear). It is
+a reusable control whose *label* is caller-provided (each surface keeps its own icon) and which reuses
+the existing transition methods; an optional `onBeforeChange` closure lets `TasksView` keep a changed row
+visible (`pendingStatusIds`). Adopted in `TasksView`, `TaskRowView`, `MeetingActionRow`, and the Activity
+`ActivityEntryRow` (no more click-to-cycle; the separate follow-up clock buttons were retired).
 
 The full state transition table is in the handoff spec (`/Users/gbpoole/swift_app_handoff_spec.md`, section 3).
 
