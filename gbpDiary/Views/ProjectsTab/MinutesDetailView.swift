@@ -1106,6 +1106,9 @@ struct MinutesEditorSheet: View {
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6
     var rowAlignment: HorizontalAlignment = .leading
+    // When true, items shorter than their row are centred vertically within it (default keeps the
+    // legacy top-aligned behaviour so existing callers are unaffected).
+    var centerVertically: Bool = false
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let rows = computeRows(proposal: proposal, subviews: subviews)
@@ -1129,7 +1132,8 @@ struct FlowLayout: Layout {
             let rowHeight = row.map { $0.sizeThatFits(.unspecified).height }.max() ?? 0
             for view in row {
                 let size = view.sizeThatFits(.unspecified)
-                view.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                let itemY = centerVertically ? y + (rowHeight - size.height) / 2 : y
+                view.place(at: CGPoint(x: x, y: itemY), proposal: ProposedViewSize(size))
                 x += size.width + spacing
             }
             y += rowHeight + spacing

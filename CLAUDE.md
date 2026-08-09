@@ -347,6 +347,49 @@ detail sheet with an Edit button:
   items and its pencil opens the editor. `Minutes` rows open `MinutesDetailView` (edit-in-place), which
   is already one-click.
 
+### List / Table page style (canonical — follow for every macOS list page)
+
+Every macOS list page (`TasksView`, `ProjectsView`, `PeopleView`, `MinutesListView`,
+`DocumentsListView`, `ContentListView`, `InstitutionsView`, `TagsView`, `ImageLibraryView`) uses one
+shape, built from shared components. **Do not** hand-roll cell tap gestures, ad-hoc search boxes, or
+fixed-width non-sortable columns for new tables. Reference: `TasksView`.
+
+```swift
+VStack(spacing: 0) {
+    ListToolbar(searchText: $searchText, searchPrompt: "Search …",
+                presets: […], filters: […], activeFilterIds: $activeIds, onClearAll: { … })
+    bulkBar            // BulkActionBar — entity pages only
+    Divider()
+    table              // macOS Table(selection:sortOrder:), iOS List
+}
+```
+
+Rules:
+- **Table**: macOS `Table(rows, selection: $selection, sortOrder: $sortOrder)` where `rows` is the
+  filtered array `.sorted(using: sortOrder)`. **Every column is header-sortable** (`TableColumn(value:)`)
+  and **resizable** via `.width(min:ideal:)` (never bare `.width(N)`); give date/count/status columns a
+  sensible `min`. Sort keys for computed columns are **Comparable computed properties on the model**
+  (pure, unit-tested) — e.g. `Project.subprojectCount`, `Minutes.attendeeCount` — not per-page
+  snapshots (Tasks is the exception: `TaskRow` precomputes urgency). Body chrome:
+  `.scrollContentBackground(.hidden)` + `.background(AppTheme.background)`.
+- **Selection + open**: native single-click selection (`Set<PersistentIdentifier>`, or `Set<UUID>` for a
+  row snapshot). **Double-click opens** via `.onTableRowDoubleClick { open(rows[$0]) }`
+  (`Views/TableInteraction.swift`) — **never** a SwiftUI tap gesture on a cell (it fights NSTableView
+  selection). The open destination follows the **Row-tap rule** above.
+- **Toolbar**: `ListToolbar<Item>` (`Views/ListToolbar.swift`) — capsule fuzzy search (`FuzzyMatch`),
+  optional one-tap `ToolbarPreset` chips, a **Filters ▾** popover of `FilterGroupSelector` rows (only
+  when `filters` is non-empty), and an always-present active-filter row. With no `filters`/`extraPopover`
+  it collapses to **search-only** (the Light tier: `TagsView`, `ImageLibraryView`, `InstitutionsView`).
+- **Bulk actions**: `BulkActionBar` (`Views/BulkActionBar.swift`) — always present, disabled when empty.
+  Entity pages provide a confirmed **Delete** (route through `modelContext.delete` +
+  `workspace.closeEntity` for tabbed entities); Tasks adds status transitions. Derived tables
+  (`TagsView`) have no bulk bar.
+- **Selection follows filtering**: `.onChange(of: Set(rows.map(\.id)))` →
+  `TableSelectionReconcile.reconcile` (`Domain/TableSelectionReconcile.swift`, generic) drops
+  now-hidden selected rows into a `stashedSelection` and restores them when they reappear; the Clear
+  button and every bulk action clear the stash.
+- **iOS** keeps a single-tap `List` (touch); double-click/monitor is macOS-only.
+
 ### Querying
 
 Prefer `@Query` at the top of a view for simple sorts/filters. For dynamic filters (e.g., date changes as user navigates), use `@Query(sort:)` to fetch all and filter in a computed property. Avoid `#Predicate` with enum comparisons until verified — in-memory filtering is fast enough for personal data volumes.
@@ -360,7 +403,7 @@ menu: Complete / Started / To do / Cancel / Delete). Search + sort order live on
 
 **List-page filtering.** Every list page (`TasksView`, `ProjectsView`, `PeopleView`, `MinutesListView`, `DocumentsListView`) filters through the shared `FilterBar` + `FilterEngine` pattern (`Views/FilterBar.swift`), reusing the FuzzyPickerField filter language. The page builds `[PickerFilter<Model>]` from its queried data (each filter has an `id`, `label`, `chipColor`, `group`, and a `test` closure), holds `@State activeFilterIds: Set<String>`, renders `FilterBar(filters:activeFilterIds:…)`, and computes its filtered list via `FilterEngine.apply(_:filters:activeIds:)`. Semantics: **OR within a group, AND across groups**; a group with no active filter is ignored; empty selection returns everything. `FilterBar` shows one neutral dropdown per group with the chosen values as removable chips, plus "Clear all filters" (`onClearAll`) and an optional `extraRows` slot for non-discrete filters (e.g. `DateRangeFilterRow` on Tasks). `ProjectsView` seeds `activeFilterIds = ["status.active"]` to preserve its hide-completed default. `InstitutionsView` and `TagsView` have no discrete filter dimension and use no `FilterBar`.
 
-**Tasks-page toolbar (exception).** `TasksView` does **not** render the tall shared `FilterBar`; it uses a compact **`TasksToolbar`** (`Views/TasksTab/TasksToolbar.swift`) over the same `taskFilters`/`FilterEngine`. Layout is one wrapping block: a compact capsule **search** (fuzzy, `FuzzyMatch`), one-tap **`PresetChip`** toggles — **Incomplete · From email · Overdue · Due today · Mine · Others** (each flips a single `activeFilterId`) plus a mutually-exclusive **Today · Week · Month** date trio (each sets `TasksFilterState.datePreset` + `dateRange` from `DateWindow.range`) — a **"Filters ▾"** popover holding the detailed per-field `FilterGroupSelector` rows + `DateRangeFilterRow` (a custom range clears the date preset) + "Clear all filters", and a removable **active-filter chip** row. The Tasks **date filter matches the `createdAt` (captured) date only**. New preset filters live in `taskFilters`: `preset.incomplete` (group "State" → `isOpen`) and `preset.mine`/`preset.others` (group "Assignee" → assignee ==/≠ `AppSettingsStore.myPersonID`, so they OR with the per-person assignee filters). Filter/search/sort state persists per tab on `TasksFilterState` (`activeFilterIds`, `dateRange`, `datePreset`, `searchText`, `sortOrder`); a new tab **defaults to `activeFilterIds = ["preset.incomplete"]`**. The **Active filters** row is always shown (reads "none" when empty). Table columns are **Summary · Project · Status · Pri · Urg · Assignee · Created · Due · Scheduled** (the three trailing date columns each header-sortable via `TaskRow.createdAt`/`dueKey`/`scheduledKey`); the Summary cell carries small glyphs for blocked/waiting/recurring. **Selection follows filtering** (`Domain/TaskSelectionReconcile.swift`): when a filter hides a selected task it's dropped from the live selection but stashed, and restored if the filter reverts (keyed on the visible id set); the **Clear** button and all bulk actions clear the stash too.
+**Tasks-page toolbar (exception).** `TasksView` does **not** render the tall shared `FilterBar`; it uses a compact **`TasksToolbar`** (`Views/TasksTab/TasksToolbar.swift`) over the same `taskFilters`/`FilterEngine`. Layout is one wrapping block: a compact capsule **search** (fuzzy, `FuzzyMatch`), one-tap **`PresetChip`** toggles — **Incomplete · From email · Overdue · Due today · Mine · Others** (each flips a single `activeFilterId`) plus a mutually-exclusive **Today · Week · Month** date trio (each sets `TasksFilterState.datePreset` + `dateRange` from `DateWindow.range`) — a **"Filters ▾"** popover holding the detailed per-field `FilterGroupSelector` rows + `DateRangeFilterRow` (a custom range clears the date preset) + "Clear all filters", and a removable **active-filter chip** row. The Tasks **date filter matches the `createdAt` (captured) date only**. New preset filters live in `taskFilters`: `preset.incomplete` (group "State" → `isOpen`) and `preset.mine`/`preset.others` (group "Assignee" → assignee ==/≠ `AppSettingsStore.myPersonID`, so they OR with the per-person assignee filters). Filter/search/sort state persists per tab on `TasksFilterState` (`activeFilterIds`, `dateRange`, `datePreset`, `searchText`, `sortOrder`); a new tab **defaults to `activeFilterIds = ["preset.incomplete"]`**. The **Active filters** row is always shown (reads "none" when empty). Table columns are **Summary · Project · Status · Pri · Urg · Assignee · Created · Due · Scheduled** (the three trailing date columns each header-sortable via `TaskRow.createdAt`/`dueKey`/`scheduledKey`); the Summary cell carries small glyphs for blocked/waiting/recurring. `TasksToolbar` is a thin wrapper over the shared `ListToolbar` (see the **List / Table page style** section) supplying the Tasks-specific presets + date-range slot; double-click, bulk bar, and selection-follows-filtering use the shared `.onTableRowDoubleClick` / `BulkActionBar` / `TableSelectionReconcile`.
 
 ### Task state transitions
 
@@ -647,7 +690,7 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Workspace tabs are per-tab back/forward histories: `navigate(to:)` pushes (no-op on current), back/forward traverse, navigating after back truncates forward history. `openInNewTab` adds+activates; `focusOrOpen` reuses a tab showing the destination else opens one; `closeTab` reassigns active and recreates a Diary tab when the last closes | Navigation / workspace shell | `gbpDiaryTests/Views/WorkspaceModelTests.swift` | `tabState_navigate_pushesHistoryAndEnablesBack`, `tabState_navigate_toCurrentIsNoOp`, `tabState_backForward_traversesHistory`, `tabState_navigateAfterBack_truncatesForwardHistory`, `openInNewTab_addsAndActivates`, `focusOrOpen_activatesExistingTabShowingDestination`, `focusOrOpen_opensNewTabWhenNoneShowsDestination`, `closeTab_reassignsActive`, `closeTab_lastTab_recreatesDiary` |
 | `FilterEngine.apply` filters a collection by active `PickerFilter`s: OR within a group, AND across groups; a group with no active filter is ignored; empty active set (or only unknown ids) returns all items | List-page filtering | `gbpDiaryTests/Domain/FilterEngineTests.swift` | `apply_noActiveFilters_returnsAll`, `apply_orWithinGroup_matchesAnyInGroup`, `apply_andAcrossGroups_requiresBothGroups`, `apply_orWithinAndAndAcross_combined`, `apply_groupWithNoActiveFilter_isIgnored`, `apply_unknownActiveId_isIgnored` |
 | `DateWindow.range(now:calendar:)` returns `[start, now]` for the Tasks toolbar date presets: today = start-of-today; week = 6 days before start-of-today; month = 29 days before | Tasks-page toolbar | `gbpDiaryTests/Domain/DateWindowTests.swift` | `ranges_startAndEnd` |
-| `TaskSelectionReconcile.reconcile(selection:stashed:visible:)` drops now-hidden selected ids into the stash and restores stashed ids that re-entered the visible set; ids that stay visible are kept; no-op when all selected are visible | Tasks selection follows filtering | `gbpDiaryTests/Domain/TaskSelectionReconcileTests.swift` | `hiddenSelection_movesToStashed`, `stashedReappearing_restoresToSelection`, `hideAndRestore_simultaneously`, `allVisible_isNoOp`, `empty_returnsEmpty` |
+| `TableSelectionReconcile.reconcile(selection:stashed:visible:)` (generic over the id type) drops now-hidden selected ids into the stash and restores stashed ids that re-entered the visible set; ids that stay visible are kept; no-op when all selected are visible | List selection follows filtering | `gbpDiaryTests/Domain/TableSelectionReconcileTests.swift` | `hiddenSelection_movesToStashed`, `stashedReappearing_restoresToSelection`, `hideAndRestore_simultaneously`, `allVisible_isNoOp`, `empty_returnsEmpty` |
 | Note-link refs: `NoteLinkRef.url(for:)`/`markdown(for:)` produce `note://<uuid>` links; `id(fromURL:)` parses them (rejecting other schemes/non-UUIDs); `referencedIDs(in:)` extracts all note-link ids in order, ignoring images and plain links | Content notes / linking | `gbpDiaryTests/Models/NoteLinkRefTests.swift` | `url_and_id_roundTrip`, `id_fromURL_rejectsNonNoteSchemes`, `markdown_embedsTitleAndRef`, `markdown_sanitizesClosingBracketInTitle`, `referencedIDs_extractsAllInOrder`, `referencedIDs_ignoresImageAndPlainLinks` |
 | `NoteLinkUsageScanner.backlinks(to:in:)` returns ids of notes referencing the target (in order), excluding self; empty when none | Content notes / backlinks | `gbpDiaryTests/Models/NoteLinkUsageScannerTests.swift` | `backlinks_findsReferrers`, `backlinks_excludesSelfReference`, `backlinks_emptyWhenNoReferrers` |
 | Content-note membership: `NoteContentMembership.isContentNote` is true iff the title is non-empty (after trimming) and the note has neither a day record nor minutes | Content notes / vault membership | `gbpDiaryTests/Models/NoteLinkUsageScannerTests.swift` | `isContentNote_requiresNonEmptyTitle`, `isContentNote_excludesDayAndMeetingNotes` |

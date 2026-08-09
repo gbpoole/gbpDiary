@@ -16,11 +16,6 @@ struct TasksView: View {
     // Tasks selected but hidden by the current filter — restored to `selection` if the filter reverts.
     @State private var stashedSelection: Set<UUID> = []
     @State private var confirmingBulkDelete = false
-    #if os(macOS)
-    // Native double-click-to-open (a SwiftUI tap gesture on a Table cell breaks native selection).
-    @State private var doubleClickMonitor = TableDoubleClickMonitor()
-    @State private var pendingDoubleClickRow: Int? = nil
-    #endif
 
     private var taskFilters: [PickerFilter<Task>] {
         let status = TaskStatus.allCases.map { s in
@@ -156,7 +151,7 @@ struct TasksView: View {
         // reappearing ones. Keyed on the visible id set, so pure re-sorts and manual selection changes
         // (same ids) don't trigger it.
         .onChange(of: Set(rows.map(\.id))) { _, visible in
-            let result = TaskSelectionReconcile.reconcile(
+            let result = TableSelectionReconcile.reconcile(
                 selection: selection, stashed: stashedSelection, visible: visible)
             if result.selection != selection { selection = result.selection }
             if result.stashed != stashedSelection { stashedSelection = result.stashed }
@@ -164,22 +159,13 @@ struct TasksView: View {
     }
 
     private var bulkBar: some View {
-        HStack(spacing: 10) {
-            Text(selection.isEmpty ? "No selection" : "\(selection.count) selected")
-                .font(.caption).foregroundStyle(.secondary)
-            Spacer()
-            Group {
-                Button("Complete") { bulkComplete() }
-                Button("Started") { bulkStarted() }
-                Button("To do") { bulkTodo() }
-                Button("Cancel") { bulkCancel() }
-                Button("Delete", role: .destructive) { confirmingBulkDelete = true }
-                Button("Clear") { clearSelection() }
-            }
-            .disabled(selection.isEmpty)
+        BulkActionBar(count: selection.count, onClear: { clearSelection() }) {
+            Button("Complete") { bulkComplete() }
+            Button("Started") { bulkStarted() }
+            Button("To do") { bulkTodo() }
+            Button("Cancel") { bulkCancel() }
+            Button("Delete", role: .destructive) { confirmingBulkDelete = true }
         }
-        .buttonStyle(.bordered).controlSize(.small)
-        .padding(.horizontal).padding(.bottom, 6)
     }
 
     #if os(macOS)
@@ -267,14 +253,7 @@ struct TasksView: View {
         }
         .scrollContentBackground(.hidden)
         .background(AppTheme.background)
-        .onAppear {
-            doubleClickMonitor.onRow = { row in pendingDoubleClickRow = row }
-            doubleClickMonitor.start()
-        }
-        .onDisappear { doubleClickMonitor.stop() }
-        .onChange(of: pendingDoubleClickRow) { _, new in
-            if let row = new { openRow(row); pendingDoubleClickRow = nil }
-        }
+        .onTableRowDoubleClick { openRow($0) }
         .animation(.easeInOut(duration: 0.25), value: rows.map(\.id))
     }
     #else
