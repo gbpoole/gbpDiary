@@ -11,6 +11,12 @@ struct MinutesListView: View {
     @State private var editingMinutes: Minutes?
     @State private var showingAdd = false
     @State private var activeFilterIds: Set<String> = []
+    @State private var searchText = ""
+    @State private var sortOrder = [KeyPathComparator(\Minutes.meetingAt, order: .reverse)]
+    // @Model exposes `id: UUID` (its @Attribute), so the Table's selection is keyed by UUID.
+    @State private var selection: Set<UUID> = []
+    @State private var stashedSelection: Set<UUID> = []
+    @State private var confirmingBulkDelete = false
 
     private var minutesFilters: [PickerFilter<Minutes>] {
         let projectGroup = allProjects.map { p in
@@ -26,17 +32,44 @@ struct MinutesListView: View {
         return projectGroup + attendeeGroup
     }
 
-    private var filteredMinutes: [Minutes] {
-        FilterEngine.apply(allMinutes, filters: minutesFilters, activeIds: activeFilterIds)
+    private var rows: [Minutes] {
+        let matched = FilterEngine.apply(allMinutes, filters: minutesFilters, activeIds: activeFilterIds)
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let searched = query.isEmpty ? matched : matched.filter { FuzzyMatch.matches(query, in: searchHaystack($0)) }
+        return searched.sorted(using: sortOrder)
+    }
+
+    private func searchHaystack(_ m: Minutes) -> String {
+        [m.summary, m.projects.map(\.name).joined(separator: " "), m.attendees.map(\.name).joined(separator: " ")]
+            .compactMap { $0 }.joined(separator: " ")
+    }
+
+    private var selectedMinutes: [Minutes] {
+        allMinutes.filter { selection.contains($0.id) }
+    }
+
+    private func clearSelection() { selection.removeAll(); stashedSelection.removeAll() }
+
+    private func bulkDelete() {
+        for m in selectedMinutes {
+            workspace.closeEntity(m.persistentModelID)
+            modelContext.delete(m)
+        }
+        clearSelection()
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(
+            ListToolbar(
+                searchText: $searchText,
+                searchPrompt: "Search minutes…",
                 filters: minutesFilters,
                 activeFilterIds: $activeFilterIds,
                 onClearAll: { activeFilterIds = [] }
             )
+            BulkActionBar(count: selection.count, onClear: { clearSelection() }) {
+                Button("Delete", role: .destructive) { confirmingBulkDelete = true }
+            }
             Divider()
             minutesTable
         }
@@ -48,6 +81,15 @@ struct MinutesListView: View {
         }
         .sheet(item: $editingMinutes) { MinutesDetailView(minutes: $0, asSheet: true) }
         .sheet(isPresented: $showingAdd) { MinutesEditorSheet(minutes: nil, project: nil) }
+        .alert("Delete \(selection.count) meeting\(selection.count == 1 ? "" : "s")?", isPresented: $confirmingBulkDelete) {
+            Button("Delete", role: .destructive) { bulkDelete() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This permanently deletes the selected meeting\(selection.count == 1 ? "" : "s") and their minutes. Related items are unlinked, not deleted.") }
+        .onChange(of: Set(rows.map(\.id))) { _, visible in
+            let result = TableSelectionReconcile.reconcile(selection: selection, stashed: stashedSelection, visible: visible)
+            if result.selection != selection { selection = result.selection }
+            if result.stashed != stashedSelection { stashedSelection = result.stashed }
+        }
     }
 
     private func openInspector(for minutes: Minutes) {
@@ -56,46 +98,46 @@ struct MinutesListView: View {
 
     #if os(macOS)
     private var minutesTable: some View {
-        Table(filteredMinutes) {
-            TableColumn("Date") { minutes in
+        Table(rows, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("Date", value: \.meetingAt) { minutes in
                 Text(minutes.meetingAt, format: .dateTime.weekday(.abbreviated).day().month(.abbreviated).year())
                     .lineLimit(1)
                     .font(AppTheme.bodyFont(size: 13))
                     .foregroundStyle(AppTheme.text)
-                    .onTapGesture { openInspector(for: minutes) }
                     .contextMenu { editMenuItem(minutes) }
             }
-            .width(160)
-            TableColumn("Time") { minutes in
+            .width(min: 130, ideal: 160)
+            TableColumn("Time", value: \.meetingAt) { minutes in
                 Text(minutes.meetingAt, format: .dateTime.hour().minute())
                     .foregroundStyle(AppTheme.mutedText)
             }
-            .width(70)
-            TableColumn("Summary") { minutes in
+            .width(min: 60, ideal: 70)
+            TableColumn("Summary", value: \.summaryKey) { minutes in
                 Text(minutes.summary ?? "")
                     .foregroundStyle(AppTheme.text)
                     .lineLimit(1)
-                    .onTapGesture { openInspector(for: minutes) }
                     .contextMenu { editMenuItem(minutes) }
             }
-            TableColumn("Projects") { minutes in
+            .width(min: 160, ideal: 260)
+            TableColumn("Projects", value: \.projectsKey) { minutes in
                 Text(minutes.projects.map(\.name).joined(separator: ", "))
                     .foregroundStyle(AppTheme.project)
                     .lineLimit(1)
             }
-            .width(160)
-            TableColumn("Attendees") { minutes in
-                Text("\(minutes.attendees.count)")
+            .width(min: 120, ideal: 160)
+            TableColumn("Attendees", value: \.attendeeCount) { minutes in
+                Text("\(minutes.attendeeCount)")
                     .foregroundStyle(AppTheme.mutedText)
             }
-            .width(80)
+            .width(min: 70, ideal: 80)
         }
         .scrollContentBackground(.hidden)
         .background(AppTheme.background)
+        .onTableRowDoubleClick { openInspector(for: rows[$0]) }
     }
     #else
     private var minutesTable: some View {
-        List(filteredMinutes) { minutes in
+        List(rows) { minutes in
             VStack(alignment: .leading, spacing: 4) {
                 Text(minutes.meetingAt, format: .dateTime.weekday(.abbreviated).day().month(.abbreviated).year())
                     .font(.subheadline.bold())

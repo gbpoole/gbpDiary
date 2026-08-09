@@ -25,6 +25,12 @@ import SwiftData
     @Relationship(inverse: \Document.meetings)
     var documents: [Document] = []
 
+    // Comparable sort keys for the Minutes table columns (see the List/Table page style in CLAUDE.md).
+    // The Date/Time columns sort by `meetingAt` directly.
+    var summaryKey: String { (summary ?? "").lowercased() }
+    var projectsKey: String { projects.map(\.name).sorted().joined(separator: ", ").lowercased() }
+    var attendeeCount: Int { attendees.count }
+
     init(meetingAt: Date, id: UUID = UUID()) {
         self.id = id
         self.meetingAt = meetingAt
