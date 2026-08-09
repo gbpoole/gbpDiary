@@ -9,6 +9,12 @@ struct DocumentsListView: View {
     @Environment(WorkspaceModel.self) private var workspace
 
     @State private var activeFilterIds: Set<String> = []
+    @State private var searchText = ""
+    @State private var sortOrder = [KeyPathComparator(\Document.createdAt, order: .reverse)]
+    // @Model exposes `id: UUID` (its @Attribute), so the Table's selection is keyed by UUID.
+    @State private var selection: Set<UUID> = []
+    @State private var stashedSelection: Set<UUID> = []
+    @State private var confirmingBulkDelete = false
 
     private var documentFilters: [PickerFilter<Document>] {
         allProjects.map { p in
@@ -18,17 +24,44 @@ struct DocumentsListView: View {
         }
     }
 
-    private var filteredDocuments: [Document] {
-        FilterEngine.apply(allDocuments, filters: documentFilters, activeIds: activeFilterIds)
+    private var rows: [Document] {
+        let matched = FilterEngine.apply(allDocuments, filters: documentFilters, activeIds: activeFilterIds)
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let searched = query.isEmpty ? matched : matched.filter { FuzzyMatch.matches(query, in: searchHaystack($0)) }
+        return searched.sorted(using: sortOrder)
+    }
+
+    private func searchHaystack(_ d: Document) -> String {
+        [d.summary, d.documentDescription, d.projects.map(\.name).joined(separator: " ")]
+            .compactMap { $0 }.joined(separator: " ")
+    }
+
+    private var selectedDocuments: [Document] {
+        allDocuments.filter { selection.contains($0.id) }
+    }
+
+    private func clearSelection() { selection.removeAll(); stashedSelection.removeAll() }
+
+    private func bulkDelete() {
+        for d in selectedDocuments {
+            workspace.closeEntity(d.persistentModelID)
+            modelContext.delete(d)
+        }
+        clearSelection()
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(
+            ListToolbar(
+                searchText: $searchText,
+                searchPrompt: "Search documents…",
                 filters: documentFilters,
                 activeFilterIds: $activeFilterIds,
                 onClearAll: { activeFilterIds = [] }
             )
+            BulkActionBar(count: selection.count, onClear: { clearSelection() }) {
+                Button("Delete", role: .destructive) { confirmingBulkDelete = true }
+            }
             Divider()
             documentTable
         }
@@ -42,41 +75,59 @@ struct DocumentsListView: View {
                 } label: { Image(systemName: "plus") }
             }
         }
+        .alert("Delete \(selection.count) document\(selection.count == 1 ? "" : "s")?", isPresented: $confirmingBulkDelete) {
+            Button("Delete", role: .destructive) { bulkDelete() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This permanently deletes the selected document\(selection.count == 1 ? "" : "s") and their attachments.") }
+        .onChange(of: Set(rows.map(\.id))) { _, visible in
+            let result = TableSelectionReconcile.reconcile(selection: selection, stashed: stashedSelection, visible: visible)
+            if result.selection != selection { selection = result.selection }
+            if result.stashed != stashedSelection { stashedSelection = result.stashed }
+        }
     }
+
+    private func open(_ document: Document) { workspace.focusOrOpen(.document(document.persistentModelID)) }
 
     #if os(macOS)
     private var documentTable: some View {
-        Table(filteredDocuments) {
-            TableColumn("Summary") { document in
+        Table(rows, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("Summary", value: \.summaryKey) { document in
                 Text(document.summary ?? "Untitled")
                     .lineLimit(1)
                     .font(AppTheme.bodyFont(size: 13))
                     .foregroundStyle(AppTheme.text)
-                    .onTapGesture { workspace.focusOrOpen(.document(document.persistentModelID)) }
             }
-            TableColumn("Description") { document in
+            .width(min: 140, ideal: 220)
+            TableColumn("Description", value: \.descriptionKey) { document in
                 Text(document.documentDescription ?? "")
                     .foregroundStyle(AppTheme.mutedText)
                     .lineLimit(1)
             }
-            TableColumn("Projects") { document in
+            .width(min: 140, ideal: 220)
+            TableColumn("Projects", value: \.projectsKey) { document in
                 Text(document.projects.map(\.name).joined(separator: ", "))
                     .foregroundStyle(AppTheme.project)
                     .lineLimit(1)
             }
-            .width(160)
-            TableColumn("Created") { document in
+            .width(min: 120, ideal: 160)
+            TableColumn("Files", value: \.attachmentCount) { document in
+                Text("\(document.attachmentCount)")
+                    .foregroundStyle(AppTheme.mutedText)
+            }
+            .width(min: 50, ideal: 60)
+            TableColumn("Created", value: \.createdAt) { document in
                 Text(document.createdAt, format: .dateTime.month(.abbreviated).day().year())
                     .foregroundStyle(AppTheme.mutedText)
             }
-            .width(100)
+            .width(min: 90, ideal: 100)
         }
         .scrollContentBackground(.hidden)
         .background(AppTheme.background)
+        .onTableRowDoubleClick { open(rows[$0]) }
     }
     #else
     private var documentTable: some View {
-        List(filteredDocuments) { document in
+        List(rows) { document in
             VStack(alignment: .leading, spacing: 4) {
                 Text(document.summary ?? "Untitled")
                     .font(.subheadline.bold())
@@ -84,7 +135,7 @@ struct DocumentsListView: View {
                     Text(desc).foregroundStyle(.secondary).font(.callout).lineLimit(1)
                 }
             }
-            .onTapGesture { selectedDocument = document }
+            .onTapGesture { open(document) }
         }
     }
     #endif

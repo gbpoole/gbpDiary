@@ -18,6 +18,13 @@ import SwiftData
 
     var dayRecord: DayRecord?
 
+    // Comparable sort keys for the Documents table columns (see the List/Table page style in CLAUDE.md).
+    // The Created column sorts by `createdAt` directly.
+    var summaryKey: String { (summary ?? "").lowercased() }
+    var descriptionKey: String { (documentDescription ?? "").lowercased() }
+    var projectsKey: String { projects.map(\.name).sorted().joined(separator: ", ").lowercased() }
+    var attachmentCount: Int { attachments.count }
+
     init(id: UUID = UUID(), summary: String? = nil) {
         self.id = id
         self.summary = summary
