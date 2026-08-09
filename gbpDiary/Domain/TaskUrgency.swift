@@ -78,8 +78,8 @@ extension TaskUrgency {
             isScheduledNow: task.scheduledAt.map { $0 <= now } ?? false,
             hasTags: !task.tags.isEmpty,
             hasProject: task.project != nil,
-            isBlocked: false,
-            isBlocking: false,
+            isBlocked: task.isBlocked,
+            isBlocking: task.isBlocking,
             isWaiting: false
         )
         return score(inputs, now: now)

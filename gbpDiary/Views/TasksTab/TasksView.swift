@@ -6,11 +6,14 @@ struct TasksView: View {
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Query(sort: \Person.name) private var allPeople: [Person]
 
+    @Environment(\.modelContext) private var modelContext
     // Filter state is held on the active workspace tab so it survives navigation and differs per tab.
     @Environment(WorkspaceModel.self) private var workspace
     private var filterState: TasksFilterState { workspace.active.tasksFilter }
     @State private var editingTask: Task? = nil
     @State private var pendingStatusIds: Set<UUID> = []
+    @State private var selection: Set<UUID> = []
+    @State private var confirmingBulkDelete = false
 
     private var taskFilters: [PickerFilter<Task>] {
         let status = TaskStatus.allCases.map { s in
@@ -31,7 +34,9 @@ struct TasksView: View {
         let flags = [
             PickerFilter<Task>(id: "flag.overdue", label: "Overdue", chipColor: AppTheme.destructive, group: "Flags") { $0.isOverdue },
             PickerFilter<Task>(id: "flag.dueToday", label: "Due today", chipColor: AppTheme.followUp, group: "Flags") { $0.isDueToday },
-            PickerFilter<Task>(id: "flag.hasDue", label: "Has due", chipColor: AppTheme.mutedText, group: "Flags") { $0.dueAt != nil }
+            PickerFilter<Task>(id: "flag.hasDue", label: "Has due", chipColor: AppTheme.mutedText, group: "Flags") { $0.dueAt != nil },
+            PickerFilter<Task>(id: "flag.blocked", label: "Blocked", chipColor: AppTheme.destructive, group: "Flags") { $0.isBlocked },
+            PickerFilter<Task>(id: "flag.unblocked", label: "Unblocked", chipColor: AppTheme.completed, group: "Flags") { $0.isOpen && !$0.isBlocked }
         ]
         return status + priorities + flags + projects + assignees + source
     }
@@ -47,28 +52,58 @@ struct TasksView: View {
 
     private var filteredTasks: [Task] {
         let matched = Set(FilterEngine.apply(allTasks, filters: taskFilters, activeIds: filterState.activeFilterIds).map(\.id))
-        let base = allTasks.filter { task in
+        let query = filterState.searchText.trimmingCharacters(in: .whitespaces)
+        return allTasks.filter { task in
             if pendingStatusIds.contains(task.id) { return true }
             guard matched.contains(task.id) else { return false }
-            guard let range = filterState.dateRange else { return true }
-            let completedInRange = task.completedAt.map { range.contains($0) } ?? false
-            return completedInRange || range.contains(task.createdAt)
+            if let range = filterState.dateRange {
+                let completedInRange = task.completedAt.map { range.contains($0) } ?? false
+                guard completedInRange || range.contains(task.createdAt) else { return false }
+            }
+            return query.isEmpty || FuzzyMatch.matches(query, in: searchHaystack(task))
         }
-        return sorted(base)
     }
 
-    private func sorted(_ tasks: [Task]) -> [Task] {
-        switch filterState.sortMode {
-        case .urgency:
-            return tasks
-                .map { ($0, TaskUrgency.score(for: $0)) }
-                .sorted { $0.1 > $1.1 }
-                .map(\.0)
-        case .created:
-            return tasks.sorted { $0.createdAt > $1.createdAt }
-        case .due:
-            return tasks.sorted { ($0.dueAt ?? .distantFuture) < ($1.dueAt ?? .distantFuture) }
+    // Fields searched by the fuzzy finder.
+    private func searchHaystack(_ task: Task) -> String {
+        [task.summary, task.project?.name, task.assignee?.name, task.tags.joined(separator: " ")]
+            .compactMap { $0 }.joined(separator: " ")
+    }
+
+    // Sortable rows (urgency precomputed), ordered by the per-tab column sort order.
+    private var rows: [TaskRow] {
+        filteredTasks.map(TaskRow.init).sorted(using: filterState.sortOrder)
+    }
+
+    private var selectedTasks: [Task] {
+        allTasks.filter { selection.contains($0.id) }
+    }
+
+    // MARK: - Bulk actions
+
+    private func bulkComplete() { for t in selectedTasks { t.markCompleted() }; selection.removeAll() }
+    private func bulkCancel()   { for t in selectedTasks { t.markCancelled() }; selection.removeAll() }
+    private func bulkStarted()  {
+        for t in selectedTasks {
+            if t.status == .completed { t.unmarkCompleted() } else if t.status == .cancelled { t.unmarkCancelled() }
+            t.followUpAt = nil; t.status = .started; t.updatedAt = Date()
         }
+        selection.removeAll()
+    }
+    private func bulkTodo() {
+        for t in selectedTasks {
+            switch t.status {
+            case .completed:       t.unmarkCompleted()
+            case .cancelled:       t.unmarkCancelled()
+            case .followUpPending: t.followUpAt = nil; t.status = .todo; t.updatedAt = Date()
+            default:               t.status = .todo; t.updatedAt = Date()
+            }
+        }
+        selection.removeAll()
+    }
+    private func bulkDelete() {
+        for t in selectedTasks { modelContext.delete(t) }
+        selection.removeAll()
     }
 
     var body: some View {
@@ -82,14 +117,16 @@ struct TasksView: View {
                 onClearAll: { filter.activeFilterIds = []; filter.dateRange = nil }
             )
             HStack(spacing: 6) {
-                Spacer()
-                Text("Sort").font(.caption).foregroundStyle(.secondary)
-                Picker("", selection: $filter.sortMode) {
-                    ForEach(TaskSortMode.allCases, id: \.self) { Text($0.label).tag($0) }
+                Image(systemName: "magnifyingglass").font(.caption).foregroundStyle(.secondary)
+                TextField("Fuzzy find tasks…", text: $filter.searchText)
+                    .textFieldStyle(.plain)
+                if !filter.searchText.isEmpty {
+                    Button { filter.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).foregroundStyle(.secondary)
                 }
-                .labelsHidden().fixedSize()
             }
-            .padding(.horizontal).padding(.bottom, 4)
+            .padding(.horizontal).padding(.vertical, 6)
+            bulkBar
             Divider()
             taskTable
         }
@@ -97,77 +134,109 @@ struct TasksView: View {
         .sheet(item: $editingTask) { task in
             TaskEditorSheet(task: task, defaultDate: Date())
         }
+        .alert("Delete \(selection.count) task\(selection.count == 1 ? "" : "s")?", isPresented: $confirmingBulkDelete) {
+            Button("Delete", role: .destructive) { bulkDelete() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This permanently deletes the selected task\(selection.count == 1 ? "" : "s").") }
         .onChange(of: filterState.activeFilterIds) { pendingStatusIds.removeAll() }
         .onChange(of: filterState.dateRange) { pendingStatusIds.removeAll() }
     }
 
+    private var bulkBar: some View {
+        HStack(spacing: 10) {
+            Text(selection.isEmpty ? "No selection" : "\(selection.count) selected")
+                .font(.caption).foregroundStyle(.secondary)
+            Spacer()
+            Group {
+                Button("Complete") { bulkComplete() }
+                Button("Started") { bulkStarted() }
+                Button("To do") { bulkTodo() }
+                Button("Cancel") { bulkCancel() }
+                Button("Delete", role: .destructive) { confirmingBulkDelete = true }
+                Button("Clear") { selection.removeAll() }
+            }
+            .disabled(selection.isEmpty)
+        }
+        .buttonStyle(.bordered).controlSize(.small)
+        .padding(.horizontal).padding(.bottom, 6)
+    }
+
     #if os(macOS)
     private var taskTable: some View {
-        Table(filteredTasks) {
-            TableColumn("Summary") { task in
-                Text(task.summary)
-                    .lineLimit(1)
-                    .font(AppTheme.bodyFont(size: 13))
-                    .foregroundStyle(pendingStatusIds.contains(task.id) ? AppTheme.mutedText : AppTheme.text)
-                    .onTapGesture { editingTask = task }
+        @Bindable var filter = filterState
+        return Table(rows, selection: $selection, sortOrder: $filter.sortOrder) {
+            TableColumn("Summary", value: \.summaryKey) { row in
+                HStack(spacing: 4) {
+                    if row.task.isBlocked {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 10)).foregroundStyle(AppTheme.destructive)
+                            .help("Blocked by an unfinished task")
+                    }
+                    Text(row.task.summary)
+                        .lineLimit(1)
+                        .font(AppTheme.bodyFont(size: 13))
+                        .foregroundStyle(pendingStatusIds.contains(row.id) ? AppTheme.mutedText : AppTheme.text)
+                }
+                .contentShape(Rectangle())
+                .onTapGesture { editingTask = row.task }
             }
-            TableColumn("Status") { task in
-                TaskStatusMenu(task: task, onBeforeChange: { pendingStatusIds.insert(task.id) }) {
-                    TaskStatusIcon(status: task.status)
+            .width(min: 160, ideal: 300)
+            TableColumn("Project", value: \.projectKey) { row in
+                Text(row.task.project?.name ?? "").foregroundStyle(AppTheme.project).lineLimit(1)
+            }
+            .width(min: 80, ideal: 140)
+            TableColumn("Status", value: \.statusRank) { row in
+                TaskStatusMenu(task: row.task, onBeforeChange: { pendingStatusIds.insert(row.id) }) {
+                    TaskStatusIcon(status: row.task.status)
                 }
             }
-            .width(130)
-            TableColumn("Urg") { task in
-                Text(String(format: "%.1f", TaskUrgency.score(for: task)))
-                    .font(AppTheme.bodyFont(size: 12))
-                    .foregroundStyle(AppTheme.mutedText)
-                    .monospacedDigit()
-            }
-            .width(46)
-            TableColumn("Pri") { task in
-                if task.priority != .none {
-                    Chip(label: task.priority.short, color: priorityColor(task.priority))
+            .width(min: 96, ideal: 130)
+            TableColumn("Pri", value: \.priorityRank) { row in
+                if row.task.priority != .none {
+                    Chip(label: row.task.priority.short, color: priorityColor(row.task.priority))
                 }
             }
-            .width(44)
-            TableColumn("Due") { task in
-                if let due = task.dueAt {
+            .width(min: 40, ideal: 46)
+            TableColumn("Due", value: \.dueKey) { row in
+                if let due = row.task.dueAt {
                     Text(due, format: .dateTime.month(.abbreviated).day())
-                        .foregroundStyle(task.isOverdue ? AppTheme.destructive : AppTheme.mutedText)
+                        .foregroundStyle(row.task.isOverdue ? AppTheme.destructive : AppTheme.mutedText)
                 }
             }
-            .width(80)
-            TableColumn("Project") { task in
-                Text(task.project?.name ?? "")
-                    .foregroundStyle(AppTheme.project)
-                    .lineLimit(1)
+            .width(min: 60, ideal: 80)
+            TableColumn("Urg", value: \.urgency) { row in
+                Text(String(format: "%.1f", row.urgency))
+                    .font(AppTheme.bodyFont(size: 12)).foregroundStyle(AppTheme.mutedText).monospacedDigit()
             }
-            TableColumn("Assignee") { task in
-                Text(task.assignee?.name ?? "")
-                    .foregroundStyle(AppTheme.person)
-                    .lineLimit(1)
+            .width(min: 44, ideal: 50)
+            TableColumn("Assignee", value: \.assigneeKey) { row in
+                Text(row.task.assignee?.name ?? "").foregroundStyle(AppTheme.person).lineLimit(1)
             }
-            TableColumn("Scheduled") { task in
-                if let s = task.scheduledAt {
-                    Text(s, format: .dateTime.month(.abbreviated).day().year())
-                        .foregroundStyle(AppTheme.mutedText)
-                }
-            }
-            .width(100)
-            TableColumn("Created") { task in
-                Text(task.createdAt, format: .dateTime.month(.abbreviated).day().year())
+            .width(min: 80, ideal: 120)
+            TableColumn("Created", value: \.createdAt) { row in
+                Text(row.createdAt, format: .dateTime.month(.abbreviated).day().year())
                     .foregroundStyle(AppTheme.mutedText)
             }
-            .width(100)
+            .width(min: 80, ideal: 100)
+        }
+        .contextMenu(forSelectionType: UUID.self) { ids in
+            if ids.count == 1, let t = allTasks.first(where: { $0.id == ids.first }) {
+                Button("Edit…") { editingTask = t }
+                Divider()
+            }
+            Button("Complete") { selection = ids; bulkComplete() }
+            Button("To do") { selection = ids; bulkTodo() }
+            Button("Cancel") { selection = ids; bulkCancel() }
+            Button("Delete", role: .destructive) { selection = ids; confirmingBulkDelete = true }
         }
         .scrollContentBackground(.hidden)
         .background(AppTheme.background)
-        .animation(.easeInOut(duration: 0.25), value: filteredTasks.map(\.id))
+        .animation(.easeInOut(duration: 0.25), value: rows.map(\.id))
     }
     #else
     private var taskTable: some View {
-        List(filteredTasks) { task in
-            TaskRowView(task: task, onEdit: { editingTask = task })
+        List(rows) { row in
+            TaskRowView(task: row.task, onEdit: { editingTask = row.task })
         }
     }
     #endif

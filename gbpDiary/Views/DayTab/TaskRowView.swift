@@ -126,6 +126,11 @@ struct TaskRowView: View {
                     .font(.caption2).foregroundStyle(.secondary)
                     .help("From an email")
             }
+            if task.isBlocked {
+                Image(systemName: "lock.fill")
+                    .font(.caption2).foregroundStyle(AppTheme.destructive)
+                    .help("Blocked by an unfinished task")
+            }
             if task.priority != .none {
                 Chip(label: task.priority.short, color: priorityChipColor)
             }

@@ -59,6 +59,12 @@ import SwiftData
     @Relationship(deleteRule: .nullify, inverse: \FocusBlock.task)
     var focusBlocks: [FocusBlock]
 
+    // Dependencies (self many-to-many): this task is blocked until every task in `dependsOn` is done.
+    // `blocking` is the inverse (tasks that depend on this one). Nullify so deleting a task just drops
+    // the edges.
+    @Relationship(deleteRule: .nullify) var dependsOn: [Task] = []
+    @Relationship(deleteRule: .nullify, inverse: \Task.dependsOn) var blocking: [Task] = []
+
     init(
         summary: String,
         id: UUID = UUID(),
@@ -103,6 +109,11 @@ extension Task {
     /// Open and past its due date (day-granularity).
     var isOverdue: Bool { TaskFlags.isOverdue(dueAt: dueAt, isOpen: isOpen) }
     var isDueToday: Bool { TaskFlags.isDueToday(dueAt: dueAt) }
+
+    /// Blocked while any prerequisite is still open (completing a blocker auto-unblocks — derived).
+    var isBlocked: Bool { dependsOn.contains(where: \.isOpen) }
+    /// This task blocks another still-open task.
+    var isBlocking: Bool { blocking.contains(where: \.isOpen) }
 
     func markCompleted() {
         let now = Date()

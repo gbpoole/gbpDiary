@@ -42,19 +42,14 @@ enum TaskPriority: String, Codable, CaseIterable {
         case .high:   1.0
         }
     }
-}
 
-// Sort order for the Tasks table (persisted per workspace tab in TasksFilterState).
-enum TaskSortMode: String, CaseIterable {
-    case urgency
-    case created
-    case due
-
-    var label: String {
+    /// Ordinal for sorting (none=0 … high=3).
+    var rank: Int {
         switch self {
-        case .urgency: "Urgency"
-        case .created: "Created"
-        case .due:     "Due"
+        case .none:   0
+        case .low:    1
+        case .medium: 2
+        case .high:   3
         }
     }
 }

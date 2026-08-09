@@ -21,6 +21,7 @@ struct TaskEditorSheet: View {
 
     @Query(sort: \Project.name) private var projects: [Project]
     @Query(sort: \Person.name) private var people: [Person]
+    @Query(sort: \Task.summary) private var allTasks: [Task]
 
     @State private var summary = ""
     @State private var notes = ""
@@ -29,6 +30,7 @@ struct TaskEditorSheet: View {
     @State private var scheduledDate: Date?
     @State private var dueDate: Date?
     @State private var priority: TaskPriority = .none
+    @State private var selectedBlockers: [Task] = []
     @State private var tagsText = ""
     @State private var showingLogTime = false
     @State private var showingDeleteConfirm = false
@@ -53,6 +55,8 @@ struct TaskEditorSheet: View {
                     prioritySection
                     scheduleSection
                     dueSection
+                    dependsSection
+                    blockingSection
                     notesSection
                     if let t = task {
                         timeLogSection(t)
@@ -255,6 +259,48 @@ struct TaskEditorSheet: View {
         }
     }
 
+    // Candidate blockers: any other task that wouldn't create a dependency cycle.
+    private var blockerCandidates: [Task] {
+        let graph = Dictionary(uniqueKeysWithValues: allTasks.map { ($0.id, $0.dependsOn.map(\.id)) })
+        return allTasks.filter { cand in
+            guard cand.id != task?.id else { return false }
+            if let id = task?.id,
+               TaskDependency.wouldCreateCycle(taskID: id, newBlockerID: cand.id, dependsOn: graph) {
+                return false
+            }
+            return true
+        }
+    }
+
+    private var dependsSection: some View {
+        GroupBox("Blocked by") {
+            FuzzyPickerField(
+                allItems: blockerCandidates,
+                selected: $selectedBlockers,
+                label: \.summary,
+                chipColor: AppTheme.destructive,
+                tapArea: true,
+                emptyLabel: "None — tap to add prerequisite tasks"
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    // Read-only: the tasks that depend on this one (inverse of their "Blocked by").
+    @ViewBuilder private var blockingSection: some View {
+        if let t = task, !t.blocking.isEmpty {
+            GroupBox("Blocking") {
+                FlowLayout(spacing: 6) {
+                    ForEach(t.blocking) { blocked in
+                        Chip(label: blocked.summary,
+                             color: blocked.isOpen ? AppTheme.destructive : AppTheme.mutedText)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
     private var dueSection: some View {
         GroupBox("Due") {
             VStack(alignment: .leading, spacing: 6) {
@@ -357,6 +403,7 @@ struct TaskEditorSheet: View {
         scheduledDate = t.scheduledAt
         dueDate = t.dueAt
         priority = t.priority
+        selectedBlockers = t.dependsOn
         tagsText = t.tags.joined(separator: ", ")
     }
 
@@ -399,6 +446,7 @@ struct TaskEditorSheet: View {
             t.scheduledAt = scheduledDate
             t.dueAt = dueDate
             t.priorityRaw = priority.rawValue
+            t.dependsOn = selectedBlockers
             t.project = selectedProject
             t.assignee = selectedAssignee
             t.tags = tags
@@ -409,6 +457,7 @@ struct TaskEditorSheet: View {
             newTask.scheduledAt = scheduledDate
             newTask.dueAt = dueDate
             newTask.priorityRaw = priority.rawValue
+            newTask.dependsOn = selectedBlockers
             newTask.project = selectedProject
             newTask.assignee = selectedAssignee
             newTask.tags = tags

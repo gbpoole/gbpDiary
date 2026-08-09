@@ -101,7 +101,8 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
 @Observable final class TasksFilterState {
     var activeFilterIds: Set<String> = []
     var dateRange: ClosedRange<Date>? = nil
-    var sortMode: TaskSortMode = .urgency
+    var searchText: String = ""
+    var sortOrder: [KeyPathComparator<TaskRow>] = [KeyPathComparator(\.urgency, order: .reverse)]
 }
 
 @Observable final class WorkspaceTabState: Identifiable {

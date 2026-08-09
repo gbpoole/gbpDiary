@@ -109,6 +109,9 @@ Task
   priority : TaskPriority     (none/low/medium/high; computed over `priorityRaw`; `weight` feeds urgency)
   dueAt    : Date?            (deadline — distinct from `scheduledAt` which is when you plan to work it)
   isOverdue/isDueToday       (computed via pure `TaskFlags`)
+  dependsOn→ [Task]          (prerequisites; self many-to-many, nullify)
+  blocking → [Task]          (inverse of dependsOn — tasks waiting on this one)
+  isBlocked/isBlocking       (computed; blocked while any prerequisite is still open → auto-unblocks)
   assignee → Person?
   project  → Project?
   originDay→ DayRecord?      (where captured; not the day-view link)
@@ -343,6 +346,13 @@ detail sheet with an Edit button:
 ### Querying
 
 Prefer `@Query` at the top of a view for simple sorts/filters. For dynamic filters (e.g., date changes as user navigates), use `@Query(sort:)` to fetch all and filter in a computed property. Avoid `#Predicate` with enum comparisons until verified — in-memory filtering is fast enough for personal data volumes.
+
+**Tasks page (`TasksView`) specifics.** Beyond the shared FilterBar it adds: a **fuzzy find** search box
+(`FuzzyMatch.matches` over summary/project/assignee/tags), **column-header sorting** (macOS `Table`
+`sortOrder: [KeyPathComparator<TaskRow>]` — `TaskRow` is a sortable snapshot precomputing urgency;
+default = urgency desc), and **multi-select bulk actions** (`Table(selection:)` + a bulk bar / context
+menu: Complete / Started / To do / Cancel / Delete). Search + sort order live on the per-tab
+`TasksFilterState`.
 
 **List-page filtering.** Every list page (`TasksView`, `ProjectsView`, `PeopleView`, `MinutesListView`, `DocumentsListView`) filters through the shared `FilterBar` + `FilterEngine` pattern (`Views/FilterBar.swift`), reusing the FuzzyPickerField filter language. The page builds `[PickerFilter<Model>]` from its queried data (each filter has an `id`, `label`, `chipColor`, `group`, and a `test` closure), holds `@State activeFilterIds: Set<String>`, renders `FilterBar(filters:activeFilterIds:…)`, and computes its filtered list via `FilterEngine.apply(_:filters:activeIds:)`. Semantics: **OR within a group, AND across groups**; a group with no active filter is ignored; empty selection returns everything. `FilterBar` shows one neutral dropdown per group with the chosen values as removable chips, plus "Clear all filters" (`onClearAll`) and an optional `extraRows` slot for non-discrete filters (e.g. `DateRangeFilterRow` on Tasks). `ProjectsView` seeds `activeFilterIds = ["status.active"]` to preserve its hide-completed default. `InstitutionsView` and `TagsView` have no discrete filter dimension and use no `FilterBar`.
 
@@ -665,6 +675,8 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Diary day rollover: `DiaryDayRollover.rolledForwardDate` returns today's start-of-day only when `tracksToday` and the shown day is in the past; nil when not tracking, same day, or a future day (so deliberate navigation to another day is preserved) | Diary navigation / day rollover | `gbpDiaryTests/Domain/DiaryDayRolloverTests.swift` | `tracksToday_pastDay_rollsForwardToToday`, `tracksToday_sameDay_staysPut`, `notTracking_pastDay_staysPut`, `tracksToday_futureDay_staysPut` |
 | Task priority/due flags: `TaskPriority` weights (H>M>L>none) + `short` H/M/L; `TaskFlags.isOverdue(dueAt:isOpen:)` true only for an open task due before start-of-today; `TaskFlags.isDueToday(dueAt:)` true when due falls on today | Tasks / due+priority | `gbpDiaryTests/Domain/TaskFlagsTests.swift` | `isOverdue_pastDueAndOpen`, `isDueToday_sameCalendarDay`, `priority_weightsAndShort` |
 | Task urgency: `TaskUrgency.score(UrgencyInputs)` sums coefficient-weighted factors (due ramp, priority, active, scheduled, age, tags, project, blocked−, blocking+, waiting−) but returns **0 when not open** (completed/cancelled aren't ranked); `dueUrgency` ramps 0.2→1.0 (1.0 once ≥7d overdue, 0.2 once >14d out); `effectiveDue` uses a pending follow-up's date (earliest of due/follow-up) so follow-ups surface as they come due; the Tasks table default-sorts by score | Tasks / urgency auto-sort | `gbpDiaryTests/Domain/TaskUrgencyTests.swift` | `dueUrgency_rampsAndClamps`, `priority_increasesUrgency`, `blocked_penalises_blocking_boosts`, `activeAndScheduled_addUrgency`, `waiting_penalises`, `notOpen_scoresZero`, `effectiveDue_usesPendingFollowUpAndEarliest`, `ordering_overdueHighPriorityFloatsAbovePlain` |
+| Fuzzy search: `FuzzyMatch.matches(query:in:)` is true iff the query characters appear in order (case-insensitive) in the text; empty query matches all | Tasks / fuzzy find | `gbpDiaryTests/Domain/FuzzyMatchTests.swift` | `matches_inOrderSubsequence`, `matches_caseInsensitiveAndEmpty` |
+| Task dependencies: `TaskDependency.wouldCreateCycle(taskID:newBlockerID:dependsOn:)` guards "Blocked by" edits — true for a self-edge or when the new blocker already (transitively) depends on the task; `Task.isBlocked` = any prerequisite still open (auto-unblocks when blockers complete); urgency penalises blocked / boosts blocking | Tasks / dependencies | `gbpDiaryTests/Domain/TaskDependencyTests.swift` | `wouldCreateCycle_selfAndDirect`, `wouldCreateCycle_transitive`, `wouldCreateCycle_falseForAcyclic` |
 | `FuzzyPickerSelection.toggling` adds an item (matched by `id`) when absent and removes it when present; single-select (`maxSelections == 1`) replaces the whole selection, multi-select appends only while under the cap (else unchanged). Shared by item taps and create-on-the-fly (`onCreateItem`) so creating a new item honors single- vs multi-select | Picker selection semantics | `gbpDiaryTests/Views/FuzzyPickerSelectionTests.swift` | `toggling_multiSelect_addsWhenAbsent`, `toggling_multiSelect_removesWhenPresent`, `toggling_multiSelect_atCap_leavesUnchanged`, `toggling_singleSelect_replacesExistingSelection`, `toggling_singleSelect_fromEmpty_selectsItem`, `toggling_singleSelect_removesWhenSameItemPresent` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
