@@ -12,6 +12,7 @@ struct TaskRow: Identifiable {
     let statusRank: Int
     let priorityRank: Int
     let dueKey: Date          // distantFuture when no due date → sorts last ascending
+    let scheduledKey: Date    // distantFuture when unscheduled → sorts last ascending
     let projectKey: String
     let assigneeKey: String
     let createdAt: Date
@@ -24,6 +25,7 @@ struct TaskRow: Identifiable {
         self.statusRank = Self.statusOrder(task.status)
         self.priorityRank = task.priority.rank
         self.dueKey = task.dueAt ?? .distantFuture
+        self.scheduledKey = task.scheduledAt ?? .distantFuture
         self.projectKey = task.project?.name.lowercased() ?? ""
         self.assigneeKey = task.assignee?.name.lowercased() ?? ""
         self.createdAt = task.createdAt

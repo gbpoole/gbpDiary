@@ -59,24 +59,32 @@ struct TasksToolbar: View {
                 }
             }
 
-            if isActive {
-                FlowLayout(spacing: 5) {
-                    Text("Active filters")
-                        .font(.caption.weight(.semibold)).foregroundStyle(AppTheme.mutedText)
-                    ForEach(activeChips) { f in
-                        PickerRemovableChip(label: f.label, color: f.chipColor ?? AppTheme.accent) {
-                            filter.activeFilterIds.remove(f.id)
+            HStack(alignment: .center, spacing: 8) {
+                Text("Active filters")
+                    .font(.caption.weight(.semibold)).foregroundStyle(AppTheme.mutedText)
+                if isActive {
+                    FlowLayout(spacing: 5) {
+                        ForEach(activeChips) { f in
+                            PickerRemovableChip(label: f.label, color: f.chipColor ?? AppTheme.accent) {
+                                filter.activeFilterIds.remove(f.id)
+                            }
                         }
-                    }
-                    if let range = filter.dateRange {
-                        PickerRemovableChip(label: dateChipLabel(range), color: AppTheme.accent) {
-                            filter.dateRange = nil; filter.datePreset = nil
+                        if let range = filter.dateRange {
+                            PickerRemovableChip(label: dateChipLabel(range), color: AppTheme.accent) {
+                                filter.dateRange = nil; filter.datePreset = nil
+                            }
                         }
+                        Button("Clear all") { clearAll() }
+                            .buttonStyle(.plain).font(.caption).foregroundStyle(AppTheme.accent)
+                            .padding(.vertical, 3)   // match chip height so it aligns in the flow row
                     }
-                    Button("Clear all") { clearAll() }
-                        .buttonStyle(.plain).font(.caption).foregroundStyle(AppTheme.accent)
+                } else {
+                    Text("none")
+                        .font(.caption).foregroundStyle(AppTheme.mutedText.opacity(0.6))
                 }
+                Spacer(minLength: 0)
             }
+            .frame(minHeight: 22)   // keep a constant height whether or not chips are present
         }
         .padding(.horizontal).padding(.vertical, 8)
         .background(AppTheme.sidebarBackground)
@@ -85,7 +93,7 @@ struct TasksToolbar: View {
     private var searchField: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass").font(.caption).foregroundStyle(.secondary)
-            TextField("Find tasks…", text: $filter.searchText)
+            TextField("Search tasks…", text: $filter.searchText)
                 .textFieldStyle(.plain).font(.callout)
             if !filter.searchText.isEmpty {
                 Button { filter.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }

@@ -99,7 +99,8 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
 // Per-tab Tasks-page filter state, so filters are remembered when you navigate away and back, and two
 // tabs can hold different Tasks filters at once.
 @Observable final class TasksFilterState {
-    var activeFilterIds: Set<String> = []
+    // New Tasks tabs default to showing only incomplete tasks (mirrors ProjectsView's hide-completed).
+    var activeFilterIds: Set<String> = ["preset.incomplete"]
     var dateRange: ClosedRange<Date>? = nil
     // Which quick date chip (Today/Week/Month) is lit, if any. Setting one also sets `dateRange`;
     // a custom range from the Filters popover clears this back to nil.

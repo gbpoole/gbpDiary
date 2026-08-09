@@ -13,6 +13,8 @@ struct TasksView: View {
     @State private var editingTask: Task? = nil
     @State private var pendingStatusIds: Set<UUID> = []
     @State private var selection: Set<UUID> = []
+    // Tasks selected but hidden by the current filter — restored to `selection` if the filter reverts.
+    @State private var stashedSelection: Set<UUID> = []
     @State private var confirmingBulkDelete = false
     #if os(macOS)
     // Native double-click-to-open (a SwiftUI tap gesture on a Table cell breaks native selection).
@@ -97,14 +99,18 @@ struct TasksView: View {
 
     // MARK: - Bulk actions
 
-    private func bulkComplete() { for t in selectedTasks { t.markCompleted() }; selection.removeAll() }
-    private func bulkCancel()   { for t in selectedTasks { t.markCancelled() }; selection.removeAll() }
+    // Clears the active selection and the stashed (filtered-out) set — acting on the selection ends
+    // the retain-and-restore cycle so a later filter change won't resurrect it.
+    private func clearSelection() { selection.removeAll(); stashedSelection.removeAll() }
+
+    private func bulkComplete() { for t in selectedTasks { t.markCompleted() }; clearSelection() }
+    private func bulkCancel()   { for t in selectedTasks { t.markCancelled() }; clearSelection() }
     private func bulkStarted()  {
         for t in selectedTasks {
             if t.status == .completed { t.unmarkCompleted() } else if t.status == .cancelled { t.unmarkCancelled() }
             t.followUpAt = nil; t.status = .started; t.updatedAt = Date()
         }
-        selection.removeAll()
+        clearSelection()
     }
     private func bulkTodo() {
         for t in selectedTasks {
@@ -115,11 +121,11 @@ struct TasksView: View {
             default:               t.status = .todo; t.updatedAt = Date()
             }
         }
-        selection.removeAll()
+        clearSelection()
     }
     private func bulkDelete() {
         for t in selectedTasks { modelContext.delete(t) }
-        selection.removeAll()
+        clearSelection()
     }
 
     // Opens the double-clicked row's task. `rows` is the sorted display order, matching NSTableView.
@@ -146,6 +152,15 @@ struct TasksView: View {
         } message: { Text("This permanently deletes the selected task\(selection.count == 1 ? "" : "s").") }
         .onChange(of: filterState.activeFilterIds) { pendingStatusIds.removeAll() }
         .onChange(of: filterState.dateRange) { pendingStatusIds.removeAll() }
+        // Keep the selection in sync with filtering: drop now-hidden tasks (restorable later), restore
+        // reappearing ones. Keyed on the visible id set, so pure re-sorts and manual selection changes
+        // (same ids) don't trigger it.
+        .onChange(of: Set(rows.map(\.id))) { _, visible in
+            let result = TaskSelectionReconcile.reconcile(
+                selection: selection, stashed: stashedSelection, visible: visible)
+            if result.selection != selection { selection = result.selection }
+            if result.stashed != stashedSelection { stashedSelection = result.stashed }
+        }
     }
 
     private var bulkBar: some View {
@@ -159,7 +174,7 @@ struct TasksView: View {
                 Button("To do") { bulkTodo() }
                 Button("Cancel") { bulkCancel() }
                 Button("Delete", role: .destructive) { confirmingBulkDelete = true }
-                Button("Clear") { selection.removeAll() }
+                Button("Clear") { clearSelection() }
             }
             .disabled(selection.isEmpty)
         }
@@ -177,6 +192,16 @@ struct TasksView: View {
                         Image(systemName: "lock.fill")
                             .font(.system(size: 10)).foregroundStyle(AppTheme.destructive)
                             .help("Blocked by an unfinished task")
+                    }
+                    if row.task.isWaiting {
+                        Image(systemName: "clock.badge.questionmark")
+                            .font(.system(size: 10)).foregroundStyle(AppTheme.mutedText)
+                            .help("Waiting until a later date")
+                    }
+                    if row.task.recurrenceRule != nil {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10)).foregroundStyle(AppTheme.mutedText)
+                            .help("Repeats")
                     }
                     Text(row.task.summary)
                         .lineLimit(1)
@@ -201,13 +226,6 @@ struct TasksView: View {
                 }
             }
             .width(min: 40, ideal: 46)
-            TableColumn("Due", value: \.dueKey) { row in
-                if let due = row.task.dueAt {
-                    Text(due, format: .dateTime.month(.abbreviated).day())
-                        .foregroundStyle(row.task.isOverdue ? AppTheme.destructive : AppTheme.mutedText)
-                }
-            }
-            .width(min: 60, ideal: 80)
             TableColumn("Urg", value: \.urgency) { row in
                 Text(String(format: "%.1f", row.urgency))
                     .font(AppTheme.bodyFont(size: 12)).foregroundStyle(AppTheme.mutedText).monospacedDigit()
@@ -222,6 +240,20 @@ struct TasksView: View {
                     .foregroundStyle(AppTheme.mutedText)
             }
             .width(min: 80, ideal: 100)
+            TableColumn("Due", value: \.dueKey) { row in
+                if let due = row.task.dueAt {
+                    Text(due, format: .dateTime.month(.abbreviated).day())
+                        .foregroundStyle(row.task.isOverdue ? AppTheme.destructive : AppTheme.mutedText)
+                }
+            }
+            .width(min: 60, ideal: 80)
+            TableColumn("Scheduled", value: \.scheduledKey) { row in
+                if let scheduled = row.task.scheduledAt {
+                    Text(scheduled, format: .dateTime.month(.abbreviated).day())
+                        .foregroundStyle(AppTheme.mutedText)
+                }
+            }
+            .width(min: 60, ideal: 80)
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
             if ids.count == 1, let t = allTasks.first(where: { $0.id == ids.first }) {
