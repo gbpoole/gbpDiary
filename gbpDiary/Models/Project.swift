@@ -37,6 +37,26 @@ import SwiftData
     @Relationship(deleteRule: .nullify, inverse: \Note.project) var notes: [Note]
     @Relationship(deleteRule: .nullify, inverse: \FocusBlock.project) var focusBlocks: [FocusBlock]
 
+    // Comparable sort keys for the Projects table columns (see the List/Table page style in CLAUDE.md).
+    // `teamKey` also backs the Dev/Sci Team cell display so ordering and text stay in sync.
+    var nameKey: String { name.lowercased() }
+    var streamKey: String { (stream ?? "").lowercased() }
+    var subprojectCount: Int { subprojects.count }
+    var lastMeetingAt: Date { meetings.map(\.meetingAt).max() ?? .distantPast }
+    var devTeamKey: String { Project.teamKey(lead: devLead, team: devTeam) }
+    var sciTeamKey: String { Project.teamKey(lead: sciLead, team: sciTeam) }
+
+    static func teamKey(lead: Person?, team: [Person]) -> String {
+        teamNames(lead: lead, team: team).joined(separator: ", ").lowercased()
+    }
+
+    // Lead first, then the remaining members alphabetically — shared by the cell text and the sort key.
+    static func teamNames(lead: Person?, team: [Person]) -> [String] {
+        let leadNames = lead.map { [$0.name] } ?? []
+        let others = team.filter { $0.id != lead?.id }.map(\.name).sorted()
+        return leadNames + others
+    }
+
     init(name: String, id: UUID = UUID()) {
         self.id = id
         self.name = name

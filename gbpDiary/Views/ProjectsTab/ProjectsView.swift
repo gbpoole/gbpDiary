@@ -9,6 +9,12 @@ struct ProjectsView: View {
     @State private var showingAddProject = false
     // Default to showing only active projects (matches the previous hide-completed default).
     @State private var activeFilterIds: Set<String> = ["status.active"]
+    @State private var searchText = ""
+    @State private var sortOrder = [KeyPathComparator(\Project.nameKey)]
+    // @Model exposes `id: UUID` (its @Attribute), so the Table's selection is keyed by UUID.
+    @State private var selection: Set<UUID> = []
+    @State private var stashedSelection: Set<UUID> = []
+    @State private var confirmingBulkDelete = false
 
     private var projectFilters: [PickerFilter<Project>] {
         let statusGroup = [
@@ -24,17 +30,44 @@ struct ProjectsView: View {
         return statusGroup + streamGroup
     }
 
-    private var filteredProjects: [Project] {
-        FilterEngine.apply(projects, filters: projectFilters, activeIds: activeFilterIds)
+    private var rows: [Project] {
+        let matched = FilterEngine.apply(projects, filters: projectFilters, activeIds: activeFilterIds)
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let searched = query.isEmpty ? matched : matched.filter { FuzzyMatch.matches(query, in: searchHaystack($0)) }
+        return searched.sorted(using: sortOrder)
+    }
+
+    private func searchHaystack(_ p: Project) -> String {
+        [p.name, p.stream, p.devTeamKey, p.sciTeamKey, p.tags.joined(separator: " ")]
+            .compactMap { $0 }.joined(separator: " ")
+    }
+
+    private var selectedProjects: [Project] {
+        projects.filter { selection.contains($0.id) }
+    }
+
+    private func clearSelection() { selection.removeAll(); stashedSelection.removeAll() }
+
+    private func bulkDelete() {
+        for p in selectedProjects {
+            workspace.closeEntity(p.persistentModelID)
+            modelContext.delete(p)
+        }
+        clearSelection()
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(
+            ListToolbar(
+                searchText: $searchText,
+                searchPrompt: "Search projects…",
                 filters: projectFilters,
                 activeFilterIds: $activeFilterIds,
                 onClearAll: { activeFilterIds = [] }
             )
+            BulkActionBar(count: selection.count, onClear: { clearSelection() }) {
+                Button("Delete", role: .destructive) { confirmingBulkDelete = true }
+            }
             Divider()
             projectTable
         }
@@ -47,66 +80,74 @@ struct ProjectsView: View {
             }
         }
         .sheet(isPresented: $showingAddProject) { ProjectEditorSheet(project: nil) }
+        .alert("Delete \(selection.count) project\(selection.count == 1 ? "" : "s")?", isPresented: $confirmingBulkDelete) {
+            Button("Delete", role: .destructive) { bulkDelete() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This permanently deletes the selected project\(selection.count == 1 ? "" : "s"). Related items are unlinked, not deleted.") }
+        .onChange(of: Set(rows.map(\.id))) { _, visible in
+            let result = TableSelectionReconcile.reconcile(selection: selection, stashed: stashedSelection, visible: visible)
+            if result.selection != selection { selection = result.selection }
+            if result.stashed != stashedSelection { stashedSelection = result.stashed }
+        }
     }
+
+    private func open(_ project: Project) { workspace.focusOrOpen(.project(project.persistentModelID)) }
 
     #if os(macOS)
     private var projectTable: some View {
-        Table(filteredProjects) {
-            TableColumn("Name") { project in
+        Table(rows, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("Name", value: \.nameKey) { project in
                 Text(project.name)
                     .lineLimit(1)
                     .font(AppTheme.bodyFont(size: 13))
                     .foregroundStyle(AppTheme.text)
-                    .onTapGesture { workspace.focusOrOpen(.project(project.persistentModelID)) }
             }
-            TableColumn("Stream") { project in
+            .width(min: 140, ideal: 240)
+            TableColumn("Stream", value: \.streamKey) { project in
                 Text(project.stream ?? "")
                     .foregroundStyle(AppTheme.mutedText)
                     .lineLimit(1)
             }
-            .width(90)
-            TableColumn("Dev Team") { project in
-                let lead = project.devLead.map { [$0.name] } ?? []
-                let others = project.devTeam.filter { $0.id != project.devLead?.id }.map(\.name).sorted()
-                Text((lead + others).joined(separator: ", "))
+            .width(min: 80, ideal: 100)
+            TableColumn("Dev Team", value: \.devTeamKey) { project in
+                Text(Project.teamNames(lead: project.devLead, team: project.devTeam).joined(separator: ", "))
                     .foregroundStyle(AppTheme.person)
                     .lineLimit(1)
             }
-            .width(140)
-            TableColumn("Sci Team") { project in
-                let lead = project.sciLead.map { [$0.name] } ?? []
-                let others = project.sciTeam.filter { $0.id != project.sciLead?.id }.map(\.name).sorted()
-                Text((lead + others).joined(separator: ", "))
+            .width(min: 100, ideal: 140)
+            TableColumn("Sci Team", value: \.sciTeamKey) { project in
+                Text(Project.teamNames(lead: project.sciLead, team: project.sciTeam).joined(separator: ", "))
                     .foregroundStyle(AppTheme.person)
                     .lineLimit(1)
             }
-            .width(140)
-            TableColumn("Subprojects") { project in
+            .width(min: 100, ideal: 140)
+            TableColumn("Subprojects", value: \.subprojectCount) { project in
                 Text("\(project.subprojects.count)")
                     .foregroundStyle(AppTheme.mutedText)
             }
-            .width(90)
-            TableColumn("Last Meeting") { project in
+            .width(min: 70, ideal: 90)
+            TableColumn("Last Meeting", value: \.lastMeetingAt) { project in
                 if let latest = project.meetings.max(by: { $0.meetingAt < $1.meetingAt }) {
                     Text(latest.meetingAt, format: .dateTime.day().month(.abbreviated).year())
                         .foregroundStyle(AppTheme.mutedText)
                 }
             }
-            .width(110)
+            .width(min: 90, ideal: 110)
         }
         .scrollContentBackground(.hidden)
         .background(AppTheme.background)
+        .onTableRowDoubleClick { open(rows[$0]) }
     }
     #else
     private var projectTable: some View {
-        List(filteredProjects) { project in
+        List(rows) { project in
             VStack(alignment: .leading, spacing: 2) {
                 Text(project.name)
                 if let stream = project.stream {
                     Text(stream).font(.caption).foregroundStyle(.secondary)
                 }
             }
-            .onTapGesture { selectedProject = project }
+            .onTapGesture { open(project) }
         }
     }
     #endif
