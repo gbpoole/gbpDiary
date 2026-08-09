@@ -47,12 +47,27 @@ struct TasksView: View {
 
     private var filteredTasks: [Task] {
         let matched = Set(FilterEngine.apply(allTasks, filters: taskFilters, activeIds: filterState.activeFilterIds).map(\.id))
-        return allTasks.filter { task in
+        let base = allTasks.filter { task in
             if pendingStatusIds.contains(task.id) { return true }
             guard matched.contains(task.id) else { return false }
             guard let range = filterState.dateRange else { return true }
             let completedInRange = task.completedAt.map { range.contains($0) } ?? false
             return completedInRange || range.contains(task.createdAt)
+        }
+        return sorted(base)
+    }
+
+    private func sorted(_ tasks: [Task]) -> [Task] {
+        switch filterState.sortMode {
+        case .urgency:
+            return tasks
+                .map { ($0, TaskUrgency.score(for: $0)) }
+                .sorted { $0.1 > $1.1 }
+                .map(\.0)
+        case .created:
+            return tasks.sorted { $0.createdAt > $1.createdAt }
+        case .due:
+            return tasks.sorted { ($0.dueAt ?? .distantFuture) < ($1.dueAt ?? .distantFuture) }
         }
     }
 
@@ -66,6 +81,15 @@ struct TasksView: View {
                 extraRows: AnyView(DateRangeFilterRow(range: $filter.dateRange)),
                 onClearAll: { filter.activeFilterIds = []; filter.dateRange = nil }
             )
+            HStack(spacing: 6) {
+                Spacer()
+                Text("Sort").font(.caption).foregroundStyle(.secondary)
+                Picker("", selection: $filter.sortMode) {
+                    ForEach(TaskSortMode.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .labelsHidden().fixedSize()
+            }
+            .padding(.horizontal).padding(.bottom, 4)
             Divider()
             taskTable
         }
@@ -93,6 +117,13 @@ struct TasksView: View {
                 }
             }
             .width(130)
+            TableColumn("Urg") { task in
+                Text(String(format: "%.1f", TaskUrgency.score(for: task)))
+                    .font(AppTheme.bodyFont(size: 12))
+                    .foregroundStyle(AppTheme.mutedText)
+                    .monospacedDigit()
+            }
+            .width(46)
             TableColumn("Pri") { task in
                 if task.priority != .none {
                     Chip(label: task.priority.short, color: priorityColor(task.priority))
