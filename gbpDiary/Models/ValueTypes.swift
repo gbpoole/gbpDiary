@@ -54,6 +54,33 @@ enum TaskPriority: String, Codable, CaseIterable {
     }
 }
 
+// Quick "created within" windows for the Tasks toolbar date presets (rolling, ending now).
+enum DateWindow: String, CaseIterable {
+    case today
+    case week
+    case month
+
+    var label: String {
+        switch self {
+        case .today: "Today"
+        case .week:  "Week"
+        case .month: "Month"
+        }
+    }
+
+    /// `[start, now]` — today = since start-of-today; week = last 7 days; month = last 30 days.
+    func range(now: Date = Date(), calendar: Calendar = .current) -> ClosedRange<Date> {
+        let startOfToday = calendar.startOfDay(for: now)
+        let start: Date
+        switch self {
+        case .today: start = startOfToday
+        case .week:  start = calendar.date(byAdding: .day, value: -6, to: startOfToday) ?? startOfToday
+        case .month: start = calendar.date(byAdding: .day, value: -29, to: startOfToday) ?? startOfToday
+        }
+        return start...now
+    }
+}
+
 enum DurationUnit: String, Codable {
     case h, d, w
 

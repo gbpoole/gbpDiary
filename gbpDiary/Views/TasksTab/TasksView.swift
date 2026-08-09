@@ -14,6 +14,11 @@ struct TasksView: View {
     @State private var pendingStatusIds: Set<UUID> = []
     @State private var selection: Set<UUID> = []
     @State private var confirmingBulkDelete = false
+    #if os(macOS)
+    // Native double-click-to-open (a SwiftUI tap gesture on a Table cell breaks native selection).
+    @State private var doubleClickMonitor = TableDoubleClickMonitor()
+    @State private var pendingDoubleClickRow: Int? = nil
+    #endif
 
     private var taskFilters: [PickerFilter<Task>] {
         let status = TaskStatus.allCases.map { s in
@@ -28,6 +33,15 @@ struct TasksView: View {
         let source = [
             PickerFilter<Task>(id: "source.email", label: "From email", chipColor: AppTheme.person, group: "Source") { $0.originEmail != nil }
         ]
+        let state = [
+            PickerFilter<Task>(id: "preset.incomplete", label: "Incomplete", chipColor: AppTheme.accent, group: "State") { $0.isOpen }
+        ]
+        // "Mine"/"Others" live in the Assignee group so they OR with the per-person assignee filters.
+        let me = AppSettingsStore.myPersonID
+        let mine = [
+            PickerFilter<Task>(id: "preset.mine", label: "Mine", chipColor: AppTheme.person, group: "Assignee") { me != nil && $0.assignee?.id == me },
+            PickerFilter<Task>(id: "preset.others", label: "Others", chipColor: AppTheme.person, group: "Assignee") { $0.assignee != nil && $0.assignee?.id != me }
+        ]
         let priorities = TaskPriority.allCases.filter { $0 != .none }.map { p in
             PickerFilter<Task>(id: "priority.\(p.rawValue)", label: p.displayName, chipColor: priorityColor(p), group: "Priority") { $0.priority == p }
         }
@@ -39,7 +53,7 @@ struct TasksView: View {
             PickerFilter<Task>(id: "flag.unblocked", label: "Unblocked", chipColor: AppTheme.completed, group: "Flags") { $0.isOpen && !$0.isBlocked },
             PickerFilter<Task>(id: "flag.waiting", label: "Waiting", chipColor: AppTheme.mutedText, group: "Flags") { $0.isWaiting }
         ]
-        return status + priorities + flags + projects + assignees + source
+        return state + status + priorities + flags + projects + assignees + mine + source
     }
 
     private func priorityColor(_ p: TaskPriority) -> Color {
@@ -59,9 +73,8 @@ struct TasksView: View {
             if pendingStatusIds.contains(task.id) { return true }
             guard matched.contains(task.id) else { return false }
             if task.isWaiting && !showWaiting { return false }   // deferred tasks hidden until revealed
-            if let range = filterState.dateRange {
-                let completedInRange = task.completedAt.map { range.contains($0) } ?? false
-                guard completedInRange || range.contains(task.createdAt) else { return false }
+            if let range = filterState.dateRange, !range.contains(task.createdAt) {
+                return false   // date presets/range match the captured (created) date
             }
             return query.isEmpty || FuzzyMatch.matches(query, in: searchHaystack(task))
         }
@@ -109,26 +122,16 @@ struct TasksView: View {
         selection.removeAll()
     }
 
+    // Opens the double-clicked row's task. `rows` is the sorted display order, matching NSTableView.
+    private func openRow(_ index: Int) {
+        guard rows.indices.contains(index) else { return }
+        editingTask = rows[index].task
+    }
+
     var body: some View {
         @Bindable var filter = filterState
         return VStack(spacing: 0) {
-            FilterBar(
-                filters: taskFilters,
-                activeFilterIds: $filter.activeFilterIds,
-                hasExtraActiveFilter: filter.dateRange != nil,
-                extraRows: AnyView(DateRangeFilterRow(range: $filter.dateRange)),
-                onClearAll: { filter.activeFilterIds = []; filter.dateRange = nil }
-            )
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").font(.caption).foregroundStyle(.secondary)
-                TextField("Fuzzy find tasks…", text: $filter.searchText)
-                    .textFieldStyle(.plain)
-                if !filter.searchText.isEmpty {
-                    Button { filter.searchText = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).foregroundStyle(.secondary)
-                }
-            }
-            .padding(.horizontal).padding(.vertical, 6)
+            TasksToolbar(filters: taskFilters, filter: filter)
             bulkBar
             Divider()
             taskTable
@@ -180,8 +183,6 @@ struct TasksView: View {
                         .font(AppTheme.bodyFont(size: 13))
                         .foregroundStyle(pendingStatusIds.contains(row.id) ? AppTheme.mutedText : AppTheme.text)
                 }
-                .contentShape(Rectangle())
-                .onTapGesture { editingTask = row.task }
             }
             .width(min: 160, ideal: 300)
             TableColumn("Project", value: \.projectKey) { row in
@@ -234,6 +235,14 @@ struct TasksView: View {
         }
         .scrollContentBackground(.hidden)
         .background(AppTheme.background)
+        .onAppear {
+            doubleClickMonitor.onRow = { row in pendingDoubleClickRow = row }
+            doubleClickMonitor.start()
+        }
+        .onDisappear { doubleClickMonitor.stop() }
+        .onChange(of: pendingDoubleClickRow) { _, new in
+            if let row = new { openRow(row); pendingDoubleClickRow = nil }
+        }
         .animation(.easeInOut(duration: 0.25), value: rows.map(\.id))
     }
     #else

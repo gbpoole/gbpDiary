@@ -101,6 +101,9 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
 @Observable final class TasksFilterState {
     var activeFilterIds: Set<String> = []
     var dateRange: ClosedRange<Date>? = nil
+    // Which quick date chip (Today/Week/Month) is lit, if any. Setting one also sets `dateRange`;
+    // a custom range from the Filters popover clears this back to nil.
+    var datePreset: DateWindow? = nil
     var searchText: String = ""
     var sortOrder: [KeyPathComparator<TaskRow>] = [KeyPathComparator(\.urgency, order: .reverse)]
 }
