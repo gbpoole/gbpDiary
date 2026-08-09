@@ -36,7 +36,8 @@ struct TasksView: View {
             PickerFilter<Task>(id: "flag.dueToday", label: "Due today", chipColor: AppTheme.followUp, group: "Flags") { $0.isDueToday },
             PickerFilter<Task>(id: "flag.hasDue", label: "Has due", chipColor: AppTheme.mutedText, group: "Flags") { $0.dueAt != nil },
             PickerFilter<Task>(id: "flag.blocked", label: "Blocked", chipColor: AppTheme.destructive, group: "Flags") { $0.isBlocked },
-            PickerFilter<Task>(id: "flag.unblocked", label: "Unblocked", chipColor: AppTheme.completed, group: "Flags") { $0.isOpen && !$0.isBlocked }
+            PickerFilter<Task>(id: "flag.unblocked", label: "Unblocked", chipColor: AppTheme.completed, group: "Flags") { $0.isOpen && !$0.isBlocked },
+            PickerFilter<Task>(id: "flag.waiting", label: "Waiting", chipColor: AppTheme.mutedText, group: "Flags") { $0.isWaiting }
         ]
         return status + priorities + flags + projects + assignees + source
     }
@@ -53,9 +54,11 @@ struct TasksView: View {
     private var filteredTasks: [Task] {
         let matched = Set(FilterEngine.apply(allTasks, filters: taskFilters, activeIds: filterState.activeFilterIds).map(\.id))
         let query = filterState.searchText.trimmingCharacters(in: .whitespaces)
+        let showWaiting = filterState.activeFilterIds.contains("flag.waiting")
         return allTasks.filter { task in
             if pendingStatusIds.contains(task.id) { return true }
             guard matched.contains(task.id) else { return false }
+            if task.isWaiting && !showWaiting { return false }   // deferred tasks hidden until revealed
             if let range = filterState.dateRange {
                 let completedInRange = task.completedAt.map { range.contains($0) } ?? false
                 guard completedInRange || range.contains(task.createdAt) else { return false }

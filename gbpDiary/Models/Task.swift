@@ -65,6 +65,12 @@ import SwiftData
     @Relationship(deleteRule: .nullify) var dependsOn: [Task] = []
     @Relationship(deleteRule: .nullify, inverse: \Task.dependsOn) var blocking: [Task] = []
 
+    // Deferral + recurrence (all defaulted for migration).
+    var waitUntil: Date?               // hidden from lists until this date
+    var until: Date?                   // auto-cancelled once past this date
+    var recurrenceRule: String?        // e.g. "1w"/"2mo" — completing spawns the next instance
+    var recurrenceParentID: UUID?      // lineage: the task this instance was spawned from
+
     init(
         summary: String,
         id: UUID = UUID(),
@@ -114,6 +120,9 @@ extension Task {
     var isBlocked: Bool { dependsOn.contains(where: \.isOpen) }
     /// This task blocks another still-open task.
     var isBlocking: Bool { blocking.contains(where: \.isOpen) }
+
+    /// Deferred: hidden from lists until `waitUntil`.
+    var isWaiting: Bool { TaskFlags.isWaiting(waitUntil: waitUntil) }
 
     func markCompleted() {
         let now = Date()

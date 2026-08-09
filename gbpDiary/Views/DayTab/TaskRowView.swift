@@ -131,6 +131,16 @@ struct TaskRowView: View {
                     .font(.caption2).foregroundStyle(AppTheme.destructive)
                     .help("Blocked by an unfinished task")
             }
+            if task.recurrenceRule != nil {
+                Image(systemName: "arrow.clockwise")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .help("Repeats")
+            }
+            if task.isWaiting {
+                Image(systemName: "clock.badge.questionmark")
+                    .font(.caption2).foregroundStyle(.secondary)
+                    .help("Waiting until a later date")
+            }
             if task.priority != .none {
                 Chip(label: task.priority.short, color: priorityChipColor)
             }

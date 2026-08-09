@@ -31,6 +31,9 @@ struct TaskEditorSheet: View {
     @State private var dueDate: Date?
     @State private var priority: TaskPriority = .none
     @State private var selectedBlockers: [Task] = []
+    @State private var repeatsText = ""
+    @State private var waitDate: Date?
+    @State private var untilDate: Date?
     @State private var tagsText = ""
     @State private var showingLogTime = false
     @State private var showingDeleteConfirm = false
@@ -55,6 +58,7 @@ struct TaskEditorSheet: View {
                     prioritySection
                     scheduleSection
                     dueSection
+                    recurrenceSection
                     dependsSection
                     blockingSection
                     notesSection
@@ -301,6 +305,32 @@ struct TaskEditorSheet: View {
         }
     }
 
+    private var recurrenceSection: some View {
+        GroupBox("Repeat & defer") {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("Repeats").frame(width: 64, alignment: .leading).font(.callout).foregroundStyle(.secondary)
+                    TextField("e.g. 1w, 2mo (blank = none)", text: $repeatsText).textFieldStyle(.roundedBorder)
+                }
+                Toggle("Wait until (hide until a date)", isOn: Binding(
+                    get: { waitDate != nil },
+                    set: { waitDate = $0 ? (waitDate ?? defaultDate) : nil }))
+                if waitDate != nil {
+                    DatePicker("", selection: Binding(get: { waitDate ?? defaultDate }, set: { waitDate = $0 }),
+                               displayedComponents: .date).labelsHidden()
+                }
+                Toggle("Until (auto-cancel after a date)", isOn: Binding(
+                    get: { untilDate != nil },
+                    set: { untilDate = $0 ? (untilDate ?? defaultDate) : nil }))
+                if untilDate != nil {
+                    DatePicker("", selection: Binding(get: { untilDate ?? defaultDate }, set: { untilDate = $0 }),
+                               displayedComponents: .date).labelsHidden()
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
     private var dueSection: some View {
         GroupBox("Due") {
             VStack(alignment: .leading, spacing: 6) {
@@ -404,6 +434,9 @@ struct TaskEditorSheet: View {
         dueDate = t.dueAt
         priority = t.priority
         selectedBlockers = t.dependsOn
+        repeatsText = t.recurrenceRule ?? ""
+        waitDate = t.waitUntil
+        untilDate = t.until
         tagsText = t.tags.joined(separator: ", ")
     }
 
@@ -447,6 +480,9 @@ struct TaskEditorSheet: View {
             t.dueAt = dueDate
             t.priorityRaw = priority.rawValue
             t.dependsOn = selectedBlockers
+            t.recurrenceRule = RecurrenceRule.parse(repeatsText)?.normalized
+            t.waitUntil = waitDate
+            t.until = untilDate
             t.project = selectedProject
             t.assignee = selectedAssignee
             t.tags = tags
@@ -458,6 +494,9 @@ struct TaskEditorSheet: View {
             newTask.dueAt = dueDate
             newTask.priorityRaw = priority.rawValue
             newTask.dependsOn = selectedBlockers
+            newTask.recurrenceRule = RecurrenceRule.parse(repeatsText)?.normalized
+            newTask.waitUntil = waitDate
+            newTask.until = untilDate
             newTask.project = selectedProject
             newTask.assignee = selectedAssignee
             newTask.tags = tags

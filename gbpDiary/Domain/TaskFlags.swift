@@ -14,4 +14,10 @@ enum TaskFlags {
         guard let due = dueAt else { return false }
         return calendar.isDate(due, inSameDayAs: now)
     }
+
+    /// Deferred: the wait-until date is still in the future.
+    static func isWaiting(waitUntil: Date?, now: Date = Date()) -> Bool {
+        guard let w = waitUntil else { return false }
+        return now < w
+    }
 }

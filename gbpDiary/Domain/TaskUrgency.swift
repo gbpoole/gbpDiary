@@ -80,7 +80,7 @@ extension TaskUrgency {
             hasProject: task.project != nil,
             isBlocked: task.isBlocked,
             isBlocking: task.isBlocking,
-            isWaiting: false
+            isWaiting: task.isWaiting
         )
         return score(inputs, now: now)
     }
