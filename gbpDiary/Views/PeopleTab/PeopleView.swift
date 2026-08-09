@@ -6,9 +6,17 @@ struct PeopleView: View {
     @Query(sort: \Person.name) private var people: [Person]
     @Query(sort: \Institution.name) private var institutions: [Institution]
 
+    @Environment(WorkspaceModel.self) private var workspace
+
     @State private var selectedPerson: Person?
     @State private var showingAddPerson = false
     @State private var activeFilterIds: Set<String> = []
+    @State private var searchText = ""
+    @State private var sortOrder = [KeyPathComparator(\Person.nameKey)]
+    // @Model exposes `id: UUID` (its @Attribute), so the Table's selection is keyed by UUID.
+    @State private var selection: Set<UUID> = []
+    @State private var stashedSelection: Set<UUID> = []
+    @State private var confirmingBulkDelete = false
 
     private var personFilters: [PickerFilter<Person>] {
         let institutionGroup = institutions.map { inst in
@@ -25,17 +33,44 @@ struct PeopleView: View {
         return institutionGroup + tagGroup
     }
 
-    private var filteredPeople: [Person] {
-        FilterEngine.apply(people, filters: personFilters, activeIds: activeFilterIds)
+    private var rows: [Person] {
+        let matched = FilterEngine.apply(people, filters: personFilters, activeIds: activeFilterIds)
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let searched = query.isEmpty ? matched : matched.filter { FuzzyMatch.matches(query, in: searchHaystack($0)) }
+        return searched.sorted(using: sortOrder)
+    }
+
+    private func searchHaystack(_ p: Person) -> String {
+        [p.name, p.primaryEmail, p.institution?.name, p.tags.joined(separator: " ")]
+            .compactMap { $0 }.joined(separator: " ")
+    }
+
+    private var selectedPeople: [Person] {
+        people.filter { selection.contains($0.id) }
+    }
+
+    private func clearSelection() { selection.removeAll(); stashedSelection.removeAll() }
+
+    private func bulkDelete() {
+        for p in selectedPeople {
+            workspace.closeEntity(p.persistentModelID)
+            modelContext.delete(p)
+        }
+        clearSelection()
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(
+            ListToolbar(
+                searchText: $searchText,
+                searchPrompt: "Search people…",
                 filters: personFilters,
                 activeFilterIds: $activeFilterIds,
                 onClearAll: { activeFilterIds = [] }
             )
+            BulkActionBar(count: selection.count, onClear: { clearSelection() }) {
+                Button("Delete", role: .destructive) { confirmingBulkDelete = true }
+            }
             Divider()
             peopleTable
         }
@@ -49,55 +84,68 @@ struct PeopleView: View {
         }
         .sheet(item: $selectedPerson) { PersonEditorSheet(person: $0) }
         .sheet(isPresented: $showingAddPerson) { PersonEditorSheet(person: nil) }
+        .alert("Delete \(selection.count) \(selection.count == 1 ? "person" : "people")?", isPresented: $confirmingBulkDelete) {
+            Button("Delete", role: .destructive) { bulkDelete() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This permanently deletes the selected \(selection.count == 1 ? "person" : "people"). Related items are unlinked, not deleted.") }
+        .onChange(of: Set(rows.map(\.id))) { _, visible in
+            let result = TableSelectionReconcile.reconcile(selection: selection, stashed: stashedSelection, visible: visible)
+            if result.selection != selection { selection = result.selection }
+            if result.stashed != stashedSelection { stashedSelection = result.stashed }
+        }
     }
+
+    // Row-tap rule: Person is a light entity — open its editor sheet directly.
+    private func open(_ person: Person) { selectedPerson = person }
 
     #if os(macOS)
     private var peopleTable: some View {
-        Table(filteredPeople) {
-            TableColumn("Name") { person in
+        Table(rows, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("Name", value: \.nameKey) { person in
                 Text(person.name)
                     .lineLimit(1)
                     .font(AppTheme.bodyFont(size: 13))
                     .foregroundStyle(AppTheme.text)
-                    .onTapGesture { selectedPerson = person }
             }
-            TableColumn("Email") { person in
+            .width(min: 140, ideal: 220)
+            TableColumn("Email", value: \.emailKey) { person in
                 Text(person.primaryEmail ?? "")
                     .foregroundStyle(AppTheme.mutedText)
                     .lineLimit(1)
             }
-            .width(180)
-            TableColumn("Institution") { person in
+            .width(min: 140, ideal: 180)
+            TableColumn("Institution", value: \.institutionKey) { person in
                 Text(person.institution?.name ?? "")
                     .foregroundStyle(AppTheme.institution)
                     .lineLimit(1)
             }
-            .width(140)
-            TableColumn("Tags") { person in
+            .width(min: 100, ideal: 140)
+            TableColumn("Tags", value: \.tagsKey) { person in
                 Text(person.tags.joined(separator: ", "))
                     .foregroundStyle(AppTheme.tag)
                     .lineLimit(1)
             }
-            .width(160)
-            TableColumn("Projects") { person in
-                Text("\(person.devProjects.count + person.sciProjects.count)")
+            .width(min: 120, ideal: 160)
+            TableColumn("Projects", value: \.projectCount) { person in
+                Text("\(person.projectCount)")
                     .foregroundStyle(AppTheme.mutedText)
             }
-            .width(70)
+            .width(min: 60, ideal: 70)
         }
         .scrollContentBackground(.hidden)
         .background(AppTheme.background)
+        .onTableRowDoubleClick { open(rows[$0]) }
     }
     #else
     private var peopleTable: some View {
-        List(filteredPeople) { person in
+        List(rows) { person in
             VStack(alignment: .leading, spacing: 2) {
                 Text(person.name)
                 if let inst = person.institution {
                     Text(inst.name).font(.caption).foregroundStyle(.secondary)
                 }
             }
-            .onTapGesture { selectedPerson = person }
+            .onTapGesture { open(person) }
         }
     }
     #endif

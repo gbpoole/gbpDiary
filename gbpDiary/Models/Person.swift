@@ -29,6 +29,13 @@ import SwiftData
     @Relationship(deleteRule: .nullify, inverse: \Task.assignee) var tasks: [Task]
     @Relationship(deleteRule: .nullify, inverse: \EmailMessage.person) var emailMessages: [EmailMessage]
 
+    // Comparable sort keys for the People table columns (see the List/Table page style in CLAUDE.md).
+    var nameKey: String { name.lowercased() }
+    var emailKey: String { (primaryEmail ?? "").lowercased() }
+    var institutionKey: String { (institution?.name ?? "").lowercased() }
+    var tagsKey: String { tags.joined(separator: ", ").lowercased() }
+    var projectCount: Int { devProjects.count + sciProjects.count }
+
     init(name: String, id: UUID = UUID()) {
         self.id = id
         self.name = name
