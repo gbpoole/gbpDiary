@@ -21,6 +21,13 @@ enum AttachmentKind: String, Codable {
     var document: Document?
     var note: Note?
 
+    // Comparable sort keys for the Image library table columns (see the List/Table page style in CLAUDE.md).
+    /// The name shown in the library: the display name, falling back to the file name.
+    var libraryName: String { displayName ?? fileName }
+    var nameKey: String { libraryName.lowercased() }
+    var descriptionKey: String { (attachmentDescription ?? "").lowercased() }
+    var sizeSortKey: Int { fileSizeBytes ?? 0 }
+
     init(fileName: String, fileURL: URL, kind: AttachmentKind, id: UUID = UUID()) {
         self.id = id
         self.fileName = fileName

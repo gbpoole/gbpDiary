@@ -11,10 +11,26 @@ struct ImageLibraryView: View {
 
     @State private var selected: Attachment?
     @State private var showingDeleteUnused = false
+    @State private var searchText = ""
+    @State private var sortOrder = [KeyPathComparator(\Attachment.nameKey)]
+    // Images have no discrete filter dimension — the toolbar collapses to search-only (Light tier).
+    @State private var activeFilterIds: Set<String> = []
 
+    // All image attachments (unsorted/unsearched) — drives the header counts and Delete Unused.
     private var images: [Attachment] {
         allAttachments.filter { $0.kind == .image }
-            .sorted { ($0.displayName ?? $0.fileName).localizedCaseInsensitiveCompare($1.displayName ?? $1.fileName) == .orderedAscending }
+    }
+
+    // The searched + sorted rows shown in the table.
+    private var rows: [Attachment] {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let searched = query.isEmpty ? images
+            : images.filter { FuzzyMatch.matches(query, in: searchHaystack($0)) }
+        return searched.sorted(using: sortOrder)
+    }
+
+    private func searchHaystack(_ att: Attachment) -> String {
+        [att.libraryName, att.attachmentDescription].compactMap { $0 }.joined(separator: " ")
     }
 
     // Attachment id → the notes that reference it in markdown.
@@ -36,6 +52,11 @@ struct ImageLibraryView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            ListToolbar<Attachment>(
+                searchText: $searchText,
+                searchPrompt: "Search images…",
+                activeFilterIds: $activeFilterIds
+            )
             header
             Divider()
             if images.isEmpty {
@@ -74,30 +95,32 @@ struct ImageLibraryView: View {
 
     #if os(macOS)
     private var imageTable: some View {
-        Table(images) {
+        // "Used in" derives from a cross-note markdown scan (not a model keypath) and the thumbnail /
+        // trash columns have no value, so those three are not header-sortable; the rest are.
+        Table(rows, sortOrder: $sortOrder) {
             TableColumn("") { att in
                 ImageThumbnail(url: att.fileURL, size: 40)
-                    .onTapGesture { selected = att }
             }
             .width(52)
-            TableColumn("Name") { att in
-                Text(att.displayName ?? att.fileName)
+            TableColumn("Name", value: \.nameKey) { att in
+                Text(att.libraryName)
                     .lineLimit(1)
-                    .onTapGesture { selected = att }
             }
-            TableColumn("Description") { att in
+            .width(min: 140, ideal: 220)
+            TableColumn("Description", value: \.descriptionKey) { att in
                 Text(att.attachmentDescription ?? "")
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
             }
+            .width(min: 140, ideal: 220)
             TableColumn("Used in") { att in
                 usageLabel(att)
             }
-            .width(160)
-            TableColumn("Size") { att in
+            .width(min: 120, ideal: 160)
+            TableColumn("Size", value: \.sizeSortKey) { att in
                 Text(sizeText(att)).foregroundStyle(.secondary)
             }
-            .width(80)
+            .width(min: 70, ideal: 80)
             TableColumn("") { att in
                 Button { deleteImage(att) } label: {
                     Image(systemName: "trash")
@@ -109,10 +132,13 @@ struct ImageLibraryView: View {
             }
             .width(36)
         }
+        .scrollContentBackground(.hidden)
+        .background(AppTheme.background)
+        .onTableRowDoubleClick { selected = rows[$0] }
     }
     #else
     private var imageTable: some View {
-        List(images) { att in
+        List(rows) { att in
             HStack(spacing: 10) {
                 ImageThumbnail(url: att.fileURL, size: 44)
                 VStack(alignment: .leading, spacing: 2) {
