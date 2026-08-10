@@ -10,13 +10,25 @@ struct PeopleView: View {
 
     @State private var selectedPerson: Person?
     @State private var showingAddPerson = false
-    @State private var activeFilterIds: Set<String> = []
-    @State private var searchText = ""
-    @State private var sortOrder = [KeyPathComparator(\Person.nameKey)]
     // @Model exposes `id: UUID` (its @Attribute), so the Table's selection is keyed by UUID.
     @State private var selection: Set<UUID> = []
     @State private var stashedSelection: Set<UUID> = []
     @State private var confirmingBulkDelete = false
+
+    // Filter/search/sort live on the active tab (persisted + remembered across tab switches).
+    private var filter: ListPageFilter { workspace.active.pageFilter(for: .people) }
+    private static let sortColumns: [SortColumn<Person>] = [
+        SortColumn("name", \.nameKey), SortColumn("email", \.emailKey),
+        SortColumn("institution", \.institutionKey), SortColumn("tags", \.tagsKey),
+        SortColumn("projects", \.projectCount),
+    ]
+    private var sortOrderBinding: Binding<[KeyPathComparator<Person>]> {
+        let f = filter
+        return Binding(
+            get: { TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "name") },
+            set: { if let d = TableSortPersistence.descriptor(for: $0, columns: Self.sortColumns) { f.sortColumnID = d.id; f.sortAscending = d.ascending } }
+        )
+    }
 
     private var personFilters: [PickerFilter<Person>] {
         let institutionGroup = institutions.map { inst in
@@ -34,10 +46,11 @@ struct PeopleView: View {
     }
 
     private var rows: [Person] {
-        let matched = FilterEngine.apply(people, filters: personFilters, activeIds: activeFilterIds)
-        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let f = filter
+        let matched = FilterEngine.apply(people, filters: personFilters, activeIds: f.activeFilterIds)
+        let query = f.searchText.trimmingCharacters(in: .whitespaces)
         let searched = query.isEmpty ? matched : matched.filter { FuzzyMatch.matches(query, in: searchHaystack($0)) }
-        return searched.sorted(using: sortOrder)
+        return searched.sorted(using: TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "name"))
     }
 
     private func searchHaystack(_ p: Person) -> String {
@@ -60,13 +73,14 @@ struct PeopleView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        @Bindable var f = filter
+        return VStack(spacing: 0) {
             ListToolbar(
-                searchText: $searchText,
+                searchText: $f.searchText,
                 searchPrompt: "Search people…",
                 filters: personFilters,
-                activeFilterIds: $activeFilterIds,
-                onClearAll: { activeFilterIds = [] }
+                activeFilterIds: $f.activeFilterIds,
+                onClearAll: { f.activeFilterIds = [] }
             )
             BulkActionBar(count: selection.count, onClear: { clearSelection() }) {
                 Button("Delete", role: .destructive) { confirmingBulkDelete = true }
@@ -100,7 +114,7 @@ struct PeopleView: View {
 
     #if os(macOS)
     private var peopleTable: some View {
-        Table(rows, selection: $selection, sortOrder: $sortOrder) {
+        Table(rows, selection: $selection, sortOrder: sortOrderBinding) {
             TableColumn("Name", value: \.nameKey) { person in
                 Text(person.name)
                     .lineLimit(1)

@@ -14,14 +14,25 @@ struct ContentListView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(WorkspaceModel.self) private var workspace
 
-    @State private var activeFilterIds: Set<String> = []
     @State private var showingAdd = false
-    @State private var searchText = ""
-    @State private var sortOrder = [KeyPathComparator(\Note.updatedAt, order: .reverse)]
     // @Model exposes `id: UUID` (its @Attribute), so the Table's selection is keyed by UUID.
     @State private var selection: Set<UUID> = []
     @State private var stashedSelection: Set<UUID> = []
     @State private var confirmingBulkDelete = false
+
+    // Filter/search/sort live on the active tab (persisted + remembered across tab switches).
+    private var filter: ListPageFilter { workspace.active.pageFilter(for: .content) }
+    private static let sortColumns: [SortColumn<Note>] = [
+        SortColumn("title", \.titleKey), SortColumn("tags", \.tagsKey),
+        SortColumn("project", \.projectKey), SortColumn("updated", \.updatedAt),
+    ]
+    private var sortOrderBinding: Binding<[KeyPathComparator<Note>]> {
+        let f = filter
+        return Binding(
+            get: { TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "updated") },
+            set: { if let d = TableSortPersistence.descriptor(for: $0, columns: Self.sortColumns) { f.sortColumnID = d.id; f.sortAscending = d.ascending } }
+        )
+    }
 
     private var contentNotes: [Note] { allNotes.filter(\.isContentNote) }
 
@@ -41,10 +52,11 @@ struct ContentListView: View {
     }
 
     private var rows: [Note] {
-        let matched = FilterEngine.apply(contentNotes, filters: noteFilters, activeIds: activeFilterIds)
-        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let f = filter
+        let matched = FilterEngine.apply(contentNotes, filters: noteFilters, activeIds: f.activeFilterIds)
+        let query = f.searchText.trimmingCharacters(in: .whitespaces)
         let searched = query.isEmpty ? matched : matched.filter { FuzzyMatch.matches(query, in: searchHaystack($0)) }
-        return searched.sorted(using: sortOrder)
+        return searched.sorted(using: TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "updated"))
     }
 
     private func searchHaystack(_ n: Note) -> String {
@@ -67,13 +79,14 @@ struct ContentListView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        @Bindable var f = filter
+        return VStack(spacing: 0) {
             ListToolbar(
-                searchText: $searchText,
+                searchText: $f.searchText,
                 searchPrompt: "Search content…",
                 filters: noteFilters,
-                activeFilterIds: $activeFilterIds,
-                onClearAll: { activeFilterIds = [] }
+                activeFilterIds: $f.activeFilterIds,
+                onClearAll: { f.activeFilterIds = [] }
             )
             BulkActionBar(count: selection.count, onClear: { clearSelection() }) {
                 Button("Delete", role: .destructive) { confirmingBulkDelete = true }
@@ -105,7 +118,7 @@ struct ContentListView: View {
 
     #if os(macOS)
     private var noteTable: some View {
-        Table(rows, selection: $selection, sortOrder: $sortOrder) {
+        Table(rows, selection: $selection, sortOrder: sortOrderBinding) {
             TableColumn("Title", value: \.titleKey) { note in
                 Text(note.title.isEmpty ? "Untitled" : note.title)
                     .lineLimit(1)

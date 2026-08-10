@@ -107,6 +107,56 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     var datePreset: DateWindow? = nil
     var searchText: String = ""
     var sortOrder: [KeyPathComparator<TaskRow>] = [KeyPathComparator(\.urgency, order: .reverse)]
+
+    // Persistable form of `sortOrder` (the Table's KeyPathComparators aren't Codable).
+    static let sortColumns: [SortColumn<TaskRow>] = [
+        SortColumn("summary", \.summaryKey), SortColumn("project", \.projectKey),
+        SortColumn("status", \.statusRank), SortColumn("priority", \.priorityRank),
+        SortColumn("urgency", \.urgency), SortColumn("assignee", \.assigneeKey),
+        SortColumn("created", \.createdAt), SortColumn("due", \.dueKey),
+        SortColumn("scheduled", \.scheduledKey),
+    ]
+    var sortDescriptor: (id: String, ascending: Bool) {
+        TableSortPersistence.descriptor(for: sortOrder, columns: Self.sortColumns) ?? ("urgency", false)
+    }
+    func applySort(id: String, ascending: Bool) {
+        sortOrder = TableSortPersistence.order(id: id, ascending: ascending, columns: Self.sortColumns, fallbackID: "urgency")
+    }
+}
+
+// Per-tab filter/search/sort for a shared-style list page (Projects/People/Minutes/Documents/Content/
+// Institutions/Tags/Images). Mirrors `TasksFilterState` so these filters survive tab navigation and
+// can be persisted. `sortColumnID`/`sortAscending` are the persistable form of the Table's sortOrder
+// (see `TableSortPersistence`); each page maps the id to a `KeyPathComparator`.
+@Observable final class ListPageFilter {
+    var activeFilterIds: Set<String>
+    var searchText: String
+    var sortColumnID: String
+    var sortAscending: Bool
+
+    init(activeFilterIds: Set<String> = [], searchText: String = "",
+         sortColumnID: String, sortAscending: Bool) {
+        self.activeFilterIds = activeFilterIds
+        self.searchText = searchText
+        self.sortColumnID = sortColumnID
+        self.sortAscending = sortAscending
+    }
+
+    /// The default filter for a list-page category (default sort column/order + any seeded filters).
+    static func makeDefault(for category: WorkspaceCategory) -> ListPageFilter {
+        switch category {
+        case .projects:     ListPageFilter(activeFilterIds: ["status.active"], sortColumnID: "name", sortAscending: true)
+        case .people:       ListPageFilter(sortColumnID: "name", sortAscending: true)
+        case .meetings:     ListPageFilter(sortColumnID: "date", sortAscending: false)
+        case .documents:    ListPageFilter(sortColumnID: "created", sortAscending: false)
+        case .content:      ListPageFilter(sortColumnID: "updated", sortAscending: false)
+        case .institutions: ListPageFilter(sortColumnID: "name", sortAscending: true)
+        case .tags:         ListPageFilter(sortColumnID: "tag", sortAscending: true)
+        case .images:       ListPageFilter(sortColumnID: "name", sortAscending: true)
+        case .diary, .tasks, .timesheet:
+            ListPageFilter(sortColumnID: "name", sortAscending: true)  // unused (not list pages)
+        }
+    }
 }
 
 @Observable final class WorkspaceTabState: Identifiable {
@@ -115,6 +165,14 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     let diaryState = DiaryState()
     // Per-tab Tasks-page filter state (remembered across in-tab navigation).
     let tasksFilter = TasksFilterState()
+    // Per-tab filter state for the other shared-style list pages, created lazily with page defaults.
+    private var pageFilters: [WorkspaceCategory: ListPageFilter] = [:]
+    func pageFilter(for category: WorkspaceCategory) -> ListPageFilter {
+        if let existing = pageFilters[category] { return existing }
+        let created = ListPageFilter.makeDefault(for: category)
+        pageFilters[category] = created
+        return created
+    }
     private(set) var history: [WorkspaceTab]
     private(set) var index: Int
 
@@ -126,6 +184,17 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         history = [tab]
         index = 0
     }
+
+    /// Rebuild a tab from a persisted history (used at session restore). Falls back to a Diary tab
+    /// when the history is empty; clamps `index` into range.
+    init(history: [WorkspaceTab], index: Int) {
+        let safe = history.isEmpty ? [.diary] : history
+        self.history = safe
+        self.index = min(max(0, index), safe.count - 1)
+    }
+
+    /// The page-filter objects that have actually been created on this tab (for session save).
+    var touchedPageFilters: [WorkspaceCategory: ListPageFilter] { pageFilters }
 
     func navigate(to tab: WorkspaceTab) {
         guard current != tab else { return }
@@ -212,6 +281,139 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     /// ⌘9 — focus the last tab (Safari convention).
     func selectLastTab() {
         if let last = tabs.last { activeId = last.id }
+    }
+
+    // MARK: - Session persistence
+
+    /// Save the current session (tabs, active tab, diary state, all list-page filters) to UserDefaults.
+    func save(using ctx: ModelContext) {
+        WorkspaceSessionStore.snapshot = snapshot(using: ctx)
+    }
+
+    /// Restore the last saved session from the store (convenience over `restore(_:using:)`).
+    func restore(using ctx: ModelContext) {
+        restore(WorkspaceSessionStore.snapshot, using: ctx)
+    }
+
+    /// Restore a session snapshot, resolving entity tabs by UUID and dropping any whose entity was
+    /// deleted. No-op (keeps the current tabs) when the snapshot is nil/empty or nothing resolves.
+    func restore(_ snapshot: WorkspaceSnapshot?, using ctx: ModelContext) {
+        guard let snap = snapshot, !snap.tabs.isEmpty else { return }
+        var restored: [WorkspaceTabState] = []
+        for tabSnap in snap.tabs {
+            let destinations = tabSnap.history.compactMap { workspaceTab(for: $0, using: ctx) }
+            guard !destinations.isEmpty else { continue }
+            let state = WorkspaceTabState(history: destinations, index: tabSnap.index)
+            state.diaryState.currentDate = tabSnap.diary.date
+            state.diaryState.mode = DiaryMode(rawValue: tabSnap.diary.mode) ?? .day
+            state.diaryState.tracksToday = tabSnap.diary.tracksToday
+            apply(tabSnap.tasksFilter, to: state.tasksFilter)
+            for (rawCategory, fs) in tabSnap.pageFilters {
+                guard let category = WorkspaceCategory(rawValue: rawCategory) else { continue }
+                let pf = state.pageFilter(for: category)
+                pf.activeFilterIds = Set(fs.activeFilterIds)
+                pf.searchText = fs.searchText
+                pf.sortColumnID = fs.sortColumnID
+                pf.sortAscending = fs.sortAscending
+            }
+            restored.append(state)
+        }
+        guard !restored.isEmpty else { return }
+        tabs = restored
+        activeId = restored[min(max(0, snap.activeIndex), restored.count - 1)].id
+    }
+
+    func snapshot(using ctx: ModelContext) -> WorkspaceSnapshot {
+        let tabSnaps = tabs.map { tab -> TabSnapshot in
+            let history = tab.history.compactMap { destination(for: $0, using: ctx) }
+            let index = min(max(0, tab.index), max(0, history.count - 1))
+            let d = tab.tasksFilter.sortDescriptor
+            let tasks = TasksFilterSnapshot(
+                activeFilterIds: Array(tab.tasksFilter.activeFilterIds),
+                searchText: tab.tasksFilter.searchText,
+                sortColumnID: d.id, sortAscending: d.ascending,
+                dateRangeStart: tab.tasksFilter.dateRange?.lowerBound,
+                dateRangeEnd: tab.tasksFilter.dateRange?.upperBound,
+                datePreset: tab.tasksFilter.datePreset?.rawValue)
+            var pageFilters: [String: ListFilterSnapshot] = [:]
+            for (category, pf) in tab.touchedPageFilters {
+                pageFilters[category.rawValue] = ListFilterSnapshot(
+                    activeFilterIds: Array(pf.activeFilterIds), searchText: pf.searchText,
+                    sortColumnID: pf.sortColumnID, sortAscending: pf.sortAscending)
+            }
+            return TabSnapshot(
+                history: history, index: index,
+                diary: DiarySnapshot(date: tab.diaryState.currentDate,
+                                     mode: tab.diaryState.mode.rawValue,
+                                     tracksToday: tab.diaryState.tracksToday),
+                tasksFilter: tasks, pageFilters: pageFilters)
+        }
+        // Keep active index valid even if some tabs produced empty histories (rare; entity gone).
+        let validTabs = tabSnaps.enumerated().filter { !$0.element.history.isEmpty }
+        let snapshotTabs = validTabs.map(\.element)
+        let newActive = validTabs.firstIndex { $0.offset == activeIndex } ?? 0
+        return WorkspaceSnapshot(tabs: snapshotTabs, activeIndex: newActive)
+    }
+
+    private func apply(_ snap: TasksFilterSnapshot, to state: TasksFilterState) {
+        state.activeFilterIds = Set(snap.activeFilterIds)
+        state.searchText = snap.searchText
+        state.applySort(id: snap.sortColumnID, ascending: snap.sortAscending)
+        if let start = snap.dateRangeStart, let end = snap.dateRangeEnd, start <= end {
+            state.dateRange = start...end
+        } else {
+            state.dateRange = nil
+        }
+        state.datePreset = snap.datePreset.flatMap(DateWindow.init(rawValue:))
+    }
+
+    private func destination(for tab: WorkspaceTab, using ctx: ModelContext) -> TabDestination? {
+        if let token = WorkspaceTabCoding.token(forCategoryTab: tab) { return .page(token) }
+        guard let kind = WorkspaceTabCoding.entityKind(for: tab),
+              let uuid = entityUUID(for: tab, using: ctx) else { return nil }
+        return .entity(kind: kind, id: uuid)
+    }
+
+    private func entityUUID(for tab: WorkspaceTab, using ctx: ModelContext) -> UUID? {
+        switch tab {
+        case .project(let pid):     (ctx.model(for: pid) as? Project)?.id
+        case .person(let pid):      (ctx.model(for: pid) as? Person)?.id
+        case .institution(let pid): (ctx.model(for: pid) as? Institution)?.id
+        case .minutes(let pid):     (ctx.model(for: pid) as? Minutes)?.id
+        case .document(let pid):    (ctx.model(for: pid) as? Document)?.id
+        case .contentNote(let pid): (ctx.model(for: pid) as? Note)?.id
+        default:                    nil
+        }
+    }
+
+    private func workspaceTab(for dest: TabDestination, using ctx: ModelContext) -> WorkspaceTab? {
+        switch dest {
+        case .page(let token):
+            return WorkspaceTabCoding.categoryTab(forToken: token)
+        case .entity(let kind, let id):
+            switch kind {
+            case "project":
+                return first(FetchDescriptor<Project>(predicate: #Predicate { $0.id == id }), ctx).map { .project($0.persistentModelID) }
+            case "person":
+                return first(FetchDescriptor<Person>(predicate: #Predicate { $0.id == id }), ctx).map { .person($0.persistentModelID) }
+            case "institution":
+                return first(FetchDescriptor<Institution>(predicate: #Predicate { $0.id == id }), ctx).map { .institution($0.persistentModelID) }
+            case "minutes":
+                return first(FetchDescriptor<Minutes>(predicate: #Predicate { $0.id == id }), ctx).map { .minutes($0.persistentModelID) }
+            case "document":
+                return first(FetchDescriptor<Document>(predicate: #Predicate { $0.id == id }), ctx).map { .document($0.persistentModelID) }
+            case "contentNote":
+                return first(FetchDescriptor<Note>(predicate: #Predicate { $0.id == id }), ctx).map { .contentNote($0.persistentModelID) }
+            default:
+                return nil
+            }
+        }
+    }
+
+    private func first<T: PersistentModel>(_ descriptor: FetchDescriptor<T>, _ ctx: ModelContext) -> T? {
+        var d = descriptor
+        d.fetchLimit = 1
+        return (try? ctx.fetch(d))?.first
     }
 
     /// Open a meeting in a new tab that jumps straight into editing its minutes.

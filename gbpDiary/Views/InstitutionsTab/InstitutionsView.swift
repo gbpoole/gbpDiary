@@ -8,19 +8,31 @@ struct InstitutionsView: View {
 
     @State private var selectedInstitution: Institution?
     @State private var showingAddInstitution = false
-    @State private var searchText = ""
-    @State private var sortOrder = [KeyPathComparator(\Institution.nameKey)]
     // @Model exposes `id: UUID` (its @Attribute), so the Table's selection is keyed by UUID.
     @State private var selection: Set<UUID> = []
     @State private var stashedSelection: Set<UUID> = []
     @State private var confirmingBulkDelete = false
-    // Institutions have no discrete filter dimension — the toolbar collapses to search-only (Light tier).
-    @State private var activeFilterIds: Set<String> = []
+
+    // Search/sort live on the active tab (persisted + remembered across tab switches). Institutions
+    // have no discrete filter dimension — the toolbar collapses to search-only (Light tier).
+    private var filter: ListPageFilter { workspace.active.pageFilter(for: .institutions) }
+    private static let sortColumns: [SortColumn<Institution>] = [
+        SortColumn("name", \.nameKey), SortColumn("members", \.memberCount),
+        SortColumn("projects", \.projectCount),
+    ]
+    private var sortOrderBinding: Binding<[KeyPathComparator<Institution>]> {
+        let f = filter
+        return Binding(
+            get: { TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "name") },
+            set: { if let d = TableSortPersistence.descriptor(for: $0, columns: Self.sortColumns) { f.sortColumnID = d.id; f.sortAscending = d.ascending } }
+        )
+    }
 
     private var rows: [Institution] {
-        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let f = filter
+        let query = f.searchText.trimmingCharacters(in: .whitespaces)
         let searched = query.isEmpty ? institutions : institutions.filter { FuzzyMatch.matches(query, in: $0.name) }
-        return searched.sorted(using: sortOrder)
+        return searched.sorted(using: TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "name"))
     }
 
     private var selectedInstitutions: [Institution] {
@@ -38,11 +50,12 @@ struct InstitutionsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        @Bindable var f = filter
+        return VStack(spacing: 0) {
             ListToolbar<Institution>(
-                searchText: $searchText,
+                searchText: $f.searchText,
                 searchPrompt: "Search institutions…",
-                activeFilterIds: $activeFilterIds
+                activeFilterIds: $f.activeFilterIds
             )
             BulkActionBar(count: selection.count, onClear: { clearSelection() }) {
                 Button("Delete", role: .destructive) { confirmingBulkDelete = true }
@@ -76,7 +89,7 @@ struct InstitutionsView: View {
 
     #if os(macOS)
     private var institutionTable: some View {
-        Table(rows, selection: $selection, sortOrder: $sortOrder) {
+        Table(rows, selection: $selection, sortOrder: sortOrderBinding) {
             TableColumn("Name", value: \.nameKey) { institution in
                 Text(institution.name)
                     .lineLimit(1)

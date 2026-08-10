@@ -7,14 +7,25 @@ struct ProjectsView: View {
     @Query(sort: \Project.name) private var projects: [Project]
 
     @State private var showingAddProject = false
-    // Default to showing only active projects (matches the previous hide-completed default).
-    @State private var activeFilterIds: Set<String> = ["status.active"]
-    @State private var searchText = ""
-    @State private var sortOrder = [KeyPathComparator(\Project.nameKey)]
     // @Model exposes `id: UUID` (its @Attribute), so the Table's selection is keyed by UUID.
     @State private var selection: Set<UUID> = []
     @State private var stashedSelection: Set<UUID> = []
     @State private var confirmingBulkDelete = false
+
+    // Filter/search/sort live on the active tab (persisted + remembered across tab switches).
+    private var filter: ListPageFilter { workspace.active.pageFilter(for: .projects) }
+    private static let sortColumns: [SortColumn<Project>] = [
+        SortColumn("name", \.nameKey), SortColumn("stream", \.streamKey),
+        SortColumn("devTeam", \.devTeamKey), SortColumn("sciTeam", \.sciTeamKey),
+        SortColumn("subprojects", \.subprojectCount), SortColumn("lastMeeting", \.lastMeetingAt),
+    ]
+    private var sortOrderBinding: Binding<[KeyPathComparator<Project>]> {
+        let f = filter
+        return Binding(
+            get: { TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "name") },
+            set: { if let d = TableSortPersistence.descriptor(for: $0, columns: Self.sortColumns) { f.sortColumnID = d.id; f.sortAscending = d.ascending } }
+        )
+    }
 
     private var projectFilters: [PickerFilter<Project>] {
         let statusGroup = [
@@ -31,10 +42,11 @@ struct ProjectsView: View {
     }
 
     private var rows: [Project] {
-        let matched = FilterEngine.apply(projects, filters: projectFilters, activeIds: activeFilterIds)
-        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let f = filter
+        let matched = FilterEngine.apply(projects, filters: projectFilters, activeIds: f.activeFilterIds)
+        let query = f.searchText.trimmingCharacters(in: .whitespaces)
         let searched = query.isEmpty ? matched : matched.filter { FuzzyMatch.matches(query, in: searchHaystack($0)) }
-        return searched.sorted(using: sortOrder)
+        return searched.sorted(using: TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "name"))
     }
 
     private func searchHaystack(_ p: Project) -> String {
@@ -57,13 +69,14 @@ struct ProjectsView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        @Bindable var f = filter
+        return VStack(spacing: 0) {
             ListToolbar(
-                searchText: $searchText,
+                searchText: $f.searchText,
                 searchPrompt: "Search projects…",
                 filters: projectFilters,
-                activeFilterIds: $activeFilterIds,
-                onClearAll: { activeFilterIds = [] }
+                activeFilterIds: $f.activeFilterIds,
+                onClearAll: { f.activeFilterIds = [] }
             )
             BulkActionBar(count: selection.count, onClear: { clearSelection() }) {
                 Button("Delete", role: .destructive) { confirmingBulkDelete = true }
@@ -95,7 +108,7 @@ struct ProjectsView: View {
 
     #if os(macOS)
     private var projectTable: some View {
-        Table(rows, selection: $selection, sortOrder: $sortOrder) {
+        Table(rows, selection: $selection, sortOrder: sortOrderBinding) {
             TableColumn("Name", value: \.nameKey) { project in
                 Text(project.name)
                     .lineLimit(1)

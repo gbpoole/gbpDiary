@@ -10,13 +10,27 @@ struct TagEntry: Identifiable {
 }
 
 struct TagsView: View {
+    @Environment(WorkspaceModel.self) private var workspace
     @Query(sort: \Project.name) private var projects: [Project]
     @Query(sort: \Person.name) private var people: [Person]
     @Query private var notes: [Note]
 
     @State private var selectedEntry: TagEntry?
-    @State private var searchText = ""
-    @State private var sortOrder = [KeyPathComparator(\TagEntry.tag)]
+
+    // Search/sort live on the active tab (persisted + remembered across tab switches). Tags have no
+    // discrete filter dimension — the toolbar collapses to search-only (Light tier).
+    private var filter: ListPageFilter { workspace.active.pageFilter(for: .tags) }
+    private static let sortColumns: [SortColumn<TagEntry>] = [
+        SortColumn("tag", \.tag), SortColumn("projects", \.projects.count),
+        SortColumn("people", \.people.count), SortColumn("notes", \.notes.count),
+    ]
+    private var sortOrderBinding: Binding<[KeyPathComparator<TagEntry>]> {
+        let f = filter
+        return Binding(
+            get: { TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "tag") },
+            set: { if let d = TableSortPersistence.descriptor(for: $0, columns: Self.sortColumns) { f.sortColumnID = d.id; f.sortAscending = d.ascending } }
+        )
+    }
 
     private var tagEntries: [TagEntry] {
         var tagProjects: [String: [Project]] = [:]
@@ -38,20 +52,19 @@ struct TagsView: View {
     }
 
     private var rows: [TagEntry] {
-        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let f = filter
+        let query = f.searchText.trimmingCharacters(in: .whitespaces)
         let searched = query.isEmpty ? tagEntries : tagEntries.filter { FuzzyMatch.matches(query, in: $0.tag) }
-        return searched.sorted(using: sortOrder)
+        return searched.sorted(using: TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "tag"))
     }
 
-    // Tags have no discrete filter dimension — the toolbar collapses to search-only (Light tier).
-    @State private var activeFilterIds: Set<String> = []
-
     var body: some View {
-        VStack(spacing: 0) {
+        @Bindable var f = filter
+        return VStack(spacing: 0) {
             ListToolbar<TagEntry>(
-                searchText: $searchText,
+                searchText: $f.searchText,
                 searchPrompt: "Search tags…",
-                activeFilterIds: $activeFilterIds
+                activeFilterIds: $f.activeFilterIds
             )
             Divider()
             tagTable
@@ -62,7 +75,7 @@ struct TagsView: View {
 
     #if os(macOS)
     private var tagTable: some View {
-        Table(rows, sortOrder: $sortOrder) {
+        Table(rows, sortOrder: sortOrderBinding) {
             TableColumn("Tag", value: \.tag) { entry in
                 Text(entry.tag)
                     .font(AppTheme.bodyFont(size: 13))

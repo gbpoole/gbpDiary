@@ -8,13 +8,25 @@ struct DocumentsListView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(WorkspaceModel.self) private var workspace
 
-    @State private var activeFilterIds: Set<String> = []
-    @State private var searchText = ""
-    @State private var sortOrder = [KeyPathComparator(\Document.createdAt, order: .reverse)]
     // @Model exposes `id: UUID` (its @Attribute), so the Table's selection is keyed by UUID.
     @State private var selection: Set<UUID> = []
     @State private var stashedSelection: Set<UUID> = []
     @State private var confirmingBulkDelete = false
+
+    // Filter/search/sort live on the active tab (persisted + remembered across tab switches).
+    private var filter: ListPageFilter { workspace.active.pageFilter(for: .documents) }
+    private static let sortColumns: [SortColumn<Document>] = [
+        SortColumn("summary", \.summaryKey), SortColumn("description", \.descriptionKey),
+        SortColumn("projects", \.projectsKey), SortColumn("files", \.attachmentCount),
+        SortColumn("created", \.createdAt),
+    ]
+    private var sortOrderBinding: Binding<[KeyPathComparator<Document>]> {
+        let f = filter
+        return Binding(
+            get: { TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "created") },
+            set: { if let d = TableSortPersistence.descriptor(for: $0, columns: Self.sortColumns) { f.sortColumnID = d.id; f.sortAscending = d.ascending } }
+        )
+    }
 
     private var documentFilters: [PickerFilter<Document>] {
         allProjects.map { p in
@@ -25,10 +37,11 @@ struct DocumentsListView: View {
     }
 
     private var rows: [Document] {
-        let matched = FilterEngine.apply(allDocuments, filters: documentFilters, activeIds: activeFilterIds)
-        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let f = filter
+        let matched = FilterEngine.apply(allDocuments, filters: documentFilters, activeIds: f.activeFilterIds)
+        let query = f.searchText.trimmingCharacters(in: .whitespaces)
         let searched = query.isEmpty ? matched : matched.filter { FuzzyMatch.matches(query, in: searchHaystack($0)) }
-        return searched.sorted(using: sortOrder)
+        return searched.sorted(using: TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "created"))
     }
 
     private func searchHaystack(_ d: Document) -> String {
@@ -51,13 +64,14 @@ struct DocumentsListView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        @Bindable var f = filter
+        return VStack(spacing: 0) {
             ListToolbar(
-                searchText: $searchText,
+                searchText: $f.searchText,
                 searchPrompt: "Search documents…",
                 filters: documentFilters,
-                activeFilterIds: $activeFilterIds,
-                onClearAll: { activeFilterIds = [] }
+                activeFilterIds: $f.activeFilterIds,
+                onClearAll: { f.activeFilterIds = [] }
             )
             BulkActionBar(count: selection.count, onClear: { clearSelection() }) {
                 Button("Delete", role: .destructive) { confirmingBulkDelete = true }
@@ -90,7 +104,7 @@ struct DocumentsListView: View {
 
     #if os(macOS)
     private var documentTable: some View {
-        Table(rows, selection: $selection, sortOrder: $sortOrder) {
+        Table(rows, selection: $selection, sortOrder: sortOrderBinding) {
             TableColumn("Summary", value: \.summaryKey) { document in
                 Text(document.summary ?? "Untitled")
                     .lineLimit(1)

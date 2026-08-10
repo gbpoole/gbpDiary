@@ -1,14 +1,20 @@
 import SwiftUI
 import SwiftData
+#if canImport(AppKit)
+import AppKit
+#endif
 
 // Obsidian-style shell: a browse sidebar on the left and a tabbed workspace on the right.
 // Replaces the old segmented-picker ContentView and the minutes inspector.
 struct WorkspaceView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(WorkspaceModel.self) private var workspace
+    @Environment(\.scenePhase) private var scenePhase
     @Query private var allAttachments: [Attachment]
     @Query private var allNotes: [Note]
     @State private var showingNewContent = false
+    // Restore the saved session exactly once, when the workspace first appears (has a modelContext).
+    @State private var hasRestored = false
     #if os(macOS)
     // ⌘W closes the active tab (not the window). See CloseTabKeyMonitor.
     @State private var closeTabMonitor = CloseTabKeyMonitor()
@@ -65,8 +71,21 @@ struct WorkspaceView: View {
         .background { EmailFetchDriver() }     // global auto-ingest (last few days, 5-min cadence)
         .background { EmailSummaryDriver() }   // global on-device email summarisation
         .sheet(isPresented: $showingNewContent) { ContentNoteEditorSheet(note: nil) }
-        .onAppear { migratePersonEmails() }
+        .onAppear {
+            if !hasRestored {
+                workspace.restore(using: modelContext)
+                hasRestored = true
+            }
+            migratePersonEmails()
+        }
+        // Persist the session when the app deactivates/backgrounds (covers ⌘Q and app switches).
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { workspace.save(using: modelContext) }
+        }
         #if os(macOS)
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
+            workspace.save(using: modelContext)
+        }
         .background(WindowAccessor { hostWindow = $0 })
         .onAppear {
             closeTabMonitor.action = { workspace.closeActiveTab() }

@@ -10,13 +10,25 @@ struct MinutesListView: View {
 
     @State private var editingMinutes: Minutes?
     @State private var showingAdd = false
-    @State private var activeFilterIds: Set<String> = []
-    @State private var searchText = ""
-    @State private var sortOrder = [KeyPathComparator(\Minutes.meetingAt, order: .reverse)]
     // @Model exposes `id: UUID` (its @Attribute), so the Table's selection is keyed by UUID.
     @State private var selection: Set<UUID> = []
     @State private var stashedSelection: Set<UUID> = []
     @State private var confirmingBulkDelete = false
+
+    // Filter/search/sort live on the active tab (persisted + remembered across tab switches).
+    // The Date and Time columns both sort by `meetingAt`, so they share the "date" id.
+    private var filter: ListPageFilter { workspace.active.pageFilter(for: .meetings) }
+    private static let sortColumns: [SortColumn<Minutes>] = [
+        SortColumn("date", \.meetingAt), SortColumn("summary", \.summaryKey),
+        SortColumn("projects", \.projectsKey), SortColumn("attendees", \.attendeeCount),
+    ]
+    private var sortOrderBinding: Binding<[KeyPathComparator<Minutes>]> {
+        let f = filter
+        return Binding(
+            get: { TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "date") },
+            set: { if let d = TableSortPersistence.descriptor(for: $0, columns: Self.sortColumns) { f.sortColumnID = d.id; f.sortAscending = d.ascending } }
+        )
+    }
 
     private var minutesFilters: [PickerFilter<Minutes>] {
         let projectGroup = allProjects.map { p in
@@ -33,10 +45,11 @@ struct MinutesListView: View {
     }
 
     private var rows: [Minutes] {
-        let matched = FilterEngine.apply(allMinutes, filters: minutesFilters, activeIds: activeFilterIds)
-        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let f = filter
+        let matched = FilterEngine.apply(allMinutes, filters: minutesFilters, activeIds: f.activeFilterIds)
+        let query = f.searchText.trimmingCharacters(in: .whitespaces)
         let searched = query.isEmpty ? matched : matched.filter { FuzzyMatch.matches(query, in: searchHaystack($0)) }
-        return searched.sorted(using: sortOrder)
+        return searched.sorted(using: TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "date"))
     }
 
     private func searchHaystack(_ m: Minutes) -> String {
@@ -59,13 +72,14 @@ struct MinutesListView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        @Bindable var f = filter
+        return VStack(spacing: 0) {
             ListToolbar(
-                searchText: $searchText,
+                searchText: $f.searchText,
                 searchPrompt: "Search minutes…",
                 filters: minutesFilters,
-                activeFilterIds: $activeFilterIds,
-                onClearAll: { activeFilterIds = [] }
+                activeFilterIds: $f.activeFilterIds,
+                onClearAll: { f.activeFilterIds = [] }
             )
             BulkActionBar(count: selection.count, onClear: { clearSelection() }) {
                 Button("Delete", role: .destructive) { confirmingBulkDelete = true }
@@ -98,7 +112,7 @@ struct MinutesListView: View {
 
     #if os(macOS)
     private var minutesTable: some View {
-        Table(rows, selection: $selection, sortOrder: $sortOrder) {
+        Table(rows, selection: $selection, sortOrder: sortOrderBinding) {
             TableColumn("Date", value: \.meetingAt) { minutes in
                 Text(minutes.meetingAt, format: .dateTime.weekday(.abbreviated).day().month(.abbreviated).year())
                     .lineLimit(1)

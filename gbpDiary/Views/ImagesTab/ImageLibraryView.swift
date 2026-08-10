@@ -6,15 +6,27 @@ import SwiftData
 // not attached to a document are "unused" and can be cleaned up.
 struct ImageLibraryView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(WorkspaceModel.self) private var workspace
     @Query private var allAttachments: [Attachment]
     @Query private var allNotes: [Note]
 
     @State private var selected: Attachment?
     @State private var showingDeleteUnused = false
-    @State private var searchText = ""
-    @State private var sortOrder = [KeyPathComparator(\Attachment.nameKey)]
-    // Images have no discrete filter dimension — the toolbar collapses to search-only (Light tier).
-    @State private var activeFilterIds: Set<String> = []
+
+    // Search/sort live on the active tab (persisted + remembered across tab switches). Images have no
+    // discrete filter dimension — the toolbar collapses to search-only (Light tier).
+    private var filter: ListPageFilter { workspace.active.pageFilter(for: .images) }
+    private static let sortColumns: [SortColumn<Attachment>] = [
+        SortColumn("name", \.nameKey), SortColumn("description", \.descriptionKey),
+        SortColumn("size", \.sizeSortKey),
+    ]
+    private var sortOrderBinding: Binding<[KeyPathComparator<Attachment>]> {
+        let f = filter
+        return Binding(
+            get: { TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "name") },
+            set: { if let d = TableSortPersistence.descriptor(for: $0, columns: Self.sortColumns) { f.sortColumnID = d.id; f.sortAscending = d.ascending } }
+        )
+    }
 
     // All image attachments (unsorted/unsearched) — drives the header counts and Delete Unused.
     private var images: [Attachment] {
@@ -23,10 +35,11 @@ struct ImageLibraryView: View {
 
     // The searched + sorted rows shown in the table.
     private var rows: [Attachment] {
-        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let f = filter
+        let query = f.searchText.trimmingCharacters(in: .whitespaces)
         let searched = query.isEmpty ? images
             : images.filter { FuzzyMatch.matches(query, in: searchHaystack($0)) }
-        return searched.sorted(using: sortOrder)
+        return searched.sorted(using: TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "name"))
     }
 
     private func searchHaystack(_ att: Attachment) -> String {
@@ -51,11 +64,12 @@ struct ImageLibraryView: View {
     private var unusedImages: [Attachment] { images.filter(isUnused) }
 
     var body: some View {
-        VStack(spacing: 0) {
+        @Bindable var f = filter
+        return VStack(spacing: 0) {
             ListToolbar<Attachment>(
-                searchText: $searchText,
+                searchText: $f.searchText,
                 searchPrompt: "Search images…",
-                activeFilterIds: $activeFilterIds
+                activeFilterIds: $f.activeFilterIds
             )
             header
             Divider()
@@ -97,7 +111,7 @@ struct ImageLibraryView: View {
     private var imageTable: some View {
         // "Used in" derives from a cross-note markdown scan (not a model keypath) and the thumbnail /
         // trash columns have no value, so those three are not header-sortable; the rest are.
-        Table(rows, sortOrder: $sortOrder) {
+        Table(rows, sortOrder: sortOrderBinding) {
             TableColumn("") { att in
                 ImageThumbnail(url: att.fileURL, size: 40)
             }
