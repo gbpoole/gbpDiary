@@ -130,6 +130,22 @@ nonisolated struct ChatAnswer: Equatable, Sendable {
     let summaryCandidates: [ChatSummaryCandidate]
 }
 
+nonisolated enum ChatAnswerAssembly {
+    static func make(text: String, prompt: ChatPromptBundle) throws -> ChatAnswer {
+        let answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !answer.isEmpty else { throw ChatAnswerError.emptyAnswer }
+
+        let byLabel = Dictionary(uniqueKeysWithValues: prompt.sources.map { ($0.label, $0.chunk.source) })
+        let validation = ChatCitationValidator.validate(answer: answer, allowedLabels: Set(byLabel.keys))
+        guard validation.isValid else { throw ChatAnswerError.invalidCitations(validation.unknownLabels) }
+        return ChatAnswer(
+            text: answer,
+            citations: validation.citedLabels.compactMap { byLabel[$0] },
+            summaryCandidates: []
+        )
+    }
+}
+
 nonisolated enum ChatAnswerError: Error, Equatable, Sendable {
     case modelUnavailable
     case emptyAnswer

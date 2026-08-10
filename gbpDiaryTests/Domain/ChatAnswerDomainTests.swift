@@ -54,6 +54,35 @@ struct ChatAnswerDomainTests {
         #expect(!missing.isValid)
     }
 
+    @Test func answerAssembly_acceptsPlainTextAndMapsCitations() throws {
+        let bundle = ChatPromptBuilder.build(
+            question: "What changed?",
+            rankedChunks: [ranked(0, text: "The deadline moved to Friday.")],
+            history: []
+        )
+        let answer = try ChatAnswerAssembly.make(text: "  The deadline moved to Friday. [S1]\n", prompt: bundle)
+        #expect(answer.text == "The deadline moved to Friday. [S1]")
+        #expect(answer.citations == [bundle.sources[0].chunk.source])
+        #expect(answer.summaryCandidates.isEmpty)
+    }
+
+    @Test func answerAssembly_rejectsEmptyMissingAndUnknownCitations() {
+        let bundle = ChatPromptBuilder.build(
+            question: "What changed?",
+            rankedChunks: [ranked(0, text: "The deadline moved to Friday.")],
+            history: []
+        )
+        #expect(throws: ChatAnswerError.emptyAnswer) {
+            try ChatAnswerAssembly.make(text: "  ", prompt: bundle)
+        }
+        #expect(throws: ChatAnswerError.invalidCitations([])) {
+            try ChatAnswerAssembly.make(text: "The deadline moved.", prompt: bundle)
+        }
+        #expect(throws: ChatAnswerError.invalidCitations(["S2"])) {
+            try ChatAnswerAssembly.make(text: "The deadline moved. [S2]", prompt: bundle)
+        }
+    }
+
     @Test func summaryAdoption_updatesMatchingDocumentOnlyAndIgnoresBlank() {
         let sharedID = UUID()
         let sourceA = ChatSourceReference(id: sharedID, kind: .note, title: "A", detail: nil)

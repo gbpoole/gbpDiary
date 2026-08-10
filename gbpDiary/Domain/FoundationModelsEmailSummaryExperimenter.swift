@@ -37,21 +37,10 @@ struct FoundationModelsEmailSummaryExperimenter: EmailSummaryExperimenting {
             }
             let session = LanguageModelSession(instructions: instructions)
             let options = GenerationOptions(temperature: 0.3, maximumResponseTokens: 120)
-            let response = try await session.respond(to: prompt,
-                                                     generating: EmailSummaryExperimentOutput.self,
-                                                     options: options)
-            return EmailSummaryText.clean(response.content.summary)
+            let response = try await session.respond(to: prompt, options: options)
+            return EmailSummaryText.clean(response.content)
         }
         #endif
         throw EmailSummaryError.modelUnavailable
     }
 }
-
-#if canImport(FoundationModels)
-@available(macOS 26, *)
-@Generable
-private struct EmailSummaryExperimentOutput {
-    @Guide(description: "One or two concise factual sentences for the reader's diary; no markdown or preamble.")
-    var summary: String
-}
-#endif
