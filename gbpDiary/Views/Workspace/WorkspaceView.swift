@@ -9,6 +9,11 @@ struct WorkspaceView: View {
     @Query private var allAttachments: [Attachment]
     @Query private var allNotes: [Note]
     @State private var showingNewContent = false
+    #if os(macOS)
+    // ⌘W closes the active tab (not the window). See CloseTabKeyMonitor.
+    @State private var closeTabMonitor = CloseTabKeyMonitor()
+    @State private var hostWindow: NSWindow?
+    #endif
 
     // Image attachments referenced by no note and not attached to a document.
     private var unusedImageCount: Int {
@@ -61,6 +66,16 @@ struct WorkspaceView: View {
         .background { EmailSummaryDriver() }   // global on-device email summarisation
         .sheet(isPresented: $showingNewContent) { ContentNoteEditorSheet(note: nil) }
         .onAppear { migratePersonEmails() }
+        #if os(macOS)
+        .background(WindowAccessor { hostWindow = $0 })
+        .onAppear {
+            closeTabMonitor.action = { workspace.closeActiveTab() }
+            closeTabMonitor.targetWindow = hostWindow
+            closeTabMonitor.start()
+        }
+        .onDisappear { closeTabMonitor.stop() }
+        .onChange(of: hostWindow) { _, window in closeTabMonitor.targetWindow = window }
+        #endif
     }
 
     // One-time migration of the legacy single `Person.email` into the ordered `emails` list.
@@ -117,3 +132,22 @@ struct WorkspaceView: View {
         modelContext.model(for: id) as? T
     }
 }
+
+#if os(macOS)
+// Resolves the NSWindow hosting this SwiftUI view (nil until it attaches to the window). Used to
+// scope CloseTabKeyMonitor to the workspace window.
+private struct WindowAccessor: NSViewRepresentable {
+    let onResolve: (NSWindow?) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        // The view isn't in the window hierarchy yet during make; resolve on the next runloop tick.
+        DispatchQueue.main.async { [weak view] in onResolve(view?.window) }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        onResolve(nsView.window)
+    }
+}
+#endif

@@ -180,6 +180,40 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
 
     func activate(_ id: UUID) { activeId = id }
 
+    // MARK: - Safari-like tab shortcuts
+
+    /// Index of the active tab in `tabs` (0 if somehow not found).
+    var activeIndex: Int { tabs.firstIndex { $0.id == activeId } ?? 0 }
+
+    /// ⌘T — open a fresh Diary tab and focus it.
+    func newTab() { openInNewTab(.diary) }
+
+    /// ⌘W — close the active tab (recreates a Diary tab if it was the last one, via `closeTab`).
+    func closeActiveTab() { closeTab(activeId) }
+
+    /// ⌘⇧] — focus the next tab, wrapping around to the first.
+    func selectNextTab() {
+        guard tabs.count > 1 else { return }
+        activeId = tabs[(activeIndex + 1) % tabs.count].id
+    }
+
+    /// ⌘⇧[ — focus the previous tab, wrapping around to the last.
+    func selectPreviousTab() {
+        guard tabs.count > 1 else { return }
+        activeId = tabs[(activeIndex - 1 + tabs.count) % tabs.count].id
+    }
+
+    /// ⌘1…⌘8 — focus the tab at a 0-based index; no-op when out of range.
+    func selectTab(at index: Int) {
+        guard tabs.indices.contains(index) else { return }
+        activeId = tabs[index].id
+    }
+
+    /// ⌘9 — focus the last tab (Safari convention).
+    func selectLastTab() {
+        if let last = tabs.last { activeId = last.id }
+    }
+
     /// Open a meeting in a new tab that jumps straight into editing its minutes.
     func openMinutesForEditing(_ id: PersistentIdentifier) {
         autoEditMinutesId = id

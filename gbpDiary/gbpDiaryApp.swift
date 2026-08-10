@@ -55,7 +55,7 @@ struct gbpDiaryApp: App {
         }
         .modelContainer(sharedModelContainer)
         .commands {
-            AppCommands()
+            AppCommands(workspace: workspace)
         }
         #if os(macOS)
         Settings {
@@ -133,10 +133,29 @@ struct ObsidianImportLaunchRequest: Equatable {
 }
 
 struct AppCommands: Commands {
+    /// The shared workspace whose tabs the shortcuts drive. Same instance as the WindowGroup's.
+    let workspace: WorkspaceModel
+
     var body: some Commands {
-        CommandMenu("Task") {
-            Button("New Task") {}
-                .keyboardShortcut("n", modifiers: .command)
+        CommandMenu("Tabs") {
+            Button("New Tab") { workspace.newTab() }
+                .keyboardShortcut("t", modifiers: .command)
+            // ⌘W is handled by CloseTabKeyMonitor (WorkspaceView), not a menu shortcut: a menu ⌘W
+            // would collide with the standard File ▸ Close and the window-close would win.
+            Button("Close Tab") { workspace.closeActiveTab() }
+            Divider()
+            Button("Show Next Tab") { workspace.selectNextTab() }
+                .keyboardShortcut("]", modifiers: [.command, .shift])
+            Button("Show Previous Tab") { workspace.selectPreviousTab() }
+                .keyboardShortcut("[", modifiers: [.command, .shift])
+            Divider()
+            // ⌘1…⌘8 jump to that tab; ⌘9 jumps to the last (Safari convention).
+            ForEach(1...8, id: \.self) { n in
+                Button("Show Tab \(n)") { workspace.selectTab(at: n - 1) }
+                    .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: .command)
+            }
+            Button("Show Last Tab") { workspace.selectLastTab() }
+                .keyboardShortcut("9", modifiers: .command)
         }
     }
 }

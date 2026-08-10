@@ -91,6 +91,73 @@ struct WorkspaceModelTests {
         #expect(ws.active.current == .diary)
     }
 
+    // MARK: - Safari-like tab shortcuts
+
+    @Test func newTab_opensAndActivatesDiaryTab() {
+        let ws = WorkspaceModel()
+        ws.openInNewTab(.tasks)          // 2 tabs, tasks active
+        ws.newTab()
+        #expect(ws.tabs.count == 3)
+        #expect(ws.active.current == .diary)
+        #expect(ws.activeIndex == 2)
+    }
+
+    @Test func closeActiveTab_closesCurrentAndReassigns() {
+        let ws = WorkspaceModel()
+        ws.openInNewTab(.tasks)          // active = tasks (index 1)
+        ws.closeActiveTab()
+        #expect(ws.tabs.count == 1)
+        #expect(ws.active.current == .diary)
+    }
+
+    @Test func selectNextTab_wrapsAround() {
+        let ws = WorkspaceModel()        // diary (0)
+        ws.openInNewTab(.tasks)          // tasks (1)
+        ws.openInNewTab(.projects)       // projects (2), active
+        ws.selectNextTab()               // wraps 2 → 0
+        #expect(ws.activeIndex == 0)
+        ws.selectNextTab()               // 0 → 1
+        #expect(ws.active.current == .tasks)
+    }
+
+    @Test func selectPreviousTab_wrapsAround() {
+        let ws = WorkspaceModel()        // diary (0), active
+        ws.openInNewTab(.tasks)          // tasks (1)
+        ws.openInNewTab(.projects)       // projects (2)
+        ws.selectTab(at: 0)              // back to diary
+        ws.selectPreviousTab()           // wraps 0 → 2
+        #expect(ws.activeIndex == 2)
+        #expect(ws.active.current == .projects)
+    }
+
+    @Test func selectNextPrevious_singleTab_isNoOp() {
+        let ws = WorkspaceModel()
+        ws.selectNextTab()
+        ws.selectPreviousTab()
+        #expect(ws.activeIndex == 0)
+        #expect(ws.tabs.count == 1)
+    }
+
+    @Test func selectTabAtIndex_activatesOrIgnoresOutOfRange() {
+        let ws = WorkspaceModel()
+        ws.openInNewTab(.tasks)          // index 1
+        ws.openInNewTab(.projects)       // index 2, active
+        ws.selectTab(at: 0)
+        #expect(ws.active.current == .diary)
+        ws.selectTab(at: 9)              // out of range → no change
+        #expect(ws.active.current == .diary)
+    }
+
+    @Test func selectLastTab_activatesFinalTab() {
+        let ws = WorkspaceModel()
+        ws.openInNewTab(.tasks)
+        ws.openInNewTab(.projects)       // last
+        ws.selectTab(at: 0)              // move off the last
+        ws.selectLastTab()
+        #expect(ws.activeIndex == 2)
+        #expect(ws.active.current == .projects)
+    }
+
     // MARK: - Category mapping
 
     @Test func entityTab_reportsOwningCategory() {
