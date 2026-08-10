@@ -15,6 +15,8 @@ struct TagsView: View {
     @Query private var notes: [Note]
 
     @State private var selectedEntry: TagEntry?
+    @State private var searchText = ""
+    @State private var sortOrder = [KeyPathComparator(\TagEntry.tag)]
 
     private var tagEntries: [TagEntry] {
         var tagProjects: [String: [Project]] = [:]
@@ -35,8 +37,23 @@ struct TagsView: View {
         }
     }
 
+    private var rows: [TagEntry] {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let searched = query.isEmpty ? tagEntries : tagEntries.filter { FuzzyMatch.matches(query, in: $0.tag) }
+        return searched.sorted(using: sortOrder)
+    }
+
+    // Tags have no discrete filter dimension — the toolbar collapses to search-only (Light tier).
+    @State private var activeFilterIds: Set<String> = []
+
     var body: some View {
         VStack(spacing: 0) {
+            ListToolbar<TagEntry>(
+                searchText: $searchText,
+                searchPrompt: "Search tags…",
+                activeFilterIds: $activeFilterIds
+            )
+            Divider()
             tagTable
         }
         .navigationTitle("Tags")
@@ -45,35 +62,36 @@ struct TagsView: View {
 
     #if os(macOS)
     private var tagTable: some View {
-        Table(tagEntries) {
-            TableColumn("Tag") { entry in
+        Table(rows, sortOrder: $sortOrder) {
+            TableColumn("Tag", value: \.tag) { entry in
                 Text(entry.tag)
                     .font(AppTheme.bodyFont(size: 13))
                     .foregroundStyle(AppTheme.tag)
-                    .onTapGesture { selectedEntry = entry }
             }
-            TableColumn("Projects") { entry in
+            .width(min: 160, ideal: 260)
+            TableColumn("Projects", value: \.projects.count) { entry in
                 Text("\(entry.projects.count)")
                     .foregroundStyle(AppTheme.mutedText)
             }
-            .width(70)
-            TableColumn("People") { entry in
+            .width(min: 60, ideal: 70)
+            TableColumn("People", value: \.people.count) { entry in
                 Text("\(entry.people.count)")
                     .foregroundStyle(AppTheme.mutedText)
             }
-            .width(70)
-            TableColumn("Notes") { entry in
+            .width(min: 60, ideal: 70)
+            TableColumn("Notes", value: \.notes.count) { entry in
                 Text("\(entry.notes.count)")
                     .foregroundStyle(AppTheme.mutedText)
             }
-            .width(70)
+            .width(min: 60, ideal: 70)
         }
         .scrollContentBackground(.hidden)
         .background(AppTheme.background)
+        .onTableRowDoubleClick { selectedEntry = rows[$0] }
     }
     #else
     private var tagTable: some View {
-        List(tagEntries) { entry in
+        List(rows) { entry in
             HStack {
                 Text(entry.tag)
                 Spacer()
