@@ -12,6 +12,11 @@ import SwiftData
     var projects: [Project]
     @Relationship(deleteRule: .nullify, inverse: \Task.institution) var tasks: [Task]
 
+    // Comparable sort keys for the Institutions table columns (see the List/Table page style in CLAUDE.md).
+    var nameKey: String { name.lowercased() }
+    var memberCount: Int { members.count }
+    var projectCount: Int { projects.count }
+
     init(name: String, id: UUID = UUID()) {
         self.id = id
         self.name = name

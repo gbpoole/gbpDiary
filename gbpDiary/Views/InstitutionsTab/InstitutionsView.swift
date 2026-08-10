@@ -3,13 +3,51 @@ import SwiftData
 
 struct InstitutionsView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(WorkspaceModel.self) private var workspace
     @Query(sort: \Institution.name) private var institutions: [Institution]
 
     @State private var selectedInstitution: Institution?
     @State private var showingAddInstitution = false
+    @State private var searchText = ""
+    @State private var sortOrder = [KeyPathComparator(\Institution.nameKey)]
+    // @Model exposes `id: UUID` (its @Attribute), so the Table's selection is keyed by UUID.
+    @State private var selection: Set<UUID> = []
+    @State private var stashedSelection: Set<UUID> = []
+    @State private var confirmingBulkDelete = false
+    // Institutions have no discrete filter dimension — the toolbar collapses to search-only (Light tier).
+    @State private var activeFilterIds: Set<String> = []
+
+    private var rows: [Institution] {
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let searched = query.isEmpty ? institutions : institutions.filter { FuzzyMatch.matches(query, in: $0.name) }
+        return searched.sorted(using: sortOrder)
+    }
+
+    private var selectedInstitutions: [Institution] {
+        institutions.filter { selection.contains($0.id) }
+    }
+
+    private func clearSelection() { selection.removeAll(); stashedSelection.removeAll() }
+
+    private func bulkDelete() {
+        for inst in selectedInstitutions {
+            workspace.closeEntity(inst.persistentModelID)
+            modelContext.delete(inst)
+        }
+        clearSelection()
+    }
 
     var body: some View {
         VStack(spacing: 0) {
+            ListToolbar<Institution>(
+                searchText: $searchText,
+                searchPrompt: "Search institutions…",
+                activeFilterIds: $activeFilterIds
+            )
+            BulkActionBar(count: selection.count, onClear: { clearSelection() }) {
+                Button("Delete", role: .destructive) { confirmingBulkDelete = true }
+            }
+            Divider()
             institutionTable
         }
         .navigationTitle("Institutions")
@@ -22,37 +60,50 @@ struct InstitutionsView: View {
         }
         .sheet(item: $selectedInstitution) { InstitutionEditorSheet(institution: $0) }
         .sheet(isPresented: $showingAddInstitution) { InstitutionEditorSheet(institution: nil) }
+        .alert("Delete \(selection.count) institution\(selection.count == 1 ? "" : "s")?", isPresented: $confirmingBulkDelete) {
+            Button("Delete", role: .destructive) { bulkDelete() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This permanently deletes the selected institution\(selection.count == 1 ? "" : "s"). Members and projects are unlinked, not deleted.") }
+        .onChange(of: Set(rows.map(\.id))) { _, visible in
+            let result = TableSelectionReconcile.reconcile(selection: selection, stashed: stashedSelection, visible: visible)
+            if result.selection != selection { selection = result.selection }
+            if result.stashed != stashedSelection { stashedSelection = result.stashed }
+        }
     }
+
+    // Row-tap rule: Institution is a light entity — open its editor sheet directly.
+    private func open(_ institution: Institution) { selectedInstitution = institution }
 
     #if os(macOS)
     private var institutionTable: some View {
-        Table(institutions) {
-            TableColumn("Name") { institution in
+        Table(rows, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("Name", value: \.nameKey) { institution in
                 Text(institution.name)
                     .lineLimit(1)
                     .font(AppTheme.bodyFont(size: 13))
                     .foregroundStyle(AppTheme.text)
-                    .onTapGesture { selectedInstitution = institution }
             }
-            TableColumn("Members") { institution in
-                Text("\(institution.members.count)")
+            .width(min: 160, ideal: 280)
+            TableColumn("Members", value: \.memberCount) { institution in
+                Text("\(institution.memberCount)")
                     .foregroundStyle(AppTheme.mutedText)
             }
-            .width(80)
-            TableColumn("Projects") { institution in
-                Text("\(institution.projects.count)")
+            .width(min: 70, ideal: 80)
+            TableColumn("Projects", value: \.projectCount) { institution in
+                Text("\(institution.projectCount)")
                     .foregroundStyle(AppTheme.mutedText)
             }
-            .width(80)
+            .width(min: 70, ideal: 80)
         }
         .scrollContentBackground(.hidden)
         .background(AppTheme.background)
+        .onTableRowDoubleClick { open(rows[$0]) }
     }
     #else
     private var institutionTable: some View {
-        List(institutions) { institution in
+        List(rows) { institution in
             Text(institution.name)
-                .onTapGesture { selectedInstitution = institution }
+                .onTapGesture { open(institution) }
         }
     }
     #endif

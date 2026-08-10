@@ -11,10 +11,17 @@ struct ContentTagItem: Identifiable { let id: String }
 struct ContentListView: View {
     @Query(sort: \Note.updatedAt, order: .reverse) private var allNotes: [Note]
     @Query(sort: \Project.name) private var allProjects: [Project]
+    @Environment(\.modelContext) private var modelContext
     @Environment(WorkspaceModel.self) private var workspace
 
     @State private var activeFilterIds: Set<String> = []
     @State private var showingAdd = false
+    @State private var searchText = ""
+    @State private var sortOrder = [KeyPathComparator(\Note.updatedAt, order: .reverse)]
+    // @Model exposes `id: UUID` (its @Attribute), so the Table's selection is keyed by UUID.
+    @State private var selection: Set<UUID> = []
+    @State private var stashedSelection: Set<UUID> = []
+    @State private var confirmingBulkDelete = false
 
     private var contentNotes: [Note] { allNotes.filter(\.isContentNote) }
 
@@ -33,17 +40,44 @@ struct ContentListView: View {
         return tagGroup + projectGroup
     }
 
-    private var filteredNotes: [Note] {
-        FilterEngine.apply(contentNotes, filters: noteFilters, activeIds: activeFilterIds)
+    private var rows: [Note] {
+        let matched = FilterEngine.apply(contentNotes, filters: noteFilters, activeIds: activeFilterIds)
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        let searched = query.isEmpty ? matched : matched.filter { FuzzyMatch.matches(query, in: searchHaystack($0)) }
+        return searched.sorted(using: sortOrder)
+    }
+
+    private func searchHaystack(_ n: Note) -> String {
+        [n.title, n.project?.name, n.tags.joined(separator: " ")]
+            .compactMap { $0 }.joined(separator: " ")
+    }
+
+    private var selectedNotes: [Note] {
+        contentNotes.filter { selection.contains($0.id) }
+    }
+
+    private func clearSelection() { selection.removeAll(); stashedSelection.removeAll() }
+
+    private func bulkDelete() {
+        for n in selectedNotes {
+            workspace.closeEntity(n.persistentModelID)
+            modelContext.delete(n)
+        }
+        clearSelection()
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            FilterBar(
+            ListToolbar(
+                searchText: $searchText,
+                searchPrompt: "Search content…",
                 filters: noteFilters,
                 activeFilterIds: $activeFilterIds,
                 onClearAll: { activeFilterIds = [] }
             )
+            BulkActionBar(count: selection.count, onClear: { clearSelection() }) {
+                Button("Delete", role: .destructive) { confirmingBulkDelete = true }
+            }
             Divider()
             noteTable
         }
@@ -54,6 +88,15 @@ struct ContentListView: View {
             }
         }
         .sheet(isPresented: $showingAdd) { ContentNoteEditorSheet(note: nil) }
+        .alert("Delete \(selection.count) note\(selection.count == 1 ? "" : "s")?", isPresented: $confirmingBulkDelete) {
+            Button("Delete", role: .destructive) { bulkDelete() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This permanently deletes the selected note\(selection.count == 1 ? "" : "s"). Related items are unlinked, not deleted.") }
+        .onChange(of: Set(rows.map(\.id))) { _, visible in
+            let result = TableSelectionReconcile.reconcile(selection: selection, stashed: stashedSelection, visible: visible)
+            if result.selection != selection { selection = result.selection }
+            if result.stashed != stashedSelection { stashedSelection = result.stashed }
+        }
     }
 
     private func open(_ note: Note) {
@@ -62,38 +105,39 @@ struct ContentListView: View {
 
     #if os(macOS)
     private var noteTable: some View {
-        Table(filteredNotes) {
-            TableColumn("Title") { note in
+        Table(rows, selection: $selection, sortOrder: $sortOrder) {
+            TableColumn("Title", value: \.titleKey) { note in
                 Text(note.title.isEmpty ? "Untitled" : note.title)
                     .lineLimit(1)
                     .font(AppTheme.bodyFont(size: 13))
                     .foregroundStyle(AppTheme.text)
-                    .onTapGesture { open(note) }
             }
-            TableColumn("Tags") { note in
+            .width(min: 160, ideal: 260)
+            TableColumn("Tags", value: \.tagsKey) { note in
                 Text(note.tags.joined(separator: ", "))
                     .foregroundStyle(AppTheme.tag)
                     .lineLimit(1)
             }
-            .width(180)
-            TableColumn("Project") { note in
+            .width(min: 120, ideal: 180)
+            TableColumn("Project", value: \.projectKey) { note in
                 Text(note.project?.name ?? "")
                     .foregroundStyle(AppTheme.project)
                     .lineLimit(1)
             }
-            .width(160)
-            TableColumn("Updated") { note in
+            .width(min: 120, ideal: 160)
+            TableColumn("Updated", value: \.updatedAt) { note in
                 Text(note.updatedAt, format: .dateTime.month(.abbreviated).day().year())
                     .foregroundStyle(AppTheme.mutedText)
             }
-            .width(100)
+            .width(min: 90, ideal: 100)
         }
         .scrollContentBackground(.hidden)
         .background(AppTheme.background)
+        .onTableRowDoubleClick { open(rows[$0]) }
     }
     #else
     private var noteTable: some View {
-        List(filteredNotes) { note in
+        List(rows) { note in
             VStack(alignment: .leading, spacing: 2) {
                 Text(note.title.isEmpty ? "Untitled" : note.title).font(.subheadline.bold())
                 if !note.tags.isEmpty {

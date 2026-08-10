@@ -36,6 +36,12 @@ import SwiftData
         self.updatedAt = now
     }
 
+    // Comparable sort keys for the Content table columns (see the List/Table page style in CLAUDE.md).
+    // The Updated column sorts by `updatedAt` directly.
+    var titleKey: String { title.lowercased() }
+    var tagsKey: String { tags.joined(separator: ", ").lowercased() }
+    var projectKey: String { (project?.name ?? "").lowercased() }
+
     /// Whether this note belongs to the free-standing "Content" vault.
     var isContentNote: Bool {
         NoteContentMembership.isContentNote(title: title,
