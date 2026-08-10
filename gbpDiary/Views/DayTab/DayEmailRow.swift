@@ -81,6 +81,7 @@ struct DayEmailThreadRow: View {
         .onTapGesture { openInMail() }   // tapping the email opens it in Mail (the default action)
         .contextMenu {
             Button("Open in Mail", systemImage: "envelope.open") { openInMail() }
+            EmailExperimentInChatButton(email: thread.latest)
             Button("Regenerate summary", systemImage: "sparkles") { regenerateSummary() }
         }
         .alert("Couldn't open email", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {

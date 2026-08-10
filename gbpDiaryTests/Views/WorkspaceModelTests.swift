@@ -60,6 +60,109 @@ struct WorkspaceModelTests {
         #expect(ws.active.current == .tasks)
     }
 
+    @Test func openEmailExplorerInNewTab_alwaysCreatesConfiguredIndependentChatTab() {
+        let ws = WorkspaceModel()
+        let firstEmail = email(id: "1")
+        let secondEmail = email(id: "2")
+
+        ws.openEmailExplorerInNewTab(for: firstEmail)
+        let firstChat = ws.active
+        ws.openEmailExplorerInNewTab(for: secondEmail)
+        let secondChat = ws.active
+
+        #expect(ws.tabs.count == 3)
+        #expect(firstChat.current == .chat)
+        #expect(secondChat.current == .chat)
+        #expect(firstChat.id != secondChat.id)
+        #expect(firstChat.chatState !== secondChat.chatState)
+        #expect(firstChat.chatState.mode == .emailExplorerLab)
+        #expect(firstChat.chatState.selectedEmailID == firstEmail.persistentModelID)
+        #expect(secondChat.chatState.selectedEmailID == secondEmail.persistentModelID)
+
+        firstChat.chatState.mode = .database
+        #expect(secondChat.chatState.mode == .emailExplorerLab)
+    }
+
+    @Test func chatState_survivesNavigationWithinItsWorkspaceTab() {
+        let ws = WorkspaceModel()
+        ws.navigate(to: .chat)
+        let state = ws.active.chatState
+        state.draft = "unfinished question"
+
+        ws.navigate(to: .projects)
+        ws.active.goBack()
+
+        #expect(ws.active.current == .chat)
+        #expect(ws.active.chatState === state)
+        #expect(ws.active.chatState.draft == "unfinished question")
+    }
+
+    @Test func chatState_changingEmailClearsTransientLabDataButKeepsPrompt() {
+        let state = ChatState()
+        let first = email(id: "first")
+        let second = email(id: "second")
+        state.selectEmail(first.persistentModelID)
+        state.lab.instructions = "Keep this experiment prompt"
+        state.lab.body = "private transient body"
+        state.lab.candidates = [ChatLabCandidate(summary: "Candidate")]
+
+        state.selectEmail(second.persistentModelID)
+
+        #expect(state.selectedEmailID == second.persistentModelID)
+        #expect(state.lab.body == nil)
+        #expect(state.lab.candidates.isEmpty)
+        #expect(state.lab.instructions == "Keep this experiment prompt")
+    }
+
+    @Test func chatState_selectionRevision_rejectsOldAAfterAtoBtoA() {
+        let state = ChatState()
+        let first = email(id: "first")
+        let second = email(id: "second")
+        let firstID = first.persistentModelID
+
+        state.selectEmail(firstID)
+        let oldRevision = state.selectedEmailRevision
+        state.selectEmail(second.persistentModelID)
+        state.selectEmail(firstID)
+
+        #expect(state.selectedEmailRevision > oldRevision)
+        #expect(!state.isCurrentEmailRequest(firstID, revision: oldRevision))
+        #expect(state.isCurrentEmailRequest(firstID, revision: state.selectedEmailRevision))
+    }
+
+    @Test func chatState_staleLabFinish_doesNotClearNewerSpinner() {
+        let state = ChatState()
+        let selected = email(id: "selected").persistentModelID
+        state.selectEmail(selected)
+        let revision = state.selectedEmailRevision
+        state.lab.requestToken &+= 1
+        let oldToken = state.lab.requestToken
+        state.lab.isGenerating = true
+
+        state.lab.requestToken &+= 1
+        let newToken = state.lab.requestToken
+        state.finishLabGeneration(selected, revision: revision, token: oldToken)
+
+        #expect(state.lab.isGenerating)
+        #expect(state.isCurrentLabRequest(selected, revision: revision, token: newToken))
+    }
+
+    @Test func chatState_clearChat_invalidatesInFlightAnswer() {
+        let state = ChatState()
+        state.messages = [ChatMessage(role: .user, content: "Question")]
+        state.pendingQuestion = "Question"
+        state.isAnswering = true
+        state.answerRequestToken = 4
+        let oldToken = state.answerRequestToken
+
+        state.clearChat()
+
+        #expect(state.messages.isEmpty)
+        #expect(state.pendingQuestion.isEmpty)
+        #expect(!state.isAnswering)
+        #expect(!state.isCurrentAnswerRequest(oldToken))
+    }
+
     @Test func focusOrOpen_activatesExistingTabShowingDestination() {
         let ws = WorkspaceModel()
         ws.openInNewTab(.tasks)       // tab 2, active
@@ -200,6 +303,25 @@ struct WorkspaceModelTests {
         #expect(pf.sortAscending == false)
     }
 
+    @Test func restore_chatStartsWithDefaultSessionOnlyState() throws {
+        let ctx = ModelContext(try TestModelContainer.make())
+        let ws = WorkspaceModel()
+        ws.openInNewTab(.chat)
+        ws.active.chatState.mode = .database
+        ws.active.chatState.selectEmail(email(id: "selected").persistentModelID)
+        let snap = WorkspaceSnapshot(tabs: [
+            TabSnapshot(history: [.page("chat")], index: 0, diary: defaultDiarySnapshot(),
+                        tasksFilter: emptyTasksSnapshot(), pageFilters: [:]),
+        ], activeIndex: 0)
+
+        ws.restore(snap, using: ctx)
+
+        #expect(ws.active.current == .chat)
+        #expect(ws.active.chatState.mode == .database)
+        #expect(ws.active.chatState.selectedEmailID == nil)
+        #expect(ws.active.chatState.messages.isEmpty)
+    }
+
     @Test func restore_dropsTabWhoseEntityIsMissing() throws {
         let ctx = ModelContext(try TestModelContainer.make())
         let ws = WorkspaceModel()
@@ -235,5 +357,10 @@ struct WorkspaceModelTests {
         let ws2 = WorkspaceModel()
         ws2.restore(snap, using: ctx)
         #expect(ws2.tabs.contains { $0.current == .project(project.persistentModelID) })
+    }
+
+    private func email(id: String) -> EmailMessage {
+        EmailMessage(messageId: id, account: "account", mailbox: "INBOX", direction: .inbox,
+                     fromAddress: "sender@example.com", fromName: "Sender", subject: "Subject", date: FixedDates.reference)
     }
 }

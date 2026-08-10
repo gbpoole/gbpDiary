@@ -70,6 +70,7 @@ struct WorkspaceView: View {
         .background { TaskRecurrenceDriver() } // spawn recurring tasks + auto-cancel past-until tasks
         .background { EmailFetchDriver() }     // global auto-ingest (last few days, 5-min cadence)
         .background { EmailSummaryDriver() }   // global on-device email summarisation
+        .background { ChatIndexDriver() }      // rebuildable local semantic index + stale-source removal
         .sheet(isPresented: $showingNewContent) { ContentNoteEditorSheet(note: nil) }
         .onAppear {
             if !hasRestored {
@@ -116,6 +117,7 @@ struct WorkspaceView: View {
     private var activeContent: some View {
         switch workspace.active.current {
         case .diary:        DiaryView()
+        case .chat:         ChatView(state: workspace.active.chatState)
         case .tasks:        TasksView()
         case .projects:     ProjectsView()
         case .people:       PeopleView()

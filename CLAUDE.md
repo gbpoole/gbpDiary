@@ -28,7 +28,7 @@ Targets: macOS 15.7 · iOS 26 · Swift 6 (`SWIFT_DEFAULT_ACTOR_ISOLATION = MainA
 
 ### Navigation
 
-The app is an Obsidian-style shell: `WorkspaceView` (`Views/Workspace/`) is a `NavigationSplitView` with a **browse sidebar** (the `WorkspaceCategory` list — Diary, Tasks, Timesheet, Projects, Meetings, People, Institutions, Documents, Content, Images, Tags — plus a "New Note" button pinned to the sidebar bottom) and a **tabbed detail area** (`WorkspaceTabStrip` + the active tab's content).
+The app is an Obsidian-style shell: `WorkspaceView` (`Views/Workspace/`) is a `NavigationSplitView` with a **browse sidebar** (the `WorkspaceCategory` list — Diary, Chat, Tasks, Timesheet, Projects, Meetings, People, Institutions, Documents, Content, Images, Tags — plus a "New Note" button pinned to the sidebar bottom) and a **tabbed detail area** (`WorkspaceTabStrip` + the active tab's content).
 
 State lives in `WorkspaceModel` (injected via `.environment` from `gbpDiaryApp`):
 - `tabs: [WorkspaceTabState]` — each tab is a **back/forward browsing history** of `WorkspaceTab` destinations, with its own `DiaryState` (so two Diary tabs can be on different dates).
@@ -48,7 +48,7 @@ State lives in `WorkspaceModel` (injected via `.environment` from `gbpDiaryApp`)
   through `TableSortPersistence` (`Domain/TableSortPersistence.swift`). Row selection is not persisted.
 - **Safari-like tab shortcuts** live in the app's `AppCommands` **"Tabs" menu** (`gbpDiaryApp.swift`, given the shared `WorkspaceModel`): **⌘T** `newTab()` (opens a Diary tab), **⌘⇧]** `selectNextTab()` / **⌘⇧[** `selectPreviousTab()` (both wrap around), **⌘1…⌘8** `selectTab(at: n-1)` (0-based; out-of-range is a no-op) and **⌘9** `selectLastTab()`. `activeIndex` is the active tab's position in `tabs`. **⌘W** `closeActiveTab()` (closes the active tab; recreates a Diary tab if it was the last, via `closeTab`) is **not** a menu shortcut — a menu ⌘W collides with the standard File ▸ Close and the window-close wins. Instead `CloseTabKeyMonitor` (`KeyboardMonitors.swift`, started by `WorkspaceView`) intercepts ⌘W at the `NSEvent` level, **scoped to the workspace window** (via a `WindowAccessor`-resolved `NSWindow`); when the key window is the Settings window or a presented sheet, ⌘W falls through to the default Close. The "Close Tab" menu item remains (clickable, no key equivalent) for discoverability.
 
-`WorkspaceTab` is `.diary | .tasks | .projects | .people | .institutions | .meetings | .documents | .content | .images | .tags | .timesheet` plus entity cases `.project/.person/.institution/.minutes/.document/.contentNote(PersistentIdentifier)`. Category tabs render the existing list/tool views (`.content` → `ContentListView`); entity tabs resolve the model via `modelContext.model(for:)` and render its `…DetailView` (in non-sheet mode; `.contentNote` → `ContentNoteDetailView`). `reveal(note:)` sends a content note to its own `.contentNote` tab (checked before the project fallback).
+`WorkspaceTab` is `.diary | .chat | .tasks | .projects | .people | .institutions | .meetings | .documents | .content | .images | .tags | .timesheet` plus entity cases `.project/.person/.institution/.minutes/.document/.contentNote(PersistentIdentifier)`. Category tabs render the existing list/tool views (`.chat` → `ChatView`, `.content` → `ContentListView`); entity tabs resolve the model via `modelContext.model(for:)` and render its `…DetailView` (in non-sheet mode; `.contentNote` → `ContentNoteDetailView`). `reveal(note:)` sends a content note to its own `.contentNote` tab (checked before the project fallback).
 
 Note: opening Project / Person / Institution / Document detail from their list views still uses `.sheet(item:)` (not yet routed through `WorkspaceModel`); wiring those drilldowns to in-place tab navigation is pending.
 
@@ -503,8 +503,39 @@ Pure/testable pieces live in `Domain/EmailSummary.swift` (`EmailSummaryPrompt`, 
 `EmailSummarizing`). Summaries show as a sparkle-marked line on `DayEmailThreadRow`/`EmailReviewRow`
 (replacing the subject once ready; subject shown de-emphasised while pending); a **Regenerate summary**
 context menu resets `summaryState` to pending. **HARD CONSTRAINT: everything stays on device** — body read from
-local Mail, on-device model, local SwiftData; body is never persisted. This is the first step of a
-planned on-device RAG (future: `NaturalLanguage` embeddings + a local index — no external services).
+local Mail, on-device model, local SwiftData; body is never persisted.
+
+**On-device workspace Chat + Email Summary Lab.** The **Chat** sidebar page (`Views/ChatTab/ChatView.swift`)
+has two modes. **Database** mode projects the local SwiftData graph into `ChatRetrievalDocument`s
+(`ChatCorpusBuilder`): projects, tasks, people, institutions, meetings/minutes, notes, diary days,
+documents, non-dismissed email subjects/stored summaries (**never email bodies**), and bounded extracted
+text from PDFs plus UTF-8 text/Markdown/CSV/JSON/YAML attachments. `ChatMarkdownNormalizer` strips
+retrieval-only markdown syntax while preserving visible labels and paragraph boundaries;
+`ChatChunker` produces deterministic bounded chunks. `ChatSemanticIndex` stores a versioned,
+rebuildable JSON sidecar under Application Support containing source fingerprints, chunks, and English
+`NaturalLanguage.NLEmbedding` vectors; it incrementally reuses unchanged sources and removes stale
+ones. A global invisible `ChatIndexDriver` snapshots SwiftData metadata on the main actor and sends
+attachment extraction, chunking, embedding, and sidecar I/O to the shared `ChatRetrievalWorker` actor;
+it rebuilds on launch/source membership changes so deleted or dismissed content is removed even when
+Chat is idle. Source identity is `(kind, UUID)` because UUID uniqueness is per SwiftData model.
+`ChatHybridRanker` combines semantic cosine similarity with lexical overlap and falls back to
+lexical search when embeddings are unavailable. A bounded, source-labelled prompt is sent only to
+the on-device `SystemLanguageModel.default` through `FoundationModelsChatAnswerer`; guided output is
+validated against supplied citation labels. If Apple Intelligence is unavailable, Chat still shows
+the locally ranked source links. No networking, external AI API, or Private Cloud Compute is used.
+
+**Email Explorer** mode is a session-only summary experiment lab. Its single email selection uses the
+shared `FuzzyPickerField`; the body is fetched transiently from Mail, held only in that tab's
+`ChatState`, and discarded when the email changes/tab closes. Candidate generation uses
+`FoundationModelsEmailSummaryExperimenter`, optional semantically retrieved workspace background,
+and a hard prompt boundary: the email is the sole evidence for what it says; background may only
+clarify identity/terminology. Lab prompts, bodies, candidates, ratings, and chat messages are not
+persisted. **Use this summary** explicitly cleans the candidate and writes it to `EmailMessage.summary`,
+sets state `.done`, and records the current production prompt version so the auto-driver does not
+immediately replace it. Every physical `WorkspaceTabState` owns an independent `ChatState`; navigating
+away/back in that tab preserves it, while session restoration restores only the `.chat` destination
+with fresh Database state. **Experiment in Chat** on diary thread, sent-activity, and triage email rows
+always creates a new Chat tab in Email Explorer mode for that email; it never reuses another Chat tab.
 
 **Managing the day's email (clean / file / connect).** `EmailMessage` carries three management fields
 (all defaulted for lightweight migration): `dismissed: Bool`, `person: Person?` (the resolved "other
@@ -568,6 +599,7 @@ survives).
 
 - `Chip(label:color:)` — pill label for project/person/tag/duration metadata. Defined in `TaskRowView.swift`. **Canonical color palette:** projects=`.blue`, people=`.purple`, duration=`.gray`, tags=`.teal`, meeting time=`.blue`, follow-up date=`.orange`/`.red`. Use these colors consistently across all views.
 - `FlowLayout` — wrapping HStack-like layout. Defined in `MinutesDetailView.swift`.
+- `ChatView` (`Views/ChatTab/`) — local semantic database Q&A + per-tab Email Summary Lab. Source chips navigate through `WorkspaceModel`; the email picker is `FuzzyPickerField`; all model generation uses Apple's on-device Foundation Models implementation.
 - `TaskRowView` — renders a task row. Used in DayView sidebar, TasksView, ProjectDetailView, PersonDetailView. Supports `inlineEditing: Bool`.
 - `DiaryTaskRow` — renders a root day-task (Task with dayRecord set) with inline editing, notes sub-area, collapse/expand, and subtask tree.
 - `TaskEditorSheet` — full task editing sheet. Accepts `task: Task?` (nil = create new) and `defaultDate: Date`. New tasks default to unscheduled; notes field has a visible rounded border. When editing an existing task, a "Time Log" section shows all `TaskTimeEntry` items with an "Add Entry…" button opening `LogTimeSheet`.
@@ -761,6 +793,11 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Recurrence + defer: `RecurrenceRule.parse` reads `Nd/Nw/Nmo/Ny` (bare unit → 1, rejects invalid/zero); `next(after:)` advances by unit×count; `TaskFlags.isWaiting(waitUntil:)` true while the date is future; completing a recurring task spawns the next instance and an open task past `until` is auto-cancelled (`TaskRecurrenceDriver`); waiting tasks hidden on the Tasks page unless the Waiting flag is active | Tasks / recurrence + wait/until | `gbpDiaryTests/Domain/RecurrenceTests.swift` | `parse_variants`, `next_advancesByUnit`, `isWaiting_futureOnly` |
 | Task dependencies: `TaskDependency.wouldCreateCycle(taskID:newBlockerID:dependsOn:)` guards "Blocked by" edits — true for a self-edge or when the new blocker already (transitively) depends on the task; `Task.isBlocked` = any prerequisite still open (auto-unblocks when blockers complete); urgency penalises blocked / boosts blocking | Tasks / dependencies | `gbpDiaryTests/Domain/TaskDependencyTests.swift` | `wouldCreateCycle_selfAndDirect`, `wouldCreateCycle_transitive`, `wouldCreateCycle_falseForAcyclic` |
 | `FuzzyPickerSelection.toggling` adds an item (matched by `id`) when absent and removes it when present; single-select (`maxSelections == 1`) replaces the whole selection, multi-select appends only while under the cap (else unchanged). Shared by item taps and create-on-the-fly (`onCreateItem`) so creating a new item honors single- vs multi-select | Picker selection semantics | `gbpDiaryTests/Views/FuzzyPickerSelectionTests.swift` | `toggling_multiSelect_addsWhenAbsent`, `toggling_multiSelect_removesWhenPresent`, `toggling_multiSelect_atCap_leavesUnchanged`, `toggling_singleSelect_replacesExistingSelection`, `toggling_singleSelect_fromEmpty_selectsItem`, `toggling_singleSelect_removesWhenSameItemPresent` |
+| Chat corpus projection covers projects/tasks/people/institutions/meetings/notes/days/documents, excludes dismissed email and all email bodies, includes stored email summaries, and extracts bounded PDF + supported UTF-8 attachment text with deterministic failures/caps; `(kind, UUID)` keeps cross-model identities distinct; unowned attachments link to their local file | On-device workspace Chat / corpus | `gbpDiaryTests/Domain/ChatCorpusBuilderTests.swift` | `build_projectsAllSupportedModelsAndExcludesDismissedEmail`, `attachmentExtractor_supportsUTF8TypesAndHasDeterministicFailuresAndCap`, `attachmentExtractor_extractsBoundedPDFText`, `corpusCapsAreStableRegardlessOfInputOrder`, `crossModelUUIDCollision_preservesBothDocuments`, `unownedAttachment_navigatesToItsLocalFile` |
+| Chat retrieval normalizes markdown while preserving visible text/paragraphs; chunks deterministically with overlap; hybrid ranking combines lexical + semantic cosine similarity and falls back to lexical; the versioned sidecar reuses unchanged vectors, updates changed sources, deletes stale ones, distinguishes cross-model UUID collisions, and rebuilds incomplete/configuration-stale entries | On-device workspace Chat / retrieval | `gbpDiaryTests/Domain/ChatRetrievalTests.swift`, `gbpDiaryTests/Domain/ChatSemanticIndexTests.swift` | `markdownNormalizer_removesSyntaxButKeepsMeaningfulLabels`, `chunker_isDeterministicBoundedAndOverlapping`, `sourceKeyAndChunkID_includeKindForCrossModelUUIDCollision`, `cosineSimilarity_handlesOrthogonalEqualAndInvalidVectors`, `hybridRanker_usesSemanticsAndFallsBackToLexical`, `rebuildReusesUnchangedUpdatesChangedAndDeletesStale`, `crossModelUUIDCollision_indexesBothSources`, `reuseRebuildsPreviouslyEmptyBudgetSourceWhenBudgetIncreases`, `reuseIncludesChunkBudgetConfiguration`, `reuseRebuildsNilVectorsWhenSameProviderBecomesAvailable`, `searchUsesStoredVectorsAndFallsBackToLexical`, `corruptOrWrongVersionIndexIsIgnored` |
+| Chat prompts bound recent history/source context and label every source; generated citation labels are deduplicated and rejected when unknown/missing | On-device workspace Chat / grounded answers | `gbpDiaryTests/Domain/ChatAnswerDomainTests.swift` | `boundedHistory_keepsRecentMessagesWithinCharacterLimit`, `promptBuilder_labelsSourcesAndBoundsContext`, `citationValidator_acceptsKnownDedupesAndRejectsUnknown` |
+| Every workspace tab owns independent session-only Chat mode/messages/lab state; `openEmailExplorerInNewTab` always opens a fresh configured Chat tab; navigating away/back preserves that tab's state; changing email clears transient body/candidates but preserves the experiment prompt; request revisions reject stale A→B→A completions and Clear invalidates in-flight answers; restoring `.chat` resets to Database/no selected email; token is `chat` | Chat navigation / Email Summary Lab | `gbpDiaryTests/Views/WorkspaceModelTests.swift`, `gbpDiaryTests/Domain/WorkspaceSessionTests.swift` | `openEmailExplorerInNewTab_alwaysCreatesConfiguredIndependentChatTab`, `chatState_survivesNavigationWithinItsWorkspaceTab`, `chatState_changingEmailClearsTransientLabDataButKeepsPrompt`, `chatState_selectionRevision_rejectsOldAAfterAtoBtoA`, `chatState_staleLabFinish_doesNotClearNewerSpinner`, `chatState_clearChat_invalidatesInFlightAnswer`, `restore_chatStartsWithDefaultSessionOnlyState`, `categoryTokens_roundTrip` |
+| Adopting an Email Summary Lab candidate trims/cleans non-empty output, stores `.done`, and records the selected prompt version; blank candidates cannot be adopted | Email Summary Lab / candidate adoption | `gbpDiaryTests/Domain/EmailSummaryExperimentTests.swift` | `adoption_trimsAndMarksSummaryDoneAtCurrentVersion`, `adoption_rejectsBlankSummary` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 

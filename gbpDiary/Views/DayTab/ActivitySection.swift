@@ -315,6 +315,9 @@ struct SentEmailActivityRow: View {
         }
         .padding(.leading)
         .padding(.vertical, 1)
+        .contextMenu {
+            EmailExperimentInChatButton(email: email)
+        }
         .sheet(isPresented: $showingLogTime) {
             LogTimeSheet(presetDate: email.date, presetEmail: email)
         }
@@ -426,4 +429,3 @@ private struct CompletedTaskActivityRow: View {
         .padding(.vertical, 1)
     }
 }
-

@@ -70,9 +70,10 @@ struct EmailSummaryDriver: View {
             body = try await fetchBody(email)
         } catch {
             log.error("Body fetch failed: \(error.localizedDescription, privacy: .public)")
-            email.summaryState = EmailSummaryState.failed.rawValue
+            if needsSummary(email) { email.summaryState = EmailSummaryState.failed.rawValue }
             return
         }
+        guard needsSummary(email) else { return }
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             email.summaryState = EmailSummaryState.failed.rawValue
@@ -84,14 +85,21 @@ struct EmailSummaryDriver: View {
                 subject: email.subject,
                 body: trimmed
             )
+            guard needsSummary(email) else { return }
             email.summary = text.isEmpty ? nil : text
             email.summaryState = (text.isEmpty ? EmailSummaryState.failed : .done).rawValue
             email.summaryPromptVersion = EmailSummaryPrompt.promptVersion
             await pickProject(for: email, summary: text)
         } catch {
             log.error("Summarise failed: \(error.localizedDescription, privacy: .public)")
-            email.summaryState = EmailSummaryState.failed.rawValue
+            if needsSummary(email) { email.summaryState = EmailSummaryState.failed.rawValue }
         }
+    }
+
+    private func needsSummary(_ email: EmailMessage) -> Bool {
+        let state = EmailSummaryState(rawValue: email.summaryState) ?? .pending
+        return EmailSummaryPlanning.needsSummary(state: state, dismissed: email.dismissed,
+                                                 version: email.summaryPromptVersion)
     }
 
     // Best-effort on-device project pick for triage suggestions (never auto-applied). Skipped when

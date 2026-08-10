@@ -5,6 +5,7 @@ import SwiftData
 // entity's stable `PersistentIdentifier` so the same entity re-opens/activates one tab.
 enum WorkspaceTab: Hashable, Identifiable {
     case diary
+    case chat
     case tasks
     case projects
     case people
@@ -29,6 +30,7 @@ enum WorkspaceTab: Hashable, Identifiable {
     var category: WorkspaceCategory {
         switch self {
         case .diary:                     .diary
+        case .chat:                      .chat
         case .tasks:                     .tasks
         case .projects, .project:        .projects
         case .people, .person:           .people
@@ -46,6 +48,7 @@ enum WorkspaceTab: Hashable, Identifiable {
 // The fixed browse categories shown in the sidebar.
 enum WorkspaceCategory: String, CaseIterable, Identifiable {
     case diary        = "Diary"
+    case chat         = "Chat"
     case tasks        = "Tasks"
     case timesheet    = "Timesheet"
     case projects     = "Projects"
@@ -62,6 +65,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     var systemImage: String {
         switch self {
         case .diary:        "calendar"
+        case .chat:         "bubble.left.and.bubble.right"
         case .tasks:        "checkmark.square"
         case .projects:     "folder"
         case .people:       "person.2"
@@ -79,6 +83,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     var tab: WorkspaceTab {
         switch self {
         case .diary:        .diary
+        case .chat:         .chat
         case .tasks:        .tasks
         case .projects:     .projects
         case .people:       .people
@@ -90,6 +95,102 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         case .tags:         .tags
         case .timesheet:    .timesheet
         }
+    }
+}
+
+enum ChatMode {
+    case database
+    case emailExplorerLab
+}
+
+struct ChatMessage: Identifiable {
+    let id = UUID()
+    var role: ChatRole
+    var content: String
+    var sources: [ChatSourceReference] = []
+}
+
+enum ChatLabRating: String, CaseIterable, Identifiable {
+    case best = "Best"
+    case tooVague = "Too vague"
+    case missedAction = "Missed action"
+    case incorrect = "Incorrect"
+
+    var id: Self { self }
+}
+
+struct ChatLabCandidate: Identifiable {
+    let id = UUID()
+    var summary: String
+    var rating: ChatLabRating?
+    var isAdopted = false
+}
+
+struct ChatLabState {
+    var body: String?
+    var bodyError: String?
+    var isLoadingBody = false
+    var instructions = "Emphasise the gist, decisions, requests, deadlines, and actions for the reader. Be specific without adding unsupported facts."
+    var includeRelatedContext = true
+    var candidates: [ChatLabCandidate] = []
+    var isGenerating = false
+    var generationError: String?
+    var requestToken = 0
+
+    mutating func clearEmailData() {
+        requestToken &+= 1
+        body = nil
+        bodyError = nil
+        isLoadingBody = false
+        candidates.removeAll()
+        isGenerating = false
+        generationError = nil
+    }
+}
+
+/// Per-tab, session-only Chat state. It is intentionally omitted from workspace snapshots.
+@Observable final class ChatState {
+    var mode: ChatMode = .database
+    private(set) var selectedEmailID: PersistentIdentifier?
+    private(set) var selectedEmailRevision = 0
+    var messages: [ChatMessage] = []
+    var draft = ""
+    var pendingQuestion = ""
+    var isAnswering = false
+    var answerError: String?
+    var answerRequestToken = 0
+    var lab = ChatLabState()
+
+    func selectEmail(_ id: PersistentIdentifier?) {
+        guard selectedEmailID != id else { return }
+        selectedEmailID = id
+        selectedEmailRevision += 1
+        lab.clearEmailData()
+    }
+
+    func isCurrentEmailRequest(_ id: PersistentIdentifier, revision: Int) -> Bool {
+        selectedEmailID == id && selectedEmailRevision == revision
+    }
+
+    func isCurrentLabRequest(_ id: PersistentIdentifier, revision: Int, token: Int) -> Bool {
+        isCurrentEmailRequest(id, revision: revision) && lab.requestToken == token
+    }
+
+    func finishLabGeneration(_ id: PersistentIdentifier, revision: Int, token: Int) {
+        guard isCurrentLabRequest(id, revision: revision, token: token) else { return }
+        lab.isGenerating = false
+    }
+
+    func clearChat() {
+        answerRequestToken &+= 1
+        messages.removeAll()
+        pendingQuestion = ""
+        isAnswering = false
+        answerError = nil
+    }
+
+    func isCurrentAnswerRequest(_ token: Int) -> Bool {
+        answerRequestToken == token
     }
 }
 
@@ -153,7 +254,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         case .institutions: ListPageFilter(sortColumnID: "name", sortAscending: true)
         case .tags:         ListPageFilter(sortColumnID: "tag", sortAscending: true)
         case .images:       ListPageFilter(sortColumnID: "name", sortAscending: true)
-        case .diary, .tasks, .timesheet:
+        case .diary, .chat, .tasks, .timesheet:
             ListPageFilter(sortColumnID: "name", sortAscending: true)  // unused (not list pages)
         }
     }
@@ -163,6 +264,8 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     let id = UUID()
     // Per-tab Diary browsing state so two tabs showing the Diary can be on different dates.
     let diaryState = DiaryState()
+    // Per-tab Chat state is session-only and starts fresh after workspace restoration.
+    let chatState = ChatState()
     // Per-tab Tasks-page filter state (remembered across in-tab navigation).
     let tasksFilter = TasksFilterState()
     // Per-tab filter state for the other shared-style list pages, created lazily with page defaults.
@@ -243,6 +346,15 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     /// Open a destination in a brand-new tab and focus it (e.g. meeting minutes).
     func openInNewTab(_ tab: WorkspaceTab) {
         let state = WorkspaceTabState(tab)
+        tabs.append(state)
+        activeId = state.id
+    }
+
+    /// Always open a fresh Chat tab configured for exploring the selected email.
+    func openEmailExplorerInNewTab(for email: EmailMessage) {
+        let state = WorkspaceTabState(.chat)
+        state.chatState.mode = .emailExplorerLab
+        state.chatState.selectEmail(email.persistentModelID)
         tabs.append(state)
         activeId = state.id
     }

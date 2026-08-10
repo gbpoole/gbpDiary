@@ -254,6 +254,7 @@ private struct EmailTriageRow: View {
         }
         .padding(.vertical, 1)
         .contextMenu {
+            EmailExperimentInChatButton(email: email)
             Button("Exclude sender (\(email.fromAddress))") { onExcludeAddress() }
             Button("Exclude domain") { onExcludeDomain() }
         }

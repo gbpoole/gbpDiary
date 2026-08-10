@@ -55,6 +55,7 @@ enum WorkspaceTabCoding {
     static func token(forCategoryTab tab: WorkspaceTab) -> String? {
         switch tab {
         case .diary:        "diary"
+        case .chat:         "chat"
         case .tasks:        "tasks"
         case .projects:     "projects"
         case .people:       "people"
@@ -72,6 +73,7 @@ enum WorkspaceTabCoding {
     static func categoryTab(forToken token: String) -> WorkspaceTab? {
         switch token {
         case "diary":        .diary
+        case "chat":         .chat
         case "tasks":        .tasks
         case "projects":     .projects
         case "people":       .people

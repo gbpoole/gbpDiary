@@ -73,7 +73,7 @@ struct WorkspaceTabStrip: View {
 
     private func describe(_ tab: WorkspaceTab) -> (title: String, icon: String) {
         switch tab {
-        case .diary, .tasks, .projects, .people, .institutions,
+        case .diary, .chat, .tasks, .projects, .people, .institutions,
              .meetings, .documents, .content, .images, .tags, .timesheet:
             let cat = tab.category
             return (cat.rawValue, cat.systemImage)
