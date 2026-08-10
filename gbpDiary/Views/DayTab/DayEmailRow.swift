@@ -19,7 +19,7 @@ struct EmailThread: Identifiable {
 
     /// On-device AI summary (the latest message's) and whether it's still being generated.
     var summary: String? { latest.summary }
-    var isSummarizing: Bool { latest.summaryState == EmailSummaryState.pending.rawValue }
+    var isSummarizing: Bool { latest.isSummarizing }
 
     /// To-dos made from any message in the thread.
     var tasks: [Task] { messages.flatMap(\.tasks) }

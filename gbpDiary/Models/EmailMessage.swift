@@ -38,6 +38,9 @@ import SwiftData
     var hasTasks: Bool { !tasks.isEmpty }
     var hasOpenTask: Bool { tasks.contains(where: \.isOpen) }
 
+    /// Whether the on-device AI summary is still being generated (drives the "summarising…" hint).
+    var isSummarizing: Bool { summaryState == EmailSummaryState.pending.rawValue }
+
     // On-device AI summary (the body is fetched transiently and never stored — only this summary is).
     var summary: String?
     // Raw of EmailSummaryState: "pending" (needs one) | "done" | "failed" | "unavailable".

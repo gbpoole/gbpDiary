@@ -287,10 +287,13 @@ struct SentEmailActivityRow: View {
                 }
                 .buttonStyle(.plain)
                 .help("Open in Mail")
-                Text(email.subject.isEmpty ? "(no subject)" : email.subject)
-                    .font(.subheadline)
-                    .foregroundStyle(AppTheme.text)
-                    .lineLimit(1)
+                personChip
+                ForEach(email.projects, id: \.persistentModelID) { project in
+                    Chip(label: project.name, color: AppTheme.project)
+                }
+                EmailContentLine(subject: email.subject, summary: email.summary,
+                                 isSummarizing: email.isSummarizing,
+                                 font: .subheadline, lineLimit: 1)
                 Spacer(minLength: 8)
                 HStack(spacing: 4) {
                     Button { showingLogTime = true } label: {
@@ -318,6 +321,18 @@ struct SentEmailActivityRow: View {
         .alert("Couldn't open email", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(openError ?? "") }
+    }
+
+    // The email's "other party" (for a sent email, the recipient); falls back to the stored
+    // name/address as an "unrecognized" chip when no Person is linked, mirroring DayEmailThreadRow.
+    @ViewBuilder private var personChip: some View {
+        if let person = email.person {
+            Chip(label: person.name, color: AppTheme.person)
+        } else {
+            let label = email.fromName?.isEmpty == false ? email.fromName!
+                : (email.fromAddress.isEmpty ? "Unrecognized" : email.fromAddress)
+            Chip(label: label, color: AppTheme.warning)
+        }
     }
 
     private func openInMail() {

@@ -84,6 +84,18 @@ struct TaskComputedPropertyTests {
         #expect(!email.hasOpenTask)
     }
 
+    @Test func email_isSummarizing_trueOnlyWhilePending() {
+        let email = EmailMessage(messageId: "<m>", account: "a", mailbox: "Sent", direction: .sent,
+                                 fromAddress: "x@y.com", fromName: nil, subject: "s", date: .now)
+        #expect(email.isSummarizing)   // default state is pending
+        email.summaryState = EmailSummaryState.done.rawValue
+        #expect(!email.isSummarizing)
+        email.summaryState = EmailSummaryState.failed.rawValue
+        #expect(!email.isSummarizing)
+        email.summaryState = EmailSummaryState.unavailable.rawValue
+        #expect(!email.isSummarizing)
+    }
+
     // MARK: - isInlineSummaryEmpty
 
     @Test func isInlineSummaryEmpty_trueForWhitespaceOnlySummary() {

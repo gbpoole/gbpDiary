@@ -511,7 +511,12 @@ by Mail's integer id via `MailScriptParsing.openMessageScript`; the open action 
 `SentEmailActivityRow` and the triage rows, with a friendly alert if the message can't be opened. **Sent** emails also
 appear in the day's **Activity** section at their send time — **nested inside the focus block** covering
 that time (like meetings/entries; `ActivitySection.sentEmails(for:)` → `FocusBlockRow`), or standalone
-when outside every block (`SentEmailActivityRow`). A **+** button logs time for sending them via
+when outside every block (`SentEmailActivityRow`). The `SentEmailActivityRow` line **leads with the
+email's person chip** (the recipient — an "Unrecognized" `AppTheme.warning` chip when no Person is
+linked) **and its project chip(s)**, then shows the **on-device AI summary in place of the subject**
+via the shared `EmailContentLine` (falling back to the de-emphasised subject until the summary is
+ready — `EmailMessage.isSummarizing` gates the "summarising…" hint). A **+** button logs time for
+sending them via
 `LogTimeSheet(presetEmail:)` — a task-less `TaskTimeEntry` with `email` set. In-block email time reduces
 that block's **net remaining** (`FocusBlockRow.netHours` adds the emails' `timeEntries` hours); standalone
 email time adds to the day total. Email-linked entries are kept out of the plain entry bucketing/rendering
@@ -726,6 +731,7 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Email triage state: `EmailTriageState.from(dismissed:accepted:)` — dismissed wins, else accepted→accepted / neither→unclassified | Email triage | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `state_dismissedWins`, `state_acceptedThenUnclassified` |
 | Triage bucket: `EmailTriageCategory.classify(state:hasTasks:)` — dismissed wins; else a linked to-do → Tasks; else accepted → Accepted; else To triage | Email triage / task bucket | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `category_classify_bucketsByStateAndTasks` |
 | `Task.isOpen` is false only when completed/cancelled; `EmailMessage.hasTasks`/`hasOpenTask` reflect linked task presence/openness | Email→task visibility | `gbpDiaryTests/Models/TaskComputedPropertyTests.swift` | `isOpen_trueUntilCompletedOrCancelled`, `email_hasOpenTask_reflectsLinkedTaskStatuses` |
+| `EmailMessage.isSummarizing` is true only while `summaryState` is `pending` (drives the sent-email activity row's summary-vs-subject display) | Activity section / sent-email summaries | `gbpDiaryTests/Models/TaskComputedPropertyTests.swift` | `email_isSummarizing_trueOnlyWhilePending` |
 | Incremental fetch: `EmailIngest.fetchBounds(lastFetchedAt:now:)` — first run = full 3-day window; otherwise from `last − 10-min overlap` (clamped to the window start) to end-of-today | Email auto-ingest | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `fetchBounds_firstRun_usesFullWindow`, `fetchBounds_incremental_startsJustBeforeLastFetch`, `fetchBounds_longGap_clampsToWindowStart` |
 | Deleting an email nullifies its todos' `Task.originEmail` (the tasks survive, unlinked) | Email triage / make-todo | `gbpDiaryTests/Models/RelationshipIntegrityTests.swift` | `emailDelete_nullifiesTaskOriginEmail_taskSurvives` |
 | AI email summaries: `EmailSummaryPrompt.build(context:…)` embeds subject (placeholder when blank) + clamped body + identity/direction/roster (omitting missing pieces); instructions state the self="you"/no-titles/no-signatures rules; `EmailSummaryRoster.build` caps + orders priority-first, dedups by id; `EmailSummaryText.clean` trims/collapses/caps; `EmailSummaryState` raw round-trips; `EmailSummaryPlanning.needsSummary` is true for a non-dismissed pending email OR a done email with a stale prompt version | On-device email summaries | `gbpDiaryTests/Domain/EmailSummaryTests.swift` | `prompt_includesSubjectAndBody`, `prompt_blankSubject_usesPlaceholder`, `prompt_includesIdentityDirectionAndRoster`, `prompt_omitsMissingPieces`, `instructions_containKeyRules`, `roster_capsAndOrdersPriorityFirst`, `roster_dedupsById`, `clampBody_capsLengthAndTrims`, `clean_trimsCollapsesAndCaps`, `state_rawRoundTrips`, `needsSummary_pendingDismissedAndStaleVersion` |
