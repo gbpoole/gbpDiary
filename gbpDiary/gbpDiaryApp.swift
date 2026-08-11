@@ -10,6 +10,7 @@ import AppKit
 struct gbpDiaryApp: App {
     @State private var didRunBundleImport = false
     @State private var workspace = WorkspaceModel()
+    @State private var hotkeys = HotkeySettings()
     @AppStorage(SettingsTab.storageKey) private var settingsTab = SettingsTab.general
 
     var sharedModelContainer: ModelContainer = {
@@ -48,6 +49,7 @@ struct gbpDiaryApp: App {
         WindowGroup {
             WorkspaceView()
                 .environment(workspace)
+                .environment(hotkeys)
                 .onAppear {
                     sweepOrphanedAttachments()
                     runBundleImportIfRequested()
@@ -55,7 +57,7 @@ struct gbpDiaryApp: App {
         }
         .modelContainer(sharedModelContainer)
         .commands {
-            AppCommands(workspace: workspace)
+            AppCommands(workspace: workspace, hotkeys: hotkeys)
         }
         #if os(macOS)
         Settings {
@@ -69,7 +71,11 @@ struct gbpDiaryApp: App {
                 EmailSettingsView()
                     .tabItem { Label("Email", systemImage: "envelope") }
                     .tag(SettingsTab.email)
+                HotkeySettingsView()
+                    .tabItem { Label("Shortcuts", systemImage: "keyboard") }
+                    .tag(SettingsTab.shortcuts)
             }
+            .environment(hotkeys)
             .modelContainer(sharedModelContainer)
         }
         #endif
@@ -135,27 +141,29 @@ struct ObsidianImportLaunchRequest: Equatable {
 struct AppCommands: Commands {
     /// The shared workspace whose tabs the shortcuts drive. Same instance as the WindowGroup's.
     let workspace: WorkspaceModel
+    /// User-configurable hotkey bindings (Settings ▸ Shortcuts). Read here so menu shortcuts update live.
+    let hotkeys: HotkeySettings
 
     var body: some Commands {
         CommandMenu("Tabs") {
             Button("New Tab") { workspace.newTab() }
-                .keyboardShortcut("t", modifiers: .command)
-            // ⌘W is handled by CloseTabKeyMonitor (WorkspaceView), not a menu shortcut: a menu ⌘W
-            // would collide with the standard File ▸ Close and the window-close would win.
+                .keyboardShortcut(hotkeys.hotkey(for: .newTab).keyboardShortcut)
+            // Close Tab is handled by CloseTabKeyMonitor (WorkspaceView), not a menu shortcut: a menu
+            // shortcut on the default ⌘W would collide with the standard File ▸ Close and lose to it.
             Button("Close Tab") { workspace.closeActiveTab() }
             Divider()
             Button("Show Next Tab") { workspace.selectNextTab() }
-                .keyboardShortcut("]", modifiers: [.command, .shift])
+                .keyboardShortcut(hotkeys.hotkey(for: .nextTab).keyboardShortcut)
             Button("Show Previous Tab") { workspace.selectPreviousTab() }
-                .keyboardShortcut("[", modifiers: [.command, .shift])
+                .keyboardShortcut(hotkeys.hotkey(for: .previousTab).keyboardShortcut)
             Divider()
-            // ⌘1…⌘8 jump to that tab; ⌘9 jumps to the last (Safari convention).
+            // ⌘1…⌘8 jump to that tab by position (fixed); ⌘9 = the configurable "Show Last Tab".
             ForEach(1...8, id: \.self) { n in
                 Button("Show Tab \(n)") { workspace.selectTab(at: n - 1) }
                     .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: .command)
             }
             Button("Show Last Tab") { workspace.selectLastTab() }
-                .keyboardShortcut("9", modifiers: .command)
+                .keyboardShortcut(hotkeys.hotkey(for: .lastTab).keyboardShortcut)
         }
     }
 }

@@ -117,22 +117,21 @@ final class ShiftArrowMonitor: @unchecked Sendable {
     }
 }
 
-// Intercepts ⌘W so it closes the active workspace *tab* instead of the window. SwiftUI has no command
-// placement to replace the standard File ▸ Close (⌘W), which otherwise wins and closes the window.
-// Scoped to the workspace window via `targetWindow`: when the key window is something else (the
-// Settings window, or a presented sheet), the event falls through to the default Close behaviour.
+// Intercepts the configurable "Close Tab" shortcut (default ⌘W) so it closes the active workspace
+// *tab* instead of the window. SwiftUI has no command placement to replace the standard File ▸ Close
+// (⌘W), which otherwise wins and closes the window. Scoped to the workspace window via `targetWindow`:
+// when the key window is something else (the Settings window, or a presented sheet), the event falls
+// through to the default behaviour. `hotkey` is supplied from `HotkeySettings` and kept in sync.
 final class CloseTabKeyMonitor: @unchecked Sendable {
     private var monitor: Any?
     var action: (() -> Void)?
+    var hotkey: Hotkey?
     weak var targetWindow: NSWindow?
 
     func start() {
         guard monitor == nil else { return }
         monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self,
-                  event.charactersIgnoringModifiers?.lowercased() == "w",
-                  event.modifierFlags.intersection([.command, .shift, .option, .control]) == .command
-            else { return event }
+            guard let self, self.hotkey?.matches(event) == true else { return event }
             let handled = MainActor.assumeIsolated { () -> Bool in
                 guard let target = self.targetWindow, event.window === target else { return false }
                 self.action?()

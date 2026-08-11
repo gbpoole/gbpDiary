@@ -9,6 +9,7 @@ import AppKit
 struct WorkspaceView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(WorkspaceModel.self) private var workspace
+    @Environment(HotkeySettings.self) private var hotkeys
     @Environment(\.scenePhase) private var scenePhase
     @Query private var allAttachments: [Attachment]
     @Query private var allNotes: [Note]
@@ -91,10 +92,12 @@ struct WorkspaceView: View {
         .onAppear {
             closeTabMonitor.action = { workspace.closeActiveTab() }
             closeTabMonitor.targetWindow = hostWindow
+            closeTabMonitor.hotkey = hotkeys.hotkey(for: .closeTab)
             closeTabMonitor.start()
         }
         .onDisappear { closeTabMonitor.stop() }
         .onChange(of: hostWindow) { _, window in closeTabMonitor.targetWindow = window }
+        .onChange(of: hotkeys.hotkey(for: .closeTab)) { _, hk in closeTabMonitor.hotkey = hk }
         #endif
     }
 
