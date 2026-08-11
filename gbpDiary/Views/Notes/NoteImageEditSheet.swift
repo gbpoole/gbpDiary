@@ -8,6 +8,9 @@ struct NoteImageEditSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var showingRemove = false
+    // Draft width % edited by the slider; committed to the model only on Done, so the note preview
+    // updates once (on accept) rather than continuously while dragging.
+    @State private var widthPercent: Int?
 
     var body: some View {
         NavigationStack {
@@ -32,6 +35,26 @@ struct NoteImageEditSheet: View {
                         .textFieldStyle(.roundedBorder)
                         .lineLimit(2...5)
                     }
+
+                    field("Display size") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 10) {
+                                // 100% = fit the note width, stored as nil.
+                                Slider(value: Binding(
+                                    get: { Double(widthPercent ?? 100) },
+                                    set: { new in
+                                        let percent = Int(new.rounded())
+                                        widthPercent = percent >= 100 ? nil : percent
+                                    }
+                                ), in: 10...100, step: 5)
+                                Text("\(widthPercent ?? 100)%")
+                                    .monospacedDigit().foregroundStyle(.secondary)
+                                    .frame(width: 44, alignment: .trailing)
+                            }
+                            Text("Width of this image as a percentage of the note's width (100% = full width). The original full-resolution image is always kept for downloads and PDFs.")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 .padding()
             }
@@ -41,9 +64,13 @@ struct NoteImageEditSheet: View {
                     Button("Remove", role: .destructive) { showingRemove = true }
                 }
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button("Done") {
+                        attachment.displayWidthPercent = widthPercent   // apply the size on accept
+                        dismiss()
+                    }
                 }
             }
+            .onAppear { widthPercent = attachment.displayWidthPercent }
             .alert("Remove image?", isPresented: $showingRemove) {
                 Button("Remove", role: .destructive) { onRemove(); dismiss() }
                 Button("Cancel", role: .cancel) {}

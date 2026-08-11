@@ -17,6 +17,10 @@ enum AttachmentKind: String, Codable {
 
     var displayName: String?           // user-facing name shown on screen / used as markdown alt text
     var attachmentDescription: String? // optional longer description of the image's contents/relevance
+    /// User-chosen display width as a percent of the note's available width (1–100) for previews;
+    /// nil = 100% / fit to the pane (default). The original full-resolution file is always retained
+    /// for export/download.
+    var displayWidthPercent: Int?
 
     var document: Document?
     var note: Note?

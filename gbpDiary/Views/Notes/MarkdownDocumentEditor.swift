@@ -451,6 +451,10 @@ struct MarkdownDocumentEditor: View {
                 markdown: NotePreviewMarkdown.render(previewDraft, resolve: fileURL(forAttachmentID:)),
                 syntaxExtensions: [.math]
             )
+            .noteImageSizing(note.attachments)             // honor each image's manual display width
+            // Textual caches resolved image attachments by URL, so changing only the loader's width
+            // doesn't re-resolve. Recreate the preview when any image's manual size changes.
+            .id(imageSizingKey)
             .minutesHeadingStyle(showsFormattingToolbar)   // innermost so it overrides the bundled style
             .textual.textSelection(.enabled)
             .textual.structuredTextStyle(.gitHub)
@@ -503,6 +507,14 @@ struct MarkdownDocumentEditor: View {
 
     private func fileURL(forAttachmentID id: UUID) -> URL? {
         note.attachments.first { $0.id == id }?.fileURL
+    }
+
+    // Identity for the preview that changes when any image's manual size (or the set of images) changes,
+    // forcing Textual to re-resolve attachments. Reading each width here also registers the observation.
+    private var imageSizingKey: String {
+        note.attachments
+            .map { "\($0.id.uuidString):\($0.displayWidthPercent ?? 100)" }
+            .joined(separator: ",")
     }
 
     // Remove an image ref from the note markdown and delete its attachment/file.
