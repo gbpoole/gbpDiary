@@ -21,9 +21,10 @@ struct FoundationModelsEmailSummaryExperimenter: EmailSummaryExperimenting {
         #if canImport(FoundationModels)
         if #available(macOS 26, *), SystemLanguageModel.default.availability == .available {
             let instructions = """
-            You experiment with concise email summaries for the reader's diary.
+            \(EmailSummaryPrompt.instructions)
+
+            You are testing an experimental emphasis for this summary.
             The EMAIL is the sole evidence for what the email says. BACKGROUND may clarify identities and terminology, but never introduce a background fact as though it appeared in the email.
-            Refer to the reader as "you". Omit greetings, signatures, titles, affiliations, preambles, and markdown. Output only one or two factual sentences.
             """
             var prompt = EmailSummaryPrompt.build(context: request.context,
                                                   subject: request.subject, body: body)

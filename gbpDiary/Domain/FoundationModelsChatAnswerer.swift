@@ -41,7 +41,11 @@ struct FoundationModelsChatAnswerer: ChatAnswering {
             let session = LanguageModelSession(instructions: instructions)
             let options = GenerationOptions(temperature: 0.2, maximumResponseTokens: 600)
             let response = try await session.respond(to: request.prompt.prompt, options: options)
-            return try ChatAnswerAssembly.make(text: response.content, prompt: request.prompt)
+            return try ChatAnswerAssembly.make(
+                text: response.content,
+                prompt: request.prompt,
+                fallbackCitations: request.fallbackCitations
+            )
         }
         #endif
         throw ChatAnswerError.modelUnavailable

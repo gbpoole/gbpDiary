@@ -39,6 +39,57 @@ struct ChatAnswerDomainTests {
         #expect(bundle.prompt.contains("[S1] Note: Alpha"))
         #expect(bundle.prompt.contains("[S2] Note: Beta"))
         #expect(bundle.prompt.contains("Question: What changed?"))
+        #expect(bundle.requiresCitation)
+    }
+
+    @Test func followUpTransformation_usesPriorQuestionAndAllowsCitationFreeOutput() throws {
+        let history = [
+            ChatHistoryMessage(role: .user, text: "What happened to the train service?"),
+            ChatHistoryMessage(role: .assistant, text: "The service was severely disrupted. [S1]")
+        ]
+        let question = "Can you tke this material and build a joke from it?"
+        #expect(ChatFollowUpIntent.isTransformation(question: question, history: history))
+        #expect(ChatFollowUpIntent.retrievalQuery(question: question, history: history)
+            .hasPrefix("What happened to the train service?"))
+
+        let source = ranked(0, text: "The trains completely imploded today.").chunk.source
+        let bundle = ChatPromptBuilder.build(
+            question: question,
+            rankedChunks: [ranked(0, text: "The trains completely imploded today.")],
+            history: history,
+            allowsUncitedTransformation: true
+        )
+        #expect(!bundle.requiresCitation)
+        #expect(bundle.prompt.contains("Inline citations are optional"))
+        let answer = try ChatAnswerAssembly.make(
+            text: "The timetable finally arrived, but the train didn't.",
+            prompt: bundle,
+            fallbackCitations: [source]
+        )
+        #expect(answer.citations == [source])
+    }
+
+    @Test func followUpTransformation_requiresContextAndRejectsUnknownCitations() {
+        let question = "Turn this material into a joke"
+        #expect(!ChatFollowUpIntent.isTransformation(question: question, history: []))
+        let history = [ChatHistoryMessage(role: .assistant, text: "Grounded answer [S1]")]
+        let bundle = ChatPromptBuilder.build(
+            question: question,
+            rankedChunks: [ranked(0, text: "Source")],
+            history: history,
+            allowsUncitedTransformation: true
+        )
+        #expect(throws: ChatAnswerError.invalidCitations(["S9"])) {
+            try ChatAnswerAssembly.make(text: "A joke [S9]", prompt: bundle)
+        }
+    }
+
+    @Test func capabilityResponse_handlesOnlyStandaloneHelpQuestions() {
+        #expect(ChatCapabilityResponse.answer(for: "What can you do?") == ChatCapabilityResponse.text)
+        #expect(ChatCapabilityResponse.answer(for: "  HOW can you help! ") == ChatCapabilityResponse.text)
+        #expect(ChatCapabilityResponse.answer(for: "help") == ChatCapabilityResponse.text)
+        #expect(ChatCapabilityResponse.answer(for: "What can you do about Project Alpha?") == nil)
+        #expect(ChatCapabilityResponse.answer(for: "What is due today?") == nil)
     }
 
     @Test func citationValidator_acceptsKnownDedupesAndRejectsUnknown() {
@@ -81,6 +132,14 @@ struct ChatAnswerDomainTests {
         #expect(throws: ChatAnswerError.invalidCitations(["S2"])) {
             try ChatAnswerAssembly.make(text: "The deadline moved. [S2]", prompt: bundle)
         }
+    }
+
+
+    @Test func answerErrors_haveActionableDescriptions() {
+        #expect(ChatAnswerError.emptyAnswer.localizedDescription.contains("empty answer"))
+        #expect(ChatAnswerError.invalidCitations([]).localizedDescription.contains("did not cite"))
+        #expect(ChatAnswerError.invalidCitations(["S9"]).localizedDescription.contains("S9"))
+        #expect(ChatAnswerError.modelUnavailable.localizedDescription.contains("unavailable"))
     }
 
     @Test func summaryAdoption_updatesMatchingDocumentOnlyAndIgnoresBlank() {

@@ -18,12 +18,14 @@ nonisolated struct ChatPromptSource: Equatable, Sendable {
 nonisolated struct ChatPromptBundle: Equatable, Sendable {
     let prompt: String
     let sources: [ChatPromptSource]
+    let requiresCitation: Bool
 }
 
 nonisolated enum ChatPromptBuilder {
     static func build(question: String, rankedChunks: [ChatRankedChunk], history: [ChatHistoryMessage],
                       maxHistoryMessages: Int = 6, maxHistoryCharacters: Int = 3_000,
-                      maxSourceCharacters: Int = 8_000) -> ChatPromptBundle {
+                      maxSourceCharacters: Int = 8_000,
+                      allowsUncitedTransformation: Bool = false) -> ChatPromptBundle {
         let recentHistory = boundedHistory(history, maxMessages: maxHistoryMessages, maxCharacters: maxHistoryCharacters)
         var sourceCharacters = 0
         var sources: [ChatPromptSource] = []
@@ -40,7 +42,10 @@ nonisolated enum ChatPromptBuilder {
             sourceCharacters += text.count
         }
 
-        var sections = ["Answer using only the supplied sources. Cite factual claims with source labels such as [S1]. If the sources do not answer the question, say so."]
+        let groundingInstruction = allowsUncitedTransformation
+            ? "Transform only the material in the recent conversation and supplied sources. Do not add facts. Inline citations are optional in the transformed output."
+            : "Answer using only the supplied sources. Cite factual claims with source labels such as [S1]. If the sources do not answer the question, say so."
+        var sections = [groundingInstruction]
         if !recentHistory.isEmpty {
             let lines = recentHistory.map { "\($0.role == .user ? "User" : "Assistant"): \($0.text)" }
             sections.append("Recent conversation:\n" + lines.joined(separator: "\n"))
@@ -52,7 +57,8 @@ nonisolated enum ChatPromptBuilder {
             sections.append("Sources:\n" + rendered.joined(separator: "\n\n"))
         }
         sections.append("Question: \(question.trimmingCharacters(in: .whitespacesAndNewlines))")
-        return ChatPromptBundle(prompt: sections.joined(separator: "\n\n"), sources: sources)
+        return ChatPromptBundle(prompt: sections.joined(separator: "\n\n"), sources: sources,
+                                requiresCitation: !allowsUncitedTransformation)
     }
 
     static func boundedHistory(_ history: [ChatHistoryMessage], maxMessages: Int,
@@ -73,6 +79,50 @@ nonisolated enum ChatPromptBuilder {
     }
 }
 
+nonisolated enum ChatFollowUpIntent {
+    static func isTransformation(question: String, history: [ChatHistoryMessage]) -> Bool {
+        guard history.contains(where: { $0.role == .assistant }) else { return false }
+        let words = Set(normalizedWords(question))
+        let references: Set<String> = ["above", "it", "material", "that", "these", "this"]
+        let transformations: Set<String> = [
+            "build", "draft", "expand", "joke", "make", "poem", "rephrase", "rewrite",
+            "shorten", "summarise", "summarize", "turn"
+        ]
+        return !words.isDisjoint(with: references) && !words.isDisjoint(with: transformations)
+    }
+
+    static func retrievalQuery(question: String, history: [ChatHistoryMessage]) -> String {
+        guard isTransformation(question: question, history: history),
+              let priorQuestion = history.last(where: { $0.role == .user })?.text else { return question }
+        return priorQuestion + " " + question
+    }
+
+    private static func normalizedWords(_ text: String) -> [String] {
+        text.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+    }
+}
+
+nonisolated enum ChatCapabilityResponse {
+    static let text = "I can search your local projects, tasks, people, institutions, meetings and minutes, notes, diary days, documents, stored email subjects and summaries, and supported attachment text. I answer with links to the workspace sources I used. Database Chat never reads email bodies; use Email Explorer to experiment with a selected email's summary."
+
+    static func answer(for question: String) -> String? {
+        let normalized = question.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+        let capabilityQuestions: Set<String> = [
+            "help",
+            "how can you help",
+            "what can i ask you",
+            "what can you do",
+            "what do you do"
+        ]
+        return capabilityQuestions.contains(normalized) ? text : nil
+    }
+}
+
 nonisolated struct ChatCitationValidation: Equatable, Sendable {
     let citedLabels: [String]
     let unknownLabels: [String]
@@ -82,7 +132,7 @@ nonisolated struct ChatCitationValidation: Equatable, Sendable {
 }
 
 nonisolated enum ChatCitationValidator {
-    static func validate(answer: String, allowedLabels: Set<String>) -> ChatCitationValidation {
+    static func validate(answer: String, allowedLabels: Set<String>, requiresCitation: Bool? = nil) -> ChatCitationValidation {
         let pattern = #"\[([Ss]\d+)\]"#
         let regex = try? NSRegularExpression(pattern: pattern)
         let range = NSRange(answer.startIndex..<answer.endIndex, in: answer)
@@ -96,7 +146,7 @@ nonisolated enum ChatCitationValidator {
         return ChatCitationValidation(
             citedLabels: labels.filter(allowedLabels.contains),
             unknownLabels: labels.filter { !allowedLabels.contains($0) },
-            requiresCitation: !allowedLabels.isEmpty
+            requiresCitation: requiresCitation ?? !allowedLabels.isEmpty
         )
     }
 }
@@ -122,6 +172,12 @@ nonisolated enum ChatSummaryAdoption {
 
 nonisolated struct ChatAnswerRequest: Equatable, Sendable {
     let prompt: ChatPromptBundle
+    let fallbackCitations: [ChatSourceReference]
+
+    init(prompt: ChatPromptBundle, fallbackCitations: [ChatSourceReference] = []) {
+        self.prompt = prompt
+        self.fallbackCitations = fallbackCitations
+    }
 }
 
 nonisolated struct ChatAnswer: Equatable, Sendable {
@@ -131,25 +187,44 @@ nonisolated struct ChatAnswer: Equatable, Sendable {
 }
 
 nonisolated enum ChatAnswerAssembly {
-    static func make(text: String, prompt: ChatPromptBundle) throws -> ChatAnswer {
+    static func make(text: String, prompt: ChatPromptBundle,
+                     fallbackCitations: [ChatSourceReference] = []) throws -> ChatAnswer {
         let answer = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !answer.isEmpty else { throw ChatAnswerError.emptyAnswer }
 
         let byLabel = Dictionary(uniqueKeysWithValues: prompt.sources.map { ($0.label, $0.chunk.source) })
-        let validation = ChatCitationValidator.validate(answer: answer, allowedLabels: Set(byLabel.keys))
+        let validation = ChatCitationValidator.validate(
+            answer: answer,
+            allowedLabels: Set(byLabel.keys),
+            requiresCitation: prompt.requiresCitation
+        )
         guard validation.isValid else { throw ChatAnswerError.invalidCitations(validation.unknownLabels) }
+        let mappedCitations = validation.citedLabels.compactMap { byLabel[$0] }
         return ChatAnswer(
             text: answer,
-            citations: validation.citedLabels.compactMap { byLabel[$0] },
+            citations: mappedCitations.isEmpty ? fallbackCitations : mappedCitations,
             summaryCandidates: []
         )
     }
 }
 
-nonisolated enum ChatAnswerError: Error, Equatable, Sendable {
+nonisolated enum ChatAnswerError: Error, Equatable, Sendable, LocalizedError {
     case modelUnavailable
     case emptyAnswer
     case invalidCitations([String])
+
+    var errorDescription: String? {
+        switch self {
+        case .modelUnavailable:
+            return "The on-device language model is unavailable."
+        case .emptyAnswer:
+            return "The on-device model returned an empty answer."
+        case .invalidCitations(let labels) where labels.isEmpty:
+            return "The on-device model did not cite any supplied workspace source."
+        case .invalidCitations(let labels):
+            return "The on-device model cited unknown workspace sources: \(labels.joined(separator: ", "))."
+        }
+    }
 }
 
 nonisolated protocol ChatAnswering {

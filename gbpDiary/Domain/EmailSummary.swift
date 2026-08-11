@@ -31,13 +31,15 @@ struct SummaryContext: Equatable {
 /// The instructions + prompt handed to the on-device model.
 enum EmailSummaryPrompt {
     /// Bump when the instructions/prompt change so stored summaries auto-refresh (see EmailSummaryPlanning).
-    static let promptVersion = 1
+    static let promptVersion = 2
 
     /// System instructions: identity-aware, concise, factual, no preamble/markdown.
     static let instructions = """
     You write a one- or two-sentence summary of an email for the reader's daily diary. Rules:
     • Refer to the reader (identified as "you" below) as "you" — never restate their name, title, or affiliation.
     • Use people's short/known names from the provided roster; never include titles, affiliations, or signatures.
+    • Summarize the newest message, before any quoted reply history. Use quoted history only to clarify the newest message.
+    • Preserve the intended meaning of idioms, metaphors, and hyperbole. Never turn figurative wording into a literal event (for example, "trains imploded" means severe train disruption, not an explosion).
     • Capture the gist and any request, decision, deadline, or action; ≤ ~40 words.
     • Be factual and concise. No greeting, preamble, sign-off, or markdown — output only the summary sentence(s).
     """
@@ -56,11 +58,15 @@ enum EmailSummaryPrompt {
         }
         if let other = context.other {
             let addr = other.emails.first.map { " <\($0)>" } ?? ""
-            lines.append(context.directionIsSent
-                ? "You sent this email to \(other.name)\(addr)."
-                : "You received this email from \(other.name)\(addr).")
+            if context.directionIsSent {
+                lines.append("You sent this email to \(other.name)\(addr). In the newest message, first-person words (I/me/my) refer to you and second-person words refer to \(other.name). Describe your statements and actions as \"you\", never as your name.")
+            } else {
+                lines.append("You received this email from \(other.name)\(addr). In the newest message, first-person words (I/me/my) refer to \(other.name) and second-person words refer to you.")
+            }
         } else {
-            lines.append(context.directionIsSent ? "You sent this email." : "You received this email.")
+            lines.append(context.directionIsSent
+                ? "You sent this email. In the newest message, first-person words (I/me/my) refer to you. Describe your statements and actions as \"you\", never as your name."
+                : "You received this email. In the newest message, second-person words refer to you.")
         }
         let roster = context.roster.prefix(maxRoster)
         if !roster.isEmpty {

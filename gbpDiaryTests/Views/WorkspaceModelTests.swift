@@ -163,6 +163,18 @@ struct WorkspaceModelTests {
         #expect(!state.isCurrentAnswerRequest(oldToken))
     }
 
+    @Test func chatState_answerRequest_isConsumedOnlyOnce() {
+        let state = ChatState()
+        state.pendingQuestion = "Question"
+        state.answerRequestToken = 3
+
+        #expect(state.beginAnswerRequest(3) == "Question")
+        #expect(state.pendingQuestion.isEmpty)
+        #expect(state.isAnswering)
+        state.isAnswering = false
+        #expect(state.beginAnswerRequest(3) == nil)
+    }
+
     @Test func focusOrOpen_activatesExistingTabShowingDestination() {
         let ws = WorkspaceModel()
         ws.openInNewTab(.tasks)       // tab 2, active

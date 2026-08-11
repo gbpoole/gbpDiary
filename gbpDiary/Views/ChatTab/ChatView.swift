@@ -332,25 +332,34 @@ struct ChatView: View {
     }
 
     private func answerPendingQuestion(requestToken: Int) async {
-        let question = state.pendingQuestion
-        guard state.isCurrentAnswerRequest(requestToken), !question.isEmpty, !state.isAnswering else { return }
-        state.isAnswering = true
+        guard let question = state.beginAnswerRequest(requestToken) else { return }
         state.answerError = nil
         defer {
             if state.isCurrentAnswerRequest(requestToken) { state.isAnswering = false }
         }
 
-        let ranking = await rankedSources(for: question, limit: 10)
+        if let capabilityAnswer = ChatCapabilityResponse.answer(for: question) {
+            guard state.isCurrentAnswerRequest(requestToken) else { return }
+            state.messages.append(ChatMessage(role: .assistant, content: capabilityAnswer))
+            return
+        }
+
+        let priorMessages = Array(state.messages.dropLast())
+        let history = priorMessages.map { ChatHistoryMessage(role: $0.role, text: $0.content) }
+        let isTransformation = ChatFollowUpIntent.isTransformation(question: question, history: history)
+        let priorSources = priorMessages.reversed().first { $0.role == .assistant && !$0.sources.isEmpty }?.sources ?? []
+        let retrievalQuery = ChatFollowUpIntent.retrievalQuery(question: question, history: history)
+        let ranking = await rankedSources(for: retrievalQuery, limit: 10)
         guard state.isCurrentAnswerRequest(requestToken) else { return }
         state.answerError = ranking.error
         let ranked = ranking.chunks
-        guard !ranked.isEmpty else {
+        guard !ranked.isEmpty || isTransformation else {
             guard state.isCurrentAnswerRequest(requestToken) else { return }
             state.messages.append(ChatMessage(role: .assistant,
                                               content: "I could not find relevant information in the local workspace."))
             return
         }
-        let fallbackSources = uniqueSources(ranked.map(\.chunk.source))
+        let fallbackSources = uniqueSources((isTransformation ? priorSources : []) + ranked.map(\.chunk.source))
         guard answerer.isAvailable else {
             guard state.isCurrentAnswerRequest(requestToken) else { return }
             state.messages.append(ChatMessage(role: .assistant,
@@ -359,10 +368,17 @@ struct ChatView: View {
             return
         }
 
-        let history = state.messages.dropLast().map { ChatHistoryMessage(role: $0.role, text: $0.content) }
-        let prompt = ChatPromptBuilder.build(question: question, rankedChunks: ranked, history: history)
+        let prompt = ChatPromptBuilder.build(
+            question: question,
+            rankedChunks: ranked,
+            history: history,
+            allowsUncitedTransformation: isTransformation
+        )
         do {
-            let answer = try await answerer.answer(request: ChatAnswerRequest(prompt: prompt))
+            let answer = try await answerer.answer(request: ChatAnswerRequest(
+                prompt: prompt,
+                fallbackCitations: isTransformation ? priorSources : []
+            ))
             guard state.isCurrentAnswerRequest(requestToken) else { return }
             state.messages.append(ChatMessage(role: .assistant, content: answer.text,
                                               sources: answer.citations))

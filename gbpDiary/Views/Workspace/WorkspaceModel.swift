@@ -192,6 +192,14 @@ struct ChatLabState {
     func isCurrentAnswerRequest(_ token: Int) -> Bool {
         answerRequestToken == token
     }
+
+    func beginAnswerRequest(_ token: Int) -> String? {
+        guard isCurrentAnswerRequest(token), !pendingQuestion.isEmpty, !isAnswering else { return nil }
+        let question = pendingQuestion
+        pendingQuestion = ""
+        isAnswering = true
+        return question
+    }
 }
 
 // One browsing pane: a back/forward history of destinations, like a browser tab. Sidebar

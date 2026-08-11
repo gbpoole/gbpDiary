@@ -30,10 +30,15 @@ struct EmailSummaryTests {
         #expect(recv.contains("You are Greg Poole"))
         #expect(recv.contains("greg@x.com"))
         #expect(recv.contains("You received this email from Ada Lovelace <ada@y.com>."))
+        #expect(recv.contains("first-person words (I/me/my) refer to Ada Lovelace"))
+        #expect(recv.contains("second-person words refer to you"))
         #expect(recv.contains("Known people: Bob Jones <bob@z.com>"))
         // Sent
         let sent = EmailSummaryPrompt.build(context: ctx(me: me, other: other, sent: true), subject: "Sync", body: "hi")
         #expect(sent.contains("You sent this email to Ada Lovelace <ada@y.com>."))
+        #expect(sent.contains("first-person words (I/me/my) refer to you"))
+        #expect(sent.contains("second-person words refer to Ada Lovelace"))
+        #expect(sent.contains("never as your name"))
     }
 
     @Test func prompt_omitsMissingPieces() {
@@ -48,6 +53,18 @@ struct EmailSummaryTests {
         #expect(i.contains("\"you\""))
         #expect(i.lowercased().contains("title"))
         #expect(i.lowercased().contains("signature"))
+    }
+
+    @Test func instructions_prioritizeNewestMessageAndPreserveFigurativeMeaning() {
+        let instructions = EmailSummaryPrompt.instructions.lowercased()
+        #expect(instructions.contains("newest message"))
+        #expect(instructions.contains("quoted reply history"))
+        #expect(instructions.contains("idioms"))
+        #expect(instructions.contains("not an explosion"))
+    }
+
+    @Test func promptVersion_reflectsPerspectiveAndIdiomRules() {
+        #expect(EmailSummaryPrompt.promptVersion == 2)
     }
 
     @Test func roster_capsAndOrdersPriorityFirst() {
