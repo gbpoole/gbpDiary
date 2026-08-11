@@ -54,6 +54,9 @@ struct MarkdownDocumentEditor: View {
     @State private var showingLinkPicker = false
     @State private var insertionText: String?
     @State private var insertionToken = 0
+    // Latest caret markdown-offset, kept in a reference holder so tracking it doesn't re-render the
+    // editor on every selection change. Read when inserting an image from the toolbar/clipboard menu.
+    @State private var caret = CaretHolder()
     @State private var editingLink: EditingLink?
     @State private var formatCommand: FormatCommand?
     @State private var formatToken = 0
@@ -404,6 +407,7 @@ struct MarkdownDocumentEditor: View {
                 },
                 startFocused: autoFocusPending,
                 onTapImage: { editingImageID = $0 },
+                onCaretChange: { caret.offset = $0 },
                 noteTitle: { noteLinkTitle($0) },
                 onTapNoteLink: { editingLink = EditingLink(id: $0) },
                 insertionText: insertionText,
@@ -587,20 +591,28 @@ struct MarkdownDocumentEditor: View {
         isEditing = true
     }
 
-    // Toolbar / file-importer path: append at the end.
+    // Toolbar / file-importer path: insert at the caret (falls back to the end via insertRefs' clamp).
     private func insertImages(from urls: [URL]) {
-        insertRefs(urls.compactMap(makeImageRef), at: (draft as NSString).length)
+        insertRefs(urls.compactMap(makeImageRef), at: caret.offset)
     }
 
     #if os(macOS)
     private var pasteboardHasImage: Bool {
-        NSPasteboard.general.canReadObject(forClasses: [NSImage.self], options: nil)
+        let pb = NSPasteboard.general
+        if pb.canReadObject(forClasses: [NSImage.self], options: nil) { return true }
+        return pb.canReadItem(withDataConformingToTypes: [UTType.image.identifier])
     }
 
     private func pasteImageFromClipboard() {
         guard let png = NSPasteboard.general.imagePNGData(),
               let ref = makeImageRef(fromPNG: png, displayName: "Pasted image") else { return }
-        insertRefs([ref], at: (draft as NSString).length)
+        insertRefs([ref], at: caret.offset)
     }
     #endif
+}
+
+// Holds the editor's latest caret markdown-offset without triggering SwiftUI re-renders on every
+// selection change (mutating a class property, unlike @State value mutation, doesn't publish).
+final class CaretHolder {
+    var offset = 0
 }

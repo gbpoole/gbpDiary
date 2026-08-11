@@ -6,13 +6,30 @@ import ImageIO
 import UniformTypeIdentifiers
 
 extension NSPasteboard {
-    // PNG data for a pasted/dropped raw image (e.g. a screenshot), or nil if none.
+    // PNG data for a pasted/dropped raw image (e.g. a screenshot), or nil if none. Tries explicit image
+    // data types on the pasteboard first (many apps put a `public.png`/`.tiff`/`.jpeg` payload that
+    // `NSImage(pasteboard:)` won't always read), then falls back to `NSImage(pasteboard:)`.
     func imagePNGData() -> Data? {
-        guard let image = NSImage(pasteboard: self),
-              let tiff = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff),
-              let png = bitmap.representation(using: .png, properties: [:]) else { return nil }
-        return png
+        let dataTypes: [NSPasteboard.PasteboardType] = [
+            .png, .tiff,
+            NSPasteboard.PasteboardType(UTType.jpeg.identifier),
+            NSPasteboard.PasteboardType(UTType.heic.identifier),
+        ]
+        for type in dataTypes {
+            if let data = data(forType: type), let png = NSPasteboard.pngData(fromImageData: data) {
+                return png
+            }
+        }
+        if let image = NSImage(pasteboard: self), let tiff = image.tiffRepresentation {
+            return NSPasteboard.pngData(fromImageData: tiff)
+        }
+        return nil
+    }
+
+    // Normalise arbitrary image data (png/tiff/jpeg/heic/…) to PNG via a bitmap rep.
+    private static func pngData(fromImageData data: Data) -> Data? {
+        guard let rep = NSBitmapImageRep(data: data) else { return nil }
+        return rep.representation(using: .png, properties: [:])
     }
 }
 
@@ -35,6 +52,9 @@ struct ImageChipTextEditor: NSViewRepresentable {
     /// When true, focus the editor with the caret at the start once it appears.
     var startFocused: Bool = false
     var onTapImage: (UUID) -> Void
+    /// Reports the caret's **markdown** offset as the selection changes, so the host can insert images
+    /// from the toolbar / clipboard menu at the caret rather than the end of the note.
+    var onCaretChange: ((Int) -> Void)? = nil
     /// Resolves the current title of a linked note (for the chip label). nil disables note-link chips.
     var noteTitle: ((UUID) -> String)? = nil
     /// Called when a note-link chip is clicked.
@@ -398,6 +418,12 @@ struct ImageChipTextEditor: NSViewRepresentable {
             }
         }
 
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let onCaretChange = parent.onCaretChange,
+                  let tv = notification.object as? ChipTextView else { return }
+            onCaretChange(tv.markdownIndex(forDisplayLocation: tv.selectedRange().location))
+        }
+
         func textDidChange(_ notification: Notification) {
             guard let tv = textView, let storage = tv.textStorage else { return }
             let markdown = serialize(storage)
@@ -643,11 +669,63 @@ final class ChipTextView: NSTextView {
         }
     }
 
-    // MARK: - Image paste
+    // MARK: - Copy / cut / paste
+
+    // Private pasteboard type carrying the serialized markdown of a copied/cut selection, so image and
+    // link chips round-trip (a plain RTFD copy loses our managed attachments). We also write `.string`
+    // for pasting into other apps.
+    static let chipMarkdownType = NSPasteboard.PasteboardType("com.gbpdiary.note-markdown")
+
+    private var chipCoordinator: ImageChipTextEditor.Coordinator? {
+        delegate as? ImageChipTextEditor.Coordinator
+    }
+
+    // Serialize the current selection to markdown and place it on the pasteboard. Returns false when
+    // there's no selection (caller falls back to the default behaviour).
+    @discardableResult
+    private func writeSelectionMarkdown() -> Bool {
+        let range = selectedRange()
+        guard range.length > 0, let storage = textStorage, let coord = chipCoordinator else { return false }
+        let markdown = coord.serialize(storage.attributedSubstring(from: range))
+        guard !markdown.isEmpty else { return false }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(markdown, forType: ChipTextView.chipMarkdownType)
+        pb.setString(markdown, forType: .string)
+        return true
+    }
+
+    override func copy(_ sender: Any?) {
+        if !writeSelectionMarkdown() { super.copy(sender) }
+    }
+
+    override func cut(_ sender: Any?) {
+        guard writeSelectionMarkdown() else { super.cut(sender); return }
+        let range = selectedRange()
+        if shouldChangeText(in: range, replacementString: "") {
+            textStorage?.replaceCharacters(in: range, with: "")
+            didChangeText()   // serialize + push the updated markdown to SwiftUI
+        }
+    }
+
+    // NSTextView only enables Paste (⌘V) when the pasteboard has a type it considers readable — by
+    // default text/RTF/RTFD only. Advertise image + file-URL + our chip-markdown types so an image-only
+    // clipboard (e.g. a screen capture) doesn't disable Paste and beep before `paste(_:)` can run.
+    override var readablePasteboardTypes: [NSPasteboard.PasteboardType] {
+        super.readablePasteboardTypes + [
+            ChipTextView.chipMarkdownType, .fileURL, .png, .tiff,
+            NSPasteboard.PasteboardType(UTType.jpeg.identifier),
+            NSPasteboard.PasteboardType(UTType.heic.identifier),
+        ]
+    }
 
     override func paste(_ sender: Any?) {
         let pb = NSPasteboard.general
-        let index = selectedRange().location
+        // Our own copied/cut selection: re-insert as markdown so chips (image/link) are rebuilt.
+        if let markdown = pb.string(forType: ChipTextView.chipMarkdownType), let coord = chipCoordinator {
+            coord.insert(markdown, into: self); return
+        }
+        let index = markdownIndex(forDisplayLocation: selectedRange().location)
         if let urls = ChipTextView.imageFileURLs(from: pb), !urls.isEmpty {
             onInsertImageFiles?(urls, index); return
         }
@@ -655,6 +733,26 @@ final class ChipTextView: NSTextView {
             onInsertImageData?(data, index); return
         }
         super.paste(sender)
+    }
+
+    // Converts a location in the *display* string (chips are single U+FFFC placeholders) into the
+    // offset in the serialized *markdown* string, so inserts land at the right place once the note
+    // already contains chips (see ChipMarkdownOffset).
+    func markdownIndex(forDisplayLocation loc: Int) -> Int {
+        guard let storage = textStorage else { return loc }
+        var runs: [ChipRun] = []
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            let markdownLength: Int
+            if let chip = value as? ImageRefAttachment {
+                markdownLength = (AttachmentRef.markdown(for: chip.imageID, displayName: chip.displayName) as NSString).length
+            } else if let chip = value as? NoteLinkRefAttachment {
+                markdownLength = (NoteLinkRef.markdown(for: chip.noteID, displayName: chip.displayName) as NSString).length
+            } else {
+                markdownLength = range.length
+            }
+            runs.append(ChipRun(displayLength: range.length, markdownLength: markdownLength))
+        }
+        return ChipMarkdownOffset.markdownOffset(displayLocation: loc, runs: runs)
     }
 
     // MARK: - Image drag & drop
@@ -670,7 +768,7 @@ final class ChipTextView: NSTextView {
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         let pb = sender.draggingPasteboard
         let point = convert(sender.draggingLocation, from: nil)
-        let index = characterIndexForInsertion(at: point)
+        let index = markdownIndex(forDisplayLocation: characterIndexForInsertion(at: point))
         if let urls = ChipTextView.imageFileURLs(from: pb), !urls.isEmpty {
             onInsertImageFiles?(urls, index); return true
         }
