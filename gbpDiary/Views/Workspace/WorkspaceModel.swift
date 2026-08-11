@@ -358,6 +358,15 @@ struct ChatLabState {
         activeId = state.id
     }
 
+    /// Reorder the tab strip: move the tab with `id` so it lands at `toIndex` (a chip index, or
+    /// `tabs.count` to append). Used by drag-to-reorder; the active tab is unchanged. See `TabReorder`.
+    func moveTab(id: UUID, toIndex: Int) {
+        let ids = tabs.map(\.id)
+        let newOrder = TabReorder.move(ids, id: id, toIndex: toIndex)
+        guard newOrder != ids else { return }
+        tabs = newOrder.compactMap { tid in tabs.first { $0.id == tid } }
+    }
+
     /// Always open a fresh Chat tab configured for exploring the selected email.
     func openEmailExplorerInNewTab(for email: EmailMessage) {
         let state = WorkspaceTabState(.chat)

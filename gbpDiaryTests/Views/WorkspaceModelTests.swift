@@ -207,6 +207,18 @@ struct WorkspaceModelTests {
         #expect(ws.active.current == .diary)
     }
 
+    @Test func moveTab_reordersAndPreservesActive() {
+        let ws = WorkspaceModel()      // [diary]
+        ws.openInNewTab(.tasks)        // [diary, tasks]
+        ws.openInNewTab(.projects)     // [diary, tasks, projects], active = projects
+        let projectsId = ws.active.id
+
+        ws.moveTab(id: projectsId, toIndex: 0)   // drag projects to the front
+        #expect(ws.tabs.map(\.current) == [.projects, .diary, .tasks])
+        #expect(ws.activeId == projectsId)       // active tab unchanged by reordering
+        #expect(ws.tabs.first?.id == projectsId)
+    }
+
     // MARK: - Safari-like tab shortcuts
 
     @Test func newTab_opensAndActivatesDiaryTab() {

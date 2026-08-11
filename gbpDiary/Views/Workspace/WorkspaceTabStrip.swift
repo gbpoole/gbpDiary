@@ -6,6 +6,9 @@ import SwiftData
 struct WorkspaceTabStrip: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(WorkspaceModel.self) private var workspace
+    // Index of the chip a drag is currently hovering (an insertion marker); `tabs.count` = the trailing
+    // append zone.
+    @State private var dropTargetIndex: Int?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -13,15 +16,44 @@ struct WorkspaceTabStrip: View {
             Divider().frame(height: 16)
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 4) {
-                    ForEach(workspace.tabs) { tab in
-                        tabChip(tab)
+                    ForEach(Array(workspace.tabs.enumerated()), id: \.element.id) { index, tab in
+                        tabChip(tab, index: index)
                     }
+                    trailingDropZone
                 }
             }
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 5)
         .background(AppTheme.background)
+    }
+
+    // Drops here append the dragged tab to the end of the strip.
+    private var trailingDropZone: some View {
+        Color.clear
+            .frame(width: 12, height: 22)
+            .overlay(alignment: .leading) { insertionMarker(at: workspace.tabs.count) }
+            .dropDestination(for: String.self) { items, _ in
+                handleDrop(items, toIndex: workspace.tabs.count)
+            } isTargeted: { targeted in
+                dropTargetIndex = targeted ? workspace.tabs.count : (dropTargetIndex == workspace.tabs.count ? nil : dropTargetIndex)
+            }
+    }
+
+    // A 2pt accent bar shown on the leading edge of the chip a drag is hovering (insert-before marker).
+    @ViewBuilder
+    private func insertionMarker(at index: Int) -> some View {
+        if dropTargetIndex == index {
+            RoundedRectangle(cornerRadius: 1).fill(AppTheme.accent).frame(width: 2)
+        }
+    }
+
+    private func handleDrop(_ items: [String], toIndex: Int) -> Bool {
+        dropTargetIndex = nil
+        guard let first = items.first, let draggedId = UUID(uuidString: first) else { return false }
+        workspace.moveTab(id: draggedId, toIndex: toIndex)
+        workspace.save(using: modelContext)   // persist the new order immediately
+        return true
     }
 
     private var navButtons: some View {
@@ -45,7 +77,7 @@ struct WorkspaceTabStrip: View {
         }
     }
 
-    private func tabChip(_ tab: WorkspaceTabState) -> some View {
+    private func tabChip(_ tab: WorkspaceTabState, index: Int) -> some View {
         let isActive = workspace.activeId == tab.id
         let info = describe(tab.current)
         let showClose = workspace.tabs.count > 1
@@ -67,8 +99,16 @@ struct WorkspaceTabStrip: View {
         .foregroundStyle(isActive ? AppTheme.text : AppTheme.mutedText)
         .background(isActive ? AppTheme.cardRaised : Color.clear,
                     in: RoundedRectangle(cornerRadius: 6))
+        .overlay(alignment: .leading) { insertionMarker(at: index) }
         .contentShape(Rectangle())
         .onTapGesture { workspace.activate(tab.id) }
+        // Drag to reorder: carry the tab id; dropping onto a chip inserts before it.
+        .draggable(tab.id.uuidString)
+        .dropDestination(for: String.self) { items, _ in
+            handleDrop(items, toIndex: index)
+        } isTargeted: { targeted in
+            dropTargetIndex = targeted ? index : (dropTargetIndex == index ? nil : dropTargetIndex)
+        }
     }
 
     private func describe(_ tab: WorkspaceTab) -> (title: String, icon: String) {
