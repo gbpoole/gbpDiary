@@ -17,4 +17,12 @@ enum AppSettingsStore {
         get { Set(UserDefaults.standard.stringArray(forKey: defaultCalendarIDsKey) ?? []) }
         set { UserDefaults.standard.set(Array(newValue), forKey: defaultCalendarIDsKey) }
     }
+
+    private static let pagePaletteKey = "pagePalette"
+
+    /// The colour theme used when exporting minutes/notes to PDF (Settings ▸ Appearance).
+    static var pagePalette: ExportPalette {
+        get { UserDefaults.standard.string(forKey: pagePaletteKey).flatMap(ExportPalette.init) ?? .lightShaded }
+        set { UserDefaults.standard.set(newValue.rawValue, forKey: pagePaletteKey) }
+    }
 }

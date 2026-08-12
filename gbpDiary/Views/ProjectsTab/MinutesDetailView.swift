@@ -660,8 +660,9 @@ struct MinutesDetailView: View {
         }
     }
 
-    // Full export markdown: meeting header + Action Items + Documents + the minutes body.
-    private func composedExportMarkdown() -> String {
+    // The shared header/action/document pieces for both markdown and PDF export.
+    private func exportPieces() -> (title: String, dateLine: String, metaLines: [String],
+                                    actionItems: [String], documents: [String]) {
         let dateLine = minutes.meetingAt.formatted(date: .complete, time: .shortened)
         var metaLines: [String] = []
         if !minutes.projects.isEmpty {
@@ -685,9 +686,47 @@ struct MinutesDetailView: View {
             let n = doc.attachments.count
             return n > 0 ? "\(name) (\(n) file\(n == 1 ? "" : "s"))" : name
         }
+        return (minutes.summary ?? "Meeting", dateLine, metaLines, actionItems, documents)
+    }
+
+    // Full export markdown: meeting header + Action Items + Documents + the minutes body.
+    private func composedExportMarkdown() -> String {
+        let p = exportPieces()
         return MinutesExport.composeMarkdown(
-            title: minutes.summary ?? "Meeting", dateLine: dateLine, metaLines: metaLines,
-            actionItems: actionItems, documents: documents, body: minutes.note?.content ?? "")
+            title: p.title, dateLine: p.dateLine, metaLines: p.metaLines,
+            actionItems: p.actionItems, documents: p.documents, body: minutes.note?.content ?? "")
+    }
+
+    // Export the minutes to PDF, honoring each image's manual display width and the selected page
+    // palette. Composes a themed SwiftUI page (MinutesExportView) and renders it via
+    // NSHostingView.dataWithPDF — synchronous and reliable (WKWebView stalls headless; ImageRenderer
+    // drops Textual's async images). See MinutesExportView for why text/images are rendered as they are.
+    private func exportPDF() {
+        let base = MinutesExport.exportBaseName(summary: minutes.summary)
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = "\(base).pdf"
+        panel.allowedContentTypes = [.pdf]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let dest = panel.url else { return }
+
+        let p = exportPieces()
+        let view = MinutesExportView(
+            title: p.title, dateLine: p.dateLine, metaLines: p.metaLines,
+            actionItems: p.actionItems, documents: p.documents,
+            bodyMarkdown: minutes.note?.content ?? "",
+            attachments: minutes.note?.attachments ?? [],
+            palette: AppSettingsStore.pagePalette)
+
+        let hosting = NSHostingView(rootView: view)
+        hosting.frame = .zero
+        hosting.frame = CGRect(origin: .zero, size: hosting.fittingSize)
+        let data = hosting.dataWithPDF(inside: hosting.bounds)
+        do {
+            if FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.removeItem(at: dest) }
+            try data.write(to: dest)
+        } catch {
+            NSAlert(error: error).runModal()
+        }
     }
 
     private func exportBundle(markdown: String, base: String, images: [Attachment],
@@ -740,6 +779,7 @@ struct MinutesDetailView: View {
         ]
         #if os(macOS)
         items.append(DayActionItem(id: "export", systemName: "square.and.arrow.down", color: AppTheme.accent, tooltip: "Download minutes") { exportMinutes() })
+        items.append(DayActionItem(id: "export-pdf", systemName: "arrow.down.doc", color: AppTheme.accent, tooltip: "Download minutes as PDF") { exportPDF() })
         #endif
         return items
     }

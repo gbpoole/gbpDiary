@@ -74,6 +74,9 @@ struct gbpDiaryApp: App {
                 HotkeySettingsView()
                     .tabItem { Label("Shortcuts", systemImage: "keyboard") }
                     .tag(SettingsTab.shortcuts)
+                AppearanceSettingsView()
+                    .tabItem { Label("Appearance", systemImage: "paintpalette") }
+                    .tag(SettingsTab.appearance)
             }
             .environment(hotkeys)
             .modelContainer(sharedModelContainer)

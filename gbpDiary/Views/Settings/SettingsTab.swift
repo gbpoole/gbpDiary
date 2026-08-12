@@ -12,6 +12,7 @@ enum SettingsTab {
     static let calendar = "calendar"
     static let email = "email"
     static let shortcuts = "shortcuts"
+    static let appearance = "appearance"
 
     /// Select `tab` and open/bring-forward the Settings window (macOS).
     static func open(_ tab: String) {
