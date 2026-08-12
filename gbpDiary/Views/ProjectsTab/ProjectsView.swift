@@ -215,6 +215,8 @@ struct ProjectEditorSheet: View {
     @Environment(WorkspaceModel.self) private var workspace
 
     let project: Project?
+    var defaultParent: Project? = nil   // preset parent when creating a new (sub)project
+    var onCreated: ((Project) -> Void)? = nil   // fired with the newly created project (new mode only)
 
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Query(sort: \Person.name) private var allPeople: [Person]
@@ -318,6 +320,8 @@ struct ProjectEditorSheet: View {
                 devLeadId = p.devLead?.id
                 selectedSciPeople = p.sciTeam
                 sciLeadId = p.sciLead?.id
+            } else {
+                selectedParent = defaultParent
             }
         }
         #if os(macOS)
@@ -411,6 +415,7 @@ struct ProjectEditorSheet: View {
             p.sciTeam = sciPeople
             p.sciLead = sciLead
             modelContext.insert(p)
+            onCreated?(p)
         }
         dismiss()
     }
