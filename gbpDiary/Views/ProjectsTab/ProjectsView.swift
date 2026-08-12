@@ -41,13 +41,40 @@ struct ProjectsView: View {
         return statusGroup + streamGroup
     }
 
-    private var rows: [Project] {
+    private var sortComparator: [KeyPathComparator<Project>] {
+        let f = filter
+        return TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "name")
+    }
+
+    // Projects passing the current filters + search (the "matches"); their ancestors are shown as
+    // context in the hierarchy but aren't matches.
+    private var matchedIDs: Set<UUID> {
         let f = filter
         let matched = FilterEngine.apply(projects, filters: projectFilters, activeIds: f.activeFilterIds)
         let query = f.searchText.trimmingCharacters(in: .whitespaces)
         let searched = query.isEmpty ? matched : matched.filter { FuzzyMatch.matches(query, in: searchHaystack($0)) }
-        return searched.sorted(using: TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "name"))
+        return Set(searched.map(\.id))
     }
+
+    // The projects laid out as a parent → child hierarchy (matches + ancestor context), siblings ordered
+    // by the current sort. Depth-first; `rowMeta` carries per-row depth + match flag for the cells.
+    private var hierarchyRows: [HierarchyRow<Project>] {
+        let comparator = sortComparator
+        return ProjectHierarchy.rows(
+            all: projects, id: \.id, parentID: { $0.parent?.id },
+            matched: matchedIDs, sortSiblings: { $0.sorted(using: comparator) })
+    }
+
+    private var rows: [Project] { hierarchyRows.map(\.item) }
+
+    private var rowMeta: [UUID: (depth: Int, isMatch: Bool)] {
+        Dictionary(hierarchyRows.map { ($0.item.id, (depth: $0.depth, isMatch: $0.isMatch)) },
+                   uniquingKeysWith: { first, _ in first })
+    }
+
+    // Indentation / dimming for a row (context ancestors are dimmed so matches stand out).
+    private func depth(_ project: Project) -> Int { rowMeta[project.id]?.depth ?? 0 }
+    private func rowOpacity(_ project: Project) -> Double { (rowMeta[project.id]?.isMatch ?? true) ? 1 : 0.5 }
 
     private func searchHaystack(_ p: Project) -> String {
         [p.name, p.stream, p.devTeamKey, p.sciTeamKey, p.tags.joined(separator: " ")]
@@ -110,39 +137,53 @@ struct ProjectsView: View {
     private var projectTable: some View {
         Table(rows, selection: $selection, sortOrder: sortOrderBinding) {
             TableColumn("Name", value: \.nameKey) { project in
-                Text(project.name)
-                    .lineLimit(1)
-                    .font(AppTheme.bodyFont(size: 13))
-                    .foregroundStyle(AppTheme.text)
+                HStack(spacing: 4) {
+                    if depth(project) > 0 {
+                        Image(systemName: "arrow.turn.down.right")
+                            .font(.system(size: 9))
+                            .foregroundStyle(AppTheme.mutedText)
+                    }
+                    Text(project.name)
+                        .lineLimit(1)
+                        .font(AppTheme.bodyFont(size: 13))
+                        .foregroundStyle(AppTheme.text)
+                }
+                .padding(.leading, CGFloat(depth(project)) * 16)
+                .opacity(rowOpacity(project))
             }
             .width(min: 140, ideal: 240)
             TableColumn("Stream", value: \.streamKey) { project in
                 Text(project.stream ?? "")
                     .foregroundStyle(AppTheme.mutedText)
                     .lineLimit(1)
+                    .opacity(rowOpacity(project))
             }
             .width(min: 80, ideal: 100)
             TableColumn("Dev Team", value: \.devTeamKey) { project in
                 Text(Project.teamNames(lead: project.devLead, team: project.devTeam).joined(separator: ", "))
                     .foregroundStyle(AppTheme.person)
                     .lineLimit(1)
+                    .opacity(rowOpacity(project))
             }
             .width(min: 100, ideal: 140)
             TableColumn("Sci Team", value: \.sciTeamKey) { project in
                 Text(Project.teamNames(lead: project.sciLead, team: project.sciTeam).joined(separator: ", "))
                     .foregroundStyle(AppTheme.person)
                     .lineLimit(1)
+                    .opacity(rowOpacity(project))
             }
             .width(min: 100, ideal: 140)
             TableColumn("Subprojects", value: \.subprojectCount) { project in
                 Text("\(project.subprojects.count)")
                     .foregroundStyle(AppTheme.mutedText)
+                    .opacity(rowOpacity(project))
             }
             .width(min: 70, ideal: 90)
             TableColumn("Last Meeting", value: \.lastMeetingAt) { project in
                 if let latest = project.meetings.max(by: { $0.meetingAt < $1.meetingAt }) {
                     Text(latest.meetingAt, format: .dateTime.day().month(.abbreviated).year())
                         .foregroundStyle(AppTheme.mutedText)
+                        .opacity(rowOpacity(project))
                 }
             }
             .width(min: 90, ideal: 110)
@@ -160,6 +201,8 @@ struct ProjectsView: View {
                     Text(stream).font(.caption).foregroundStyle(.secondary)
                 }
             }
+            .padding(.leading, CGFloat(depth(project)) * 16)
+            .opacity(rowOpacity(project))
             .onTapGesture { open(project) }
         }
     }

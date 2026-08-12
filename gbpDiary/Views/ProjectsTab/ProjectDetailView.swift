@@ -82,10 +82,11 @@ struct ProjectDetailView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             if let desc = project.projectDescription {
                 Text(desc).foregroundStyle(.secondary)
             }
+            statusControl
             HStack(spacing: 6) {
                 if let stream = project.stream {
                     Chip(label: stream, color: AppTheme.duration)
@@ -95,6 +96,40 @@ struct ProjectDetailView: View {
                 }
             }
         }
+    }
+
+    // Active/Completed status. Enforces the hierarchy invariant (see ProjectStatusRules): a project can
+    // only be completed once its subprojects are, and can only be reactivated once its parent is active.
+    private var statusControl: some View {
+        let canComplete = ProjectStatusRules.canComplete(subprojectsCompleted: project.subprojects.map(\.isCompleted))
+        let canReactivate = ProjectStatusRules.canReactivate(parentCompleted: project.parent?.isCompleted)
+        return VStack(alignment: .leading, spacing: 3) {
+            HStack(spacing: 10) {
+                Chip(label: project.isCompleted ? "Completed" : "Active",
+                     color: project.isCompleted ? AppTheme.mutedText : AppTheme.today)
+                if project.isCompleted {
+                    Button("Reactivate") { setCompleted(false) }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .disabled(!canReactivate)
+                } else {
+                    Button("Mark Completed") { setCompleted(true) }
+                        .buttonStyle(.bordered).controlSize(.small)
+                        .disabled(!canComplete)
+                }
+            }
+            if !project.isCompleted && !canComplete {
+                Text("Complete all subprojects before marking this project completed.")
+                    .font(.caption).foregroundStyle(.secondary)
+            } else if project.isCompleted && !canReactivate {
+                Text("Reactivate the parent project\(project.parent.map { " (\($0.name))" } ?? "") before reactivating this one.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func setCompleted(_ completed: Bool) {
+        project.isCompleted = completed
+        project.updatedAt = Date()
     }
 
     private var devTeamSection: some View {
