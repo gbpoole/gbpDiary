@@ -642,4 +642,9 @@ struct ChatLabState {
     func closeEntity(_ id: PersistentIdentifier) {
         tabs.filter { $0.references(id) }.forEach { closeTab($0.id) }
     }
+
+    /// Whether any open tab's history references this model id (e.g. a meeting shown in a tab).
+    func references(_ id: PersistentIdentifier) -> Bool {
+        tabs.contains { $0.references(id) }
+    }
 }
