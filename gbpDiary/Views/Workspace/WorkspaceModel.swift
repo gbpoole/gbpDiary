@@ -334,7 +334,10 @@ struct ChatLabState {
 // MinutesEditorContext — minutes now open as a new tab rather than a side inspector.
 @Observable final class WorkspaceModel {
     private(set) var tabs: [WorkspaceTabState]
-    var activeId: UUID
+    private(set) var activeId: UUID
+    /// MRU back-stack of *previously* active tab ids (most-recent first). Powers `returnToPreviousTab()`.
+    /// Session-only (not persisted); reset on `restore`.
+    private(set) var recentTabs: [UUID] = []
     /// A minutes tab that should open straight into minutes-edit mode (e.g. a just-created meeting).
     var autoEditMinutesId: PersistentIdentifier?
     /// A content-note tab that should open straight into edit mode (e.g. a just-created note).
@@ -355,7 +358,30 @@ struct ChatLabState {
     func openInNewTab(_ tab: WorkspaceTab) {
         let state = WorkspaceTabState(tab)
         tabs.append(state)
-        activeId = state.id
+        setActive(state.id)
+    }
+
+    /// The single choke point for changing the active tab. When `record` is true it pushes the tab we're
+    /// leaving onto the MRU back-stack (deduped, capped) — unless it no longer exists (e.g. it was just
+    /// closed). `returnToPreviousTab()` passes `record: false` so a back jump stays progressive.
+    private func setActive(_ id: UUID, record: Bool = true) {
+        let old = activeId
+        guard old != id else { return }
+        if record, tabs.contains(where: { $0.id == old }) {
+            recentTabs.removeAll { $0 == old || $0 == id }
+            recentTabs.insert(old, at: 0)
+            recentTabs = Array(recentTabs.prefix(max(1, tabs.count)))
+        } else {
+            recentTabs.removeAll { $0 == id }
+        }
+        activeId = id
+    }
+
+    /// Return to the most-recently-active previous tab; pressing repeatedly walks progressively back.
+    func returnToPreviousTab() {
+        guard let target = recentTabs.first(where: { tid in tabs.contains { $0.id == tid } }) else { return }
+        recentTabs.removeAll { $0 == target }
+        setActive(target, record: false)   // consume, don't re-push the tab we're leaving → progressive
     }
 
     /// Reorder the tab strip: move the tab with `id` so it lands at `toIndex` (a chip index, or
@@ -373,10 +399,10 @@ struct ChatLabState {
         state.chatState.mode = .emailExplorerLab
         state.chatState.selectEmail(email.persistentModelID)
         tabs.append(state)
-        activeId = state.id
+        setActive(state.id)
     }
 
-    func activate(_ id: UUID) { activeId = id }
+    func activate(_ id: UUID) { setActive(id) }
 
     // MARK: - Safari-like tab shortcuts
 
@@ -392,24 +418,24 @@ struct ChatLabState {
     /// ⌘⇧] — focus the next tab, wrapping around to the first.
     func selectNextTab() {
         guard tabs.count > 1 else { return }
-        activeId = tabs[(activeIndex + 1) % tabs.count].id
+        setActive(tabs[(activeIndex + 1) % tabs.count].id)
     }
 
     /// ⌘⇧[ — focus the previous tab, wrapping around to the last.
     func selectPreviousTab() {
         guard tabs.count > 1 else { return }
-        activeId = tabs[(activeIndex - 1 + tabs.count) % tabs.count].id
+        setActive(tabs[(activeIndex - 1 + tabs.count) % tabs.count].id)
     }
 
     /// ⌘1…⌘8 — focus the tab at a 0-based index; no-op when out of range.
     func selectTab(at index: Int) {
         guard tabs.indices.contains(index) else { return }
-        activeId = tabs[index].id
+        setActive(tabs[index].id)
     }
 
     /// ⌘9 — focus the last tab (Safari convention).
     func selectLastTab() {
-        if let last = tabs.last { activeId = last.id }
+        if let last = tabs.last { setActive(last.id) }
     }
 
     // MARK: - Session persistence
@@ -449,6 +475,7 @@ struct ChatLabState {
         }
         guard !restored.isEmpty else { return }
         tabs = restored
+        recentTabs = []   // fresh session — the MRU back-stack isn't persisted
         activeId = restored[min(max(0, snap.activeIndex), restored.count - 1)].id
     }
 
@@ -560,7 +587,7 @@ struct ChatLabState {
     /// Activate an existing tab already showing this destination, else open it in a new tab.
     func focusOrOpen(_ tab: WorkspaceTab) {
         if let existing = tabs.first(where: { $0.current == tab }) {
-            activeId = existing.id
+            setActive(existing.id)
         } else {
             openInNewTab(tab)
         }
@@ -571,7 +598,7 @@ struct ChatLabState {
     func focusDiary(date: Date, scrollTo noteId: UUID?) {
         let target = tabs.first { $0.current == .diary } ?? active
         if target.current != .diary { target.navigate(to: .diary) }
-        activeId = target.id
+        setActive(target.id)
         target.diaryState.mode = .day
         target.diaryState.goTo(date)
         target.diaryState.scrollTargetNoteId = noteId
@@ -593,12 +620,21 @@ struct ChatLabState {
     func closeTab(_ id: UUID) {
         guard let idx = tabs.firstIndex(where: { $0.id == id }) else { return }
         tabs.remove(at: idx)
+        recentTabs.removeAll { $0 == id }   // a closed tab is never a back target
         if tabs.isEmpty {
             let fallback = WorkspaceTabState(.diary)
             tabs = [fallback]
+            recentTabs = []
             activeId = fallback.id
         } else if activeId == id {
-            activeId = tabs[min(idx, tabs.count - 1)].id
+            // Fall back to the tab this one was opened from (the most-recently-active tab), not the
+            // positional neighbour; only use the neighbour when there's no recency history.
+            if let prev = recentTabs.first(where: { tid in tabs.contains { $0.id == tid } }) {
+                recentTabs.removeAll { $0 == prev }
+                setActive(prev, record: false)
+            } else {
+                setActive(tabs[min(idx, tabs.count - 1)].id)
+            }
         }
     }
 

@@ -94,34 +94,38 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
     case closeTab
     case nextTab
     case previousTab
+    case previousActiveTab
     case lastTab
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .newTab:      "New Tab"
-        case .closeTab:    "Close Tab"
-        case .nextTab:     "Show Next Tab"
-        case .previousTab: "Show Previous Tab"
-        case .lastTab:     "Show Last Tab"
+        case .newTab:            "New Tab"
+        case .closeTab:          "Close Tab"
+        case .nextTab:           "Show Next Tab"
+        case .previousTab:       "Show Previous Tab"
+        case .previousActiveTab: "Return to Previous Tab"
+        case .lastTab:           "Show Last Tab"
         }
     }
 
     /// Section heading under which this shortcut is grouped in Settings.
     var section: String {
         switch self {
-        case .newTab, .closeTab, .nextTab, .previousTab, .lastTab: "Tabs"
+        case .newTab, .closeTab, .nextTab, .previousTab, .previousActiveTab, .lastTab: "Tabs"
         }
     }
 
     var defaultHotkey: Hotkey {
         switch self {
-        case .newTab:      .combo("t", command: true)
-        case .closeTab:    .combo("w", command: true)
-        case .nextTab:     .combo("]", command: true, shift: true)
-        case .previousTab: .combo("[", command: true, shift: true)
-        case .lastTab:     .combo("9", command: true)
+        case .newTab:            .combo("t", command: true)
+        case .closeTab:          .combo("w", command: true)
+        case .nextTab:           .combo("]", command: true, shift: true)
+        case .previousTab:       .combo("[", command: true, shift: true)
+        // Option-variant of the positional ⌘⇧[ : Shift = by position, Option = by recency.
+        case .previousActiveTab: .combo("[", command: true, option: true)
+        case .lastTab:           .combo("9", command: true)
         }
     }
 

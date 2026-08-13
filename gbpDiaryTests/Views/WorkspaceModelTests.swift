@@ -286,6 +286,72 @@ struct WorkspaceModelTests {
         #expect(ws.active.current == .projects)
     }
 
+    // MARK: - Return to previous tab (MRU back-stack)
+
+    @Test func returnToPreviousTab_progressivelyWalksBack() {
+        let ws = WorkspaceModel()            // diary, active
+        let diaryId = ws.activeId
+        ws.openInNewTab(.tasks)              // tasks, active (pushes diary)
+        let tasksId = ws.activeId
+        ws.openInNewTab(.projects)           // projects, active (pushes tasks)
+        ws.returnToPreviousTab()             // → tasks
+        #expect(ws.activeId == tasksId)
+        ws.returnToPreviousTab()             // → diary (progressive)
+        #expect(ws.activeId == diaryId)
+    }
+
+    @Test func returnToPreviousTab_emptyStack_isNoOp() {
+        let ws = WorkspaceModel()            // single tab, nothing to go back to
+        let diaryId = ws.activeId
+        ws.returnToPreviousTab()
+        #expect(ws.activeId == diaryId)
+        #expect(ws.tabs.count == 1)
+    }
+
+    @Test func returnToPreviousTab_recordsPositionalAndSelectionMoves() {
+        let ws = WorkspaceModel()            // diary (0)
+        ws.openInNewTab(.tasks)              // tasks (1)
+        ws.openInNewTab(.projects)           // projects (2), active
+        let projectsId = ws.activeId
+        ws.selectTab(at: 0)                  // → diary (pushes projects)
+        ws.returnToPreviousTab()             // → projects
+        #expect(ws.activeId == projectsId)
+    }
+
+    @Test func returnToPreviousTab_mruDedups_noRepeatEntries() {
+        let ws = WorkspaceModel()            // diary
+        let diaryId = ws.activeId
+        ws.openInNewTab(.tasks)              // tasks
+        let tasksId = ws.activeId
+        ws.activate(diaryId)                 // → diary (pushes tasks)
+        ws.activate(tasksId)                 // → tasks (pushes diary; tasks de-duped)
+        ws.returnToPreviousTab()             // → diary
+        #expect(ws.activeId == diaryId)
+        ws.returnToPreviousTab()             // stack now empty → stays
+        #expect(ws.activeId == diaryId)
+    }
+
+    @Test func closeTab_returnsToTabItWasOpenedFrom_notPositionalNeighbour() {
+        let ws = WorkspaceModel()            // diary (0)
+        let diaryId = ws.activeId
+        ws.openInNewTab(.projects)           // projects (1)
+        ws.activate(diaryId)                 // navigate back to diary (active)
+        ws.openInNewTab(.tasks)              // tasks (2), opened from diary — active third tab
+        ws.closeActiveTab()                  // ⌘W on the third tab
+        #expect(ws.activeId == diaryId)      // returns to diary (the opener), not the neighbour (projects)
+    }
+
+    @Test func returnToPreviousTab_skipsAndPurgesClosedTabs() {
+        let ws = WorkspaceModel()            // diary
+        let diaryId = ws.activeId
+        ws.openInNewTab(.tasks)              // tasks (pushes diary)
+        let tasksId = ws.activeId
+        ws.openInNewTab(.projects)           // projects (pushes tasks); active
+        ws.closeTab(tasksId)                 // remove tasks from the back-stack
+        ws.returnToPreviousTab()             // skips the closed tasks tab → diary
+        #expect(ws.activeId == diaryId)
+    }
+
     // MARK: - Category mapping
 
     @Test func entityTab_reportsOwningCategory() {

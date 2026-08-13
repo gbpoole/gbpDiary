@@ -159,6 +159,9 @@ struct AppCommands: Commands {
                 .keyboardShortcut(hotkeys.hotkey(for: .nextTab).keyboardShortcut)
             Button("Show Previous Tab") { workspace.selectPreviousTab() }
                 .keyboardShortcut(hotkeys.hotkey(for: .previousTab).keyboardShortcut)
+            // Recency-based (not positional): walks back through recently-active tabs.
+            Button("Return to Previous Tab") { workspace.returnToPreviousTab() }
+                .keyboardShortcut(hotkeys.hotkey(for: .previousActiveTab).keyboardShortcut)
             Divider()
             // ⌘1…⌘8 jump to that tab by position (fixed); ⌘9 = the configurable "Show Last Tab".
             ForEach(1...8, id: \.self) { n in
