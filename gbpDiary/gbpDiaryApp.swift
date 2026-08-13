@@ -39,6 +39,10 @@ struct gbpDiaryApp: App {
     }()
 
     init() {
+        #if os(macOS)
+        // Single-window app: never let macOS merge windows into native window-tabs.
+        NSWindow.allowsAutomaticWindowTabbing = false
+        #endif
         guard let request = ObsidianImportLaunchRequest(arguments: ProcessInfo.processInfo.arguments),
               request.exitAfterImport else { return }
         let succeeded = Self.runBundleImport(request, in: sharedModelContainer)
@@ -148,6 +152,10 @@ struct AppCommands: Commands {
     let hotkeys: HotkeySettings
 
     var body: some Commands {
+        // Remove the default File ▸ New Window (⌘N): this is a single-window, tabbed app, so a new
+        // window (which macOS shows as a native window-tab) is not wanted. ⌘N instead opens a new
+        // in-app tab via the "New Tab" command below.
+        CommandGroup(replacing: .newItem) { }
         CommandMenu("Tabs") {
             Button("New Tab") { workspace.newTab() }
                 .keyboardShortcut(hotkeys.hotkey(for: .newTab).keyboardShortcut)

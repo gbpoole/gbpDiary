@@ -119,7 +119,7 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
 
     var defaultHotkey: Hotkey {
         switch self {
-        case .newTab:            .combo("t", command: true)
+        case .newTab:            .combo("n", command: true)
         case .closeTab:          .combo("w", command: true)
         case .nextTab:           .combo("]", command: true, shift: true)
         case .previousTab:       .combo("[", command: true, shift: true)

@@ -57,8 +57,8 @@ struct HotkeysTests {
     }
 
     @Test func resolver_conflict_findsOtherActionSharingCombo() {
-        // Bind Next Tab to ⌘T, which collides with New Tab's default.
-        let overrides = ["nextTab": Hotkey.combo("t", command: true)]
+        // Bind Next Tab to ⌘N, which collides with New Tab's default.
+        let overrides = ["nextTab": Hotkey.combo("n", command: true)]
         let newTabHK = HotkeyResolver.hotkey(for: .newTab, overrides: overrides)
         #expect(HotkeyResolver.conflict(for: newTabHK, excluding: .newTab, overrides: overrides) == .nextTab)
         // No conflict for a unique combo.
