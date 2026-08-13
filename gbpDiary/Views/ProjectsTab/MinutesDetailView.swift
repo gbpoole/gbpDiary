@@ -187,7 +187,10 @@ struct MinutesDetailView: View {
         #endif
         .onDisappear {
             summaryDebouncer.cancel()
-            if isNew && !isConfirmed && !isDeleted {
+            // Never orphan-delete a meeting that's already open in a tab: confirmAdd opens the meeting's
+            // tab before this sheet finishes dismissing, and that tab switch can reset the sheet's
+            // @State (isConfirmed) — deleting a confirmed, now-displayed meeting would crash its tab.
+            if isNew && !isConfirmed && !isDeleted && !workspace.references(minutes.persistentModelID) {
                 // Escaped or dismissed without confirming — remove the orphan record.
                 performDelete()
             } else if !isDeleted {
