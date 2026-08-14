@@ -56,6 +56,7 @@ enum WorkspaceTabCoding {
         switch tab {
         case .diary:        "diary"
         case .chat:         "chat"
+        case .triage:       "triage"
         case .tasks:        "tasks"
         case .projects:     "projects"
         case .people:       "people"
@@ -74,6 +75,7 @@ enum WorkspaceTabCoding {
         switch token {
         case "diary":        .diary
         case "chat":         .chat
+        case "triage":       .triage
         case "tasks":        .tasks
         case "projects":     .projects
         case "people":       .people

@@ -13,6 +13,7 @@ struct WorkspaceView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Query private var allAttachments: [Attachment]
     @Query private var allNotes: [Note]
+    @Query private var allEmails: [EmailMessage]
     @State private var showingNewContent = false
     // Restore the saved session exactly once, when the workspace first appears (has a modelContext).
     @State private var hasRestored = false
@@ -22,10 +23,23 @@ struct WorkspaceView: View {
     @State private var hostWindow: NSWindow?
     #endif
 
+    // Emails awaiting triage across all fetched days (the Triage sidebar backlog badge).
+    private var triageBacklogCount: Int {
+        allEmails.filter { $0.triageState == .unclassified }.count
+    }
+
     // Image attachments referenced by no note and not attached to a document.
     private var unusedImageCount: Int {
         let referenced = AttachmentUsageScanner.referencedIDs(inContents: allNotes.map(\.content))
         return allAttachments.filter { $0.kind == .image && $0.document == nil && !referenced.contains($0.id) }.count
+    }
+
+    private func badgeCount(for cat: WorkspaceCategory) -> Int {
+        switch cat {
+        case .triage: triageBacklogCount
+        case .images: unusedImageCount
+        default:      0
+        }
     }
 
     var body: some View {
@@ -38,7 +52,7 @@ struct WorkspaceView: View {
                 Section("Browse") {
                     ForEach(WorkspaceCategory.allCases) { cat in
                         Label(cat.rawValue, systemImage: cat.systemImage)
-                            .badge(cat == .images ? unusedImageCount : 0)
+                            .badge(badgeCount(for: cat))
                             .tag(cat)
                     }
                 }
@@ -121,6 +135,7 @@ struct WorkspaceView: View {
         switch workspace.active.current {
         case .diary:        DiaryView()
         case .chat:         ChatView(state: workspace.active.chatState)
+        case .triage:       EmailTriageView()
         case .tasks:        TasksView()
         case .projects:     ProjectsView()
         case .people:       PeopleView()
