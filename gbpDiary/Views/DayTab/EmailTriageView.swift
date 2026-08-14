@@ -1,15 +1,13 @@
 import SwiftUI
 import SwiftData
 
-// The email triage workspace: a rolling last-3-days list segmented by triage state
-// (To triage / Accepted / Dismissed). Each row has quick accept/dismiss/unclassify icons, opens in
-// Mail, files projects (with tap-to-apply suggestions), reconciles the person, and can exclude the
-// sender. A Refresh button fetches new mail since the last fetch.
-struct EmailTriageSheet: View {
-    let day: Date
-
+// The central email triage page (sidebar "Triage"). Shows every fetched email across all days —
+// segmented by triage bucket (To triage / Accepted / Tasks / Dismissed) with global counts and grouped
+// under day headers — so a multi-day backlog is cleared in one place. Each row has quick
+// accept/dismiss/unclassify icons, opens in Mail, files projects (with tap-to-apply suggestions),
+// reconciles the person, and can exclude the sender. Refresh fetches new mail since the last fetch.
+struct EmailTriageView: View {
     @Environment(\.modelContext) private var modelContext
-    @Environment(\.dismiss) private var dismiss
 
     @Query(sort: \EmailMessage.date, order: .reverse) private var allEmails: [EmailMessage]
     @Query(sort: \Project.name) private var allProjects: [Project]
@@ -23,78 +21,83 @@ struct EmailTriageSheet: View {
     @State private var isFetching = false
     @State private var status: String?
 
-    // Triage manages the displayed diary day only, bucketed by view category.
-    private func dayEmails(_ category: EmailTriageCategory) -> [EmailMessage] {
+    private func emails(_ category: EmailTriageCategory) -> [EmailMessage] {
+        allEmails.filter { EmailTriageCategory.classify(state: $0.triageState, hasTasks: $0.hasTasks) == category }
+    }
+    private func count(_ category: EmailTriageCategory) -> Int { emails(category).count }
+
+    // The selected bucket's emails grouped by calendar day, most-recent day first (allEmails is
+    // date-descending, so each day's rows stay latest-first and the day order is descending too).
+    private var dayGroups: [(day: Date, emails: [EmailMessage])] {
         let cal = Calendar.current
-        return allEmails.filter {
-            cal.isDate($0.date, inSameDayAs: day)
-                && EmailTriageCategory.classify(state: $0.triageState, hasTasks: $0.hasTasks) == category
+        var order: [Date] = []
+        var map: [Date: [EmailMessage]] = [:]
+        for email in emails(filter) {
+            let day = cal.startOfDay(for: email.date)
+            if map[day] == nil { order.append(day); map[day] = [] }
+            map[day]?.append(email)
         }
+        return order.map { ($0, map[$0] ?? []) }
     }
 
-    private var windowEmails: [EmailMessage] { dayEmails(filter) }
-    private func count(_ category: EmailTriageCategory) -> Int { dayEmails(category).count }
-
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                controlBar
-                Divider()
-                if windowEmails.isEmpty {
-                    Text(emptyLabel).font(.callout).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    List {
-                        ForEach(windowEmails, id: \.persistentModelID) { email in
-                            EmailTriageRow(email: email, allProjects: allProjects,
-                                           suggestions: suggestions(for: email),
-                                           makeProject: makeProject,
-                                           onApplySuggestion: { apply($0, to: email) },
-                                           onReconcile: { reconciling = email },
-                                           onExcludeAddress: { excludeSender(email, domain: false) },
-                                           onExcludeDomain: { excludeSender(email, domain: true) },
-                                           onMakeTodo: { makingTodoFor = email },
-                                           onOpenTask: { openingTask = email.tasks.first },
-                                           onDeleteTasks: { deleteTasks(of: email) })
+        VStack(spacing: 0) {
+            controlBar
+            Divider()
+            if dayGroups.isEmpty {
+                Text(emptyLabel).font(.callout).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List {
+                    ForEach(dayGroups, id: \.day) { group in
+                        Section {
+                            ForEach(group.emails, id: \.persistentModelID) { email in
+                                EmailTriageRow(email: email, allProjects: allProjects,
+                                               suggestions: suggestions(for: email),
+                                               makeProject: makeProject,
+                                               onApplySuggestion: { apply($0, to: email) },
+                                               onReconcile: { reconciling = email },
+                                               onExcludeAddress: { excludeSender(email, domain: false) },
+                                               onExcludeDomain: { excludeSender(email, domain: true) },
+                                               onMakeTodo: { makingTodoFor = email },
+                                               onOpenTask: { openingTask = email.tasks.first },
+                                               onDeleteTasks: { deleteTasks(of: email) })
+                            }
+                        } header: {
+                            Text(group.day.formatted(.dateTime.weekday(.wide).day().month(.wide).year()))
                         }
                     }
                 }
             }
-            .navigationTitle("Triage Email — \(day.formatted(date: .abbreviated, time: .omitted))")
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } }
-            }
-            .sheet(item: $reconciling) { email in
-                ResolveAttendeeSheet(
-                    attendee: CalendarAttendee(name: email.fromName ?? "", email: email.fromAddress),
-                    onResolve: { resolvePerson(email, $0) }
-                )
-            }
-            .sheet(item: $makingTodoFor) { email in
-                TaskEditorSheet(
-                    task: nil,
-                    defaultDate: email.date,
-                    onTaskCreated: { task in task.originEmail = email; email.accept() },
-                    presetProject: email.projects.first,
-                    presetSummary: email.subject.isEmpty ? nil : email.subject,
-                    presetNotes: email.summary
-                )
-            }
-            .sheet(item: $openingTask) { task in
-                TaskEditorSheet(task: task, defaultDate: task.originEmail?.date ?? Date())
-            }
         }
-        #if os(macOS)
-        .frame(minWidth: 700, minHeight: 520)
-        #endif
+        .background(AppTheme.background)
+        .sheet(item: $reconciling) { email in
+            ResolveAttendeeSheet(
+                attendee: CalendarAttendee(name: email.fromName ?? "", email: email.fromAddress),
+                onResolve: { resolvePerson(email, $0) }
+            )
+        }
+        .sheet(item: $makingTodoFor) { email in
+            TaskEditorSheet(
+                task: nil,
+                defaultDate: email.date,
+                onTaskCreated: { task in task.originEmail = email; email.accept() },
+                presetProject: email.projects.first,
+                presetSummary: email.subject.isEmpty ? nil : email.subject,
+                presetNotes: email.summary
+            )
+        }
+        .sheet(item: $openingTask) { task in
+            TaskEditorSheet(task: task, defaultDate: task.originEmail?.date ?? Date())
+        }
     }
 
     private var emptyLabel: String {
         switch filter {
-        case .toTriage:  "Nothing to triage for this day."
-        case .accepted:  "No accepted email for this day."
-        case .tasks:     "No email to-dos for this day."
-        case .dismissed: "No dismissed email for this day."
+        case .toTriage:  "Nothing to triage."
+        case .accepted:  "No accepted email."
+        case .tasks:     "No email to-dos."
+        case .dismissed: "No dismissed email."
         }
     }
 

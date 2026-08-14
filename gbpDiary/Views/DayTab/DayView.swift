@@ -32,6 +32,7 @@ struct DayPageContent: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(DiaryState.self) private var diaryState: DiaryState?
+    @Environment(WorkspaceModel.self) private var workspace
     @State private var showingAddTask = false
     @State private var activityMeetingTrigger = false
     @State private var activityLogTimeTrigger = false
@@ -45,7 +46,6 @@ struct DayPageContent: View {
     @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allTimeEntries: [TaskTimeEntry]
     @Query(sort: \EmailMessage.date, order: .reverse) private var allEmails: [EmailMessage]
     @Query private var allPeople: [Person]
-    @State private var showingTriage = false
     @State private var reconcilingThread: EmailThread?
 
     private var todayTimeEntries: [TaskTimeEntry] {
@@ -53,9 +53,14 @@ struct DayPageContent: View {
         return allTimeEntries.filter { cal.isDate($0.date, inSameDayAs: date) }
     }
 
-    // Emails for the day grouped into threads (same normalized subject + other party), latest first.
+    // Received emails accepted onto the diary (sent emails live only in the Activity section now).
+    private var dayReceivedEmails: [EmailMessage] {
+        dayEmails.filter { $0.direction == .inbox }
+    }
+
+    // Received emails for the day grouped into threads (same normalized subject + other party), latest first.
     private var dayEmailThreads: [EmailThread] {
-        let groups = Dictionary(grouping: dayEmails) { email in
+        let groups = Dictionary(grouping: dayReceivedEmails) { email in
             EmailThreading.threadKey(subject: email.subject,
                                      party: email.person?.id.uuidString ?? email.fromAddress)
         }
@@ -214,7 +219,6 @@ struct DayPageContent: View {
         .sheet(item: $addNoteRecord) { record in
             ContentNoteEditorSheet(dayRecord: record, onCreated: { newlyAddedNoteId = $0.id })
         }
-        .sheet(isPresented: $showingTriage) { EmailTriageSheet(day: date) }
         .sheet(item: $reconcilingThread) { thread in
             ResolveAttendeeSheet(
                 attendee: CalendarAttendee(name: thread.fromName ?? "", email: thread.fromAddress),
@@ -230,10 +234,10 @@ struct DayPageContent: View {
     // MARK: - Email
 
     @ViewBuilder private var emailsSection: some View {
-        DaySectionHeader(title: "Email", systemImage: "tray.full", onAction: { showingTriage = true })
-        // Hidden (non-accepted) emails for this day — tap to open the triage window.
+        DaySectionHeader(title: "Email", systemImage: "tray.full", onAction: { workspace.focusOrOpen(.triage) })
+        // Hidden (non-accepted) emails for this day — tap to open the central triage page.
         if let hidden = hiddenEmailSummary {
-            Button { showingTriage = true } label: {
+            Button { workspace.focusOrOpen(.triage) } label: {
                 Label(hidden, systemImage: "tray.full")
                     .font(.caption).foregroundStyle(AppTheme.accent)
             }
@@ -241,7 +245,7 @@ struct DayPageContent: View {
             .padding(.horizontal).padding(.vertical, 4)
         }
         // If summaries can't run (Apple Intelligence off / model downloading), tell the user why.
-        if !dayEmails.isEmpty, dayEmails.contains(where: { $0.summaryState == EmailSummaryState.pending.rawValue }),
+        if !dayReceivedEmails.isEmpty, dayReceivedEmails.contains(where: { $0.summaryState == EmailSummaryState.pending.rawValue }),
            let reason = FoundationModelsSummarizer().unavailableReason {
             Label(reason, systemImage: "sparkles")
                 .font(.caption)
@@ -249,7 +253,7 @@ struct DayPageContent: View {
                 .padding(.horizontal)
                 .padding(.vertical, 4)
         }
-        if dayEmails.isEmpty {
+        if dayReceivedEmails.isEmpty {
             Text(hiddenEmailSummary == nil ? "No emails for this day." : "No emails on the diary for this day.")
                 .font(.callout)
                 .foregroundStyle(.tertiary)

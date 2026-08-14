@@ -6,14 +6,15 @@ import Testing
 @MainActor
 struct WorkspaceSessionTests {
     @Test func categoryTokens_roundTrip() {
-        let tabs: [WorkspaceTab] = [.diary, .chat, .tasks, .projects, .people, .institutions, .meetings,
-                                    .documents, .images, .tags, .timesheet, .content]
+        let tabs: [WorkspaceTab] = [.diary, .chat, .triage, .tasks, .projects, .people, .institutions,
+                                    .meetings, .documents, .images, .tags, .timesheet, .content]
         for tab in tabs {
             let token = WorkspaceTabCoding.token(forCategoryTab: tab)
             #expect(token != nil)
             #expect(WorkspaceTabCoding.categoryTab(forToken: token!) == tab)
         }
         #expect(WorkspaceTabCoding.token(forCategoryTab: .chat) == "chat")
+        #expect(WorkspaceTabCoding.token(forCategoryTab: .triage) == "triage")
     }
 
     @Test func categoryToken_nilForUnknownToken() {

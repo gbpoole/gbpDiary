@@ -113,15 +113,14 @@ struct FocusBlockRow: View {
         }
     }
 
-    // A block's meetings, sent emails, and time entries interleaved in chronological order.
+    // A block's meetings and time entries interleaved in chronological order. (Sent emails are
+    // collected into one collapsible group rendered after these — see activityRows.)
     private enum BlockItem: Identifiable {
         case meeting(DayEntry)
-        case email(EmailMessage)
         case entry(TaskTimeEntry)
         var id: String {
             switch self {
             case .meeting(let e): "m-\(e.id.uuidString)"
-            case .email(let e):   "s-\(e.id.uuidString)"
             case .entry(let e):   "e-\(e.id.uuidString)"
             }
         }
@@ -130,7 +129,6 @@ struct FocusBlockRow: View {
     private var orderedBlockItems: [BlockItem] {
         var items: [(Date, BlockItem)] = []
         for meeting in meetings { items.append((meeting.minutes?.meetingAt ?? .distantPast, .meeting(meeting))) }
-        for email in sentEmails { items.append((email.date, .email(email))) }
         for entry in entries { items.append((entry.date, .entry(entry))) }
         return items.sorted { $0.0 < $1.0 }.map(\.1)
     }
@@ -141,11 +139,12 @@ struct FocusBlockRow: View {
             switch item {
             case .meeting(let entry):
                 if let minutes = entry.minutes { MeetingActivityRow(minutes: minutes) }
-            case .email(let email):
-                SentEmailActivityRow(email: email)
             case .entry(let entry):
                 ActivityEntryRow(entry: entry)
             }
+        }
+        if !sentEmails.isEmpty {
+            SentEmailsGroupRow(emails: sentEmails)
         }
     }
 }

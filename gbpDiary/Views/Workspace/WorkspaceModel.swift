@@ -6,6 +6,7 @@ import SwiftData
 enum WorkspaceTab: Hashable, Identifiable {
     case diary
     case chat
+    case triage
     case tasks
     case projects
     case people
@@ -31,6 +32,7 @@ enum WorkspaceTab: Hashable, Identifiable {
         switch self {
         case .diary:                     .diary
         case .chat:                      .chat
+        case .triage:                    .triage
         case .tasks:                     .tasks
         case .projects, .project:        .projects
         case .people, .person:           .people
@@ -49,6 +51,7 @@ enum WorkspaceTab: Hashable, Identifiable {
 enum WorkspaceCategory: String, CaseIterable, Identifiable {
     case diary        = "Diary"
     case chat         = "Chat"
+    case triage       = "Triage"
     case tasks        = "Tasks"
     case timesheet    = "Timesheet"
     case projects     = "Projects"
@@ -66,6 +69,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         switch self {
         case .diary:        "calendar"
         case .chat:         "bubble.left.and.bubble.right"
+        case .triage:       "tray.and.arrow.down"
         case .tasks:        "checkmark.square"
         case .projects:     "folder"
         case .people:       "person.2"
@@ -84,6 +88,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         switch self {
         case .diary:        .diary
         case .chat:         .chat
+        case .triage:       .triage
         case .tasks:        .tasks
         case .projects:     .projects
         case .people:       .people
@@ -262,7 +267,7 @@ struct ChatLabState {
         case .institutions: ListPageFilter(sortColumnID: "name", sortAscending: true)
         case .tags:         ListPageFilter(sortColumnID: "tag", sortAscending: true)
         case .images:       ListPageFilter(sortColumnID: "name", sortAscending: true)
-        case .diary, .chat, .tasks, .timesheet:
+        case .diary, .chat, .triage, .tasks, .timesheet:
             ListPageFilter(sortColumnID: "name", sortAscending: true)  // unused (not list pages)
         }
     }

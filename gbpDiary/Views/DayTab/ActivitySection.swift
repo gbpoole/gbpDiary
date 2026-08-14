@@ -57,12 +57,10 @@ struct ActivitySection: View {
     private enum ActivityRowItem: Identifiable {
         case block(FocusBlock)
         case entry(TaskTimeEntry)
-        case sentEmail(EmailMessage)
         var id: String {
             switch self {
             case .block(let b): "b-\(b.id.uuidString)"
             case .entry(let e): "e-\(e.id.uuidString)"
-            case .sentEmail(let m): "m-\(m.id.uuidString)"
             }
         }
     }
@@ -77,12 +75,12 @@ struct ActivitySection: View {
         }
     }
 
-    // Blocks + standalone entries, interleaved in chronological order.
+    // Blocks + standalone entries, interleaved in chronological order. (Standalone sent emails are
+    // collected into a single collapsible group rather than interleaved — see the body.)
     private var activityItems: [ActivityRowItem] {
         let blockItems = blocks.map { (slotStart($0), ActivityRowItem.block($0)) }
         let entryItems = standaloneEntries.map { ($0.date, ActivityRowItem.entry($0)) }
-        let emailItems = standaloneSentEmails.map { ($0.date, ActivityRowItem.sentEmail($0)) }
-        return (blockItems + entryItems + emailItems).sorted { $0.0 < $1.0 }.map(\.1)
+        return (blockItems + entryItems).sorted { $0.0 < $1.0 }.map(\.1)
     }
 
     private func meetings(for block: FocusBlock) -> [DayEntry] {
@@ -133,13 +131,16 @@ struct ActivitySection: View {
                                   meetings: meetings(for: block), sentEmails: sentEmails(for: block))
                 case .entry(let entry):
                     ActivityEntryRow(entry: entry)
-                case .sentEmail(let email):
-                    SentEmailActivityRow(email: email)
                 }
             }
 
             ForEach(standaloneMeetings, id: \.id) { minutes in
                 StandaloneMeetingRow(minutes: minutes)
+            }
+
+            // Standalone sent emails (outside every focus block), collapsed into one expandable group.
+            if !standaloneSentEmails.isEmpty {
+                SentEmailsGroupRow(emails: standaloneSentEmails)
             }
 
             ForEach(completedTasks) { task in
@@ -262,17 +263,92 @@ struct ActivitySection: View {
 
 }
 
+// Collapses a set of sent emails into a single expandable summary row ("N sent · total logged"),
+// keeping the diary Activity uncluttered. Used for both a focus block's emails and the standalone ones.
+// Internal so FocusBlockRow can use it too.
+struct SentEmailsGroupRow: View {
+    var emails: [EmailMessage]
+    @State private var expanded = false
+
+    private var totalHours: Double {
+        emails.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            summaryRow
+            if expanded {
+                ForEach(emails, id: \.persistentModelID) { email in
+                    SentEmailActivityRow(email: email)
+                }
+            }
+        }
+    }
+
+    private var summaryRow: some View {
+        HStack(alignment: .center, spacing: 6) {
+            Color.clear.frame(width: 16, height: 1)
+            HStack(alignment: .center, spacing: 6) {
+                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(AppTheme.mutedText)
+                    .frame(width: 14)
+                Image(systemName: "paperplane")
+                    .font(.system(size: 12)).foregroundStyle(AppTheme.person).frame(width: 18)
+                Text("\(emails.count) sent email\(emails.count == 1 ? "" : "s")")
+                    .font(.subheadline).foregroundStyle(AppTheme.text)
+                Spacer(minLength: 8)
+                if totalHours > 0 {
+                    Chip(label: TimeFormat.short(hours: totalHours), color: AppTheme.duration)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(AppTheme.cardRaised.opacity(0.45))
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+            .onTapGesture { expanded.toggle() }
+            .padding(.trailing)
+        }
+        .padding(.leading)
+        .padding(.vertical, 1)
+    }
+}
+
 // A sent email in the activity timeline (inside its focus block by send time, or standalone), with a
 // button to log time spent sending it (an email-linked TaskTimeEntry counted toward the block/day).
 // Internal so FocusBlockRow can render block-nested sent emails too.
 struct SentEmailActivityRow: View {
     var email: EmailMessage
+    @Environment(\.modelContext) private var modelContext
     @State private var showingLogTime = false
     @State private var mailService = MailScriptService()
     @State private var openError: String?
 
     private var loggedHours: Double {
         email.timeEntries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
+    }
+
+    // One-click accumulate: append an email-linked time entry at the email's send time.
+    private func logEmailTime(_ minutes: Int) {
+        let nextOrder = (email.timeEntries.map(\.sortOrder).max() ?? -1) + 1
+        let entry = TaskTimeEntry(date: email.date,
+                                  duration: Duration(value: Double(minutes) / 60.0, unit: .h),
+                                  comment: nil, sortOrder: nextOrder)
+        entry.email = email
+        modelContext.insert(entry)
+    }
+
+    private func quickButton(_ label: String, _ minutes: Int) -> some View {
+        Button { logEmailTime(minutes) } label: {
+            Text(label)
+                .font(.caption2.weight(.medium))
+                .padding(.horizontal, 5).padding(.vertical, 2)
+                .background(AppTheme.action.opacity(0.14), in: Capsule())
+                .foregroundStyle(AppTheme.action)
+        }
+        .buttonStyle(.plain)
+        .help("Log \(label) for writing this email")
     }
 
     var body: some View {
@@ -296,14 +372,17 @@ struct SentEmailActivityRow: View {
                                  font: .subheadline, lineLimit: 1)
                 Spacer(minLength: 8)
                 HStack(spacing: 4) {
+                    quickButton("1m", 1)
+                    quickButton("5m", 5)
+                    quickButton("15m", 15)
                     Button { showingLogTime = true } label: {
-                        Image(systemName: "plus.circle").font(.system(size: 12)).foregroundStyle(AppTheme.action)
+                        Image(systemName: "ellipsis.circle").font(.system(size: 12)).foregroundStyle(AppTheme.action)
                     }
                     .buttonStyle(.plain)
-                    .help("Log time for sending this email")
+                    .help("Log a custom time / edit entries")
                     Chip(label: email.date.formatted(date: .omitted, time: .shortened), color: AppTheme.project)
                     if loggedHours > 0 {
-                        Chip(label: Duration(value: loggedHours, unit: .h).displayString, color: AppTheme.duration)
+                        Chip(label: TimeFormat.short(hours: loggedHours), color: AppTheme.duration)
                     }
                 }
             }
