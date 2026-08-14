@@ -39,12 +39,28 @@ enum EmailIngest {
         })
         let rules = EmailExcludeStore.load()
         let refs = people.map { PersonRef(id: $0.id, name: $0.name, emails: $0.emails) }
+
+        // Mailing-list loopbacks: a received email whose sender is one of the "Me" person's own
+        // addresses is really your own outgoing mail bounced back. Skip new ones and dismiss any that
+        // slipped in before (self-heals as your identity/addresses change).
+        let myAddresses = EmailSelfMatching.normalizedAddresses(
+            AppSettingsStore.myPersonID.flatMap { id in people.first { $0.id == id }?.emails } ?? [])
+        if !myAddresses.isEmpty {
+            for e in existing where !e.dismissed
+                && EmailSelfMatching.isInboxFromSelf(direction: e.direction,
+                                                     fromAddress: e.fromAddress, myAddresses: myAddresses) {
+                e.triageDismiss()
+            }
+        }
+
         var added = 0
         for d in drafts {
             let mailbox = EmailIngestPlanning.mailbox(for: d.direction)
             let key = MailScriptParsing.dedupeKey(messageId: d.messageId, account: account, mailbox: mailbox,
                                                   date: d.date, fromAddress: d.address, subject: d.subject)
             guard keys.insert(key).inserted else { continue }
+            if EmailSelfMatching.isInboxFromSelf(direction: d.direction, fromAddress: d.address,
+                                                 myAddresses: myAddresses) { continue }
             let msg = EmailMessage(messageId: d.messageId, account: account, mailbox: mailbox,
                                    direction: d.direction, fromAddress: d.address, fromName: d.name,
                                    subject: d.subject, date: d.date)
