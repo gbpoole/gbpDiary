@@ -563,13 +563,14 @@ are **collapsed into a single expandable `SentEmailsGroupRow`** ("N sent email(s
 default collapsed) rather than one row each: one group per focus block (its `sentEmails`, rendered after
 that block's meetings/entries in `FocusBlockRow`) and one group for the standalone (out-of-block) sent
 emails in `ActivitySection` (they are no longer interleaved into `activityItems`). Expanding a group
-reveals a `SentEmailActivityRow` per email, which **leads with the email's person chip** (the recipient —
-an "Unrecognized" `AppTheme.warning` chip when no Person is linked) **and its project chip(s)**, then
-shows the **on-device AI summary in place of the subject** via the shared `EmailContentLine` (falling
-back to the de-emphasised subject until the summary is ready — `EmailMessage.isSummarizing` gates the
-"summarising…" hint). **Quick time-logging:** each `SentEmailActivityRow` has one-click **`1m` / `5m` /
-`15m`** buttons that **accumulate** (each appends an email-linked task-less `TaskTimeEntry` at the send
-time) plus an **`⋯`** that opens `LogTimeSheet(presetEmail:)` for custom values/editing. Email time chips
+reveals a **two-line** `SentEmailActivityRow` per email: line 1 groups all the controls together on the
+left (open-in-Mail, then an **editable recipient chip** → `ResolveAttendeeSheet` (`resolvePerson` mirrors
+the triage row; links/creates a Person and adds the recipient address), an **editable project chip** →
+`FuzzyPickerField` picker, and the time-log actions), with the send time trailing on the right; line 2 is
+the **on-device AI summary** (or the de-emphasised subject until ready — `EmailMessage.isSummarizing`
+gates the "summarising…" hint) via the shared `EmailContentLine`. **Quick time-logging:** the one-click
+**`1m` / `5m` / `15m`** buttons **accumulate** (each appends an email-linked task-less `TaskTimeEntry` at
+the send time) plus an **`⋯`** that opens `LogTimeSheet(presetEmail:)` for custom values/editing. Email time chips
 and the group total render in minutes via `TimeFormat.short(hours:)` (`Domain/TimeFormat.swift`) rather
 than `Duration.displayString`'s hours. In-block email time reduces that block's **net remaining**
 (`FocusBlockRow.netHours` adds the emails' `timeEntries` hours); standalone email time adds to the day
@@ -587,9 +588,11 @@ default To-triage). A to-do'd email is still `accepted` but shows under **Tasks*
 (`EmailTriageCategory.classify(state:hasTasks:)`). There's a **Refresh** button (incremental fetch-now).
 Each row with a to-do shows a **to-do status chip** (open = `AppTheme.action` / done = green) that opens
 the linked task; its **context menu deletes the to-do** (undo make-todo — the email survives and falls
-back to the **Accepted** bucket). There is no multi-select/bulk toolbar — each row (`EmailTriageRow`) has **quick action
+back to the **Accepted** bucket). There is no multi-select/bulk toolbar — each row (`EmailTriageRow`) groups
+its **person chip · project chip · to-do chip · classification action icons** all together on the **left**
+(next to the info used to decide), with only the send time trailing right. The **quick action
 icons** (Accept ✓ / Dismiss ✕ / move-back-to-triage — only the ones that change the current state
-show), opens in Mail, shows the summary line, an inline project `FuzzyPickerField`, a person chip →
+show), open in Mail, the summary line, an inline project `FuzzyPickerField`, a person chip →
 `ResolveAttendeeSheet` (`resolvePerson` mirrors `MinutesDetailView.resolveAttendee`), a context menu to
 **exclude the sender / domain** (`EmailExcludeStore.add` + dismiss), a **Make todo** action
 (`checklist` icon) that opens `TaskEditorSheet` seeded from the email (summary = subject, notes =

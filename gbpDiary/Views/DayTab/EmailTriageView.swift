@@ -242,14 +242,16 @@ private struct EmailTriageRow: View {
             }
             .buttonStyle(.plain).help("Open in Mail")
             VStack(alignment: .leading, spacing: 1) {
+                // Person/project info and all the classification actions are grouped together on the
+                // left (close to the info used to decide); only the send time trails on the right.
                 HStack(spacing: 6) {
                     personChip
                     projectChip
                     todoChip
+                    triageActions
                     Spacer(minLength: 8)
                     Text(email.date.formatted(date: .omitted, time: .shortened))
                         .font(.caption2).foregroundStyle(.secondary)
-                    triageActions
                 }
                 EmailContentLine(subject: email.subject, summary: email.summary,
                                  isSummarizing: email.summaryState == EmailSummaryState.pending.rawValue)
