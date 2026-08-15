@@ -14,6 +14,7 @@ struct WorkspaceView: View {
     @Query private var allAttachments: [Attachment]
     @Query private var allNotes: [Note]
     @Query private var allEmails: [EmailMessage]
+    @Query private var allTasks: [Task]
     @State private var showingNewContent = false
     // Restore the saved session exactly once, when the workspace first appears (has a modelContext).
     @State private var hasRestored = false
@@ -28,6 +29,11 @@ struct WorkspaceView: View {
         allEmails.filter { $0.triageState == .unclassified }.count
     }
 
+    // Open, top-level tasks awaiting Review (the Tasks sidebar inbox badge).
+    private var taskInboxCount: Int {
+        allTasks.filter { $0.needsTriage && $0.parent == nil && $0.isOpen }.count
+    }
+
     // Image attachments referenced by no note and not attached to a document.
     private var unusedImageCount: Int {
         let referenced = AttachmentUsageScanner.referencedIDs(inContents: allNotes.map(\.content))
@@ -37,6 +43,7 @@ struct WorkspaceView: View {
     private func badgeCount(for cat: WorkspaceCategory) -> Int {
         switch cat {
         case .triage: triageBacklogCount
+        case .tasks:  taskInboxCount
         case .images: unusedImageCount
         default:      0
         }

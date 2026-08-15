@@ -180,4 +180,23 @@ struct TaskStateTransitionTests {
         #expect(task.completedAt == FixedDates.reference)
         #expect(task.status == .completed)
     }
+
+    @Test func newTask_needsTriageByDefault() {
+        #expect(Task(summary: "captured").needsTriage)
+    }
+
+    @Test func markReviewed_clearsNeedsTriage() {
+        let task = Task(summary: "captured")
+        task.markReviewed()
+        #expect(!task.needsTriage)
+    }
+
+    @Test func markReviewed_noOpWhenAlreadyReviewed() {
+        let task = Task(summary: "captured")
+        task.markReviewed()
+        let stamp = task.updatedAt
+        task.markReviewed()   // second call is a no-op (doesn't bump updatedAt)
+        #expect(!task.needsTriage)
+        #expect(task.updatedAt == stamp)
+    }
 }

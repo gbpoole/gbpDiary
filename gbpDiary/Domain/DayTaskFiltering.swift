@@ -29,12 +29,13 @@ enum DayTaskFiltering {
         }
     }
 
+    // The task inbox: open, top-level tasks awaiting triage (Review). Enriching a task no longer removes
+    // it from the inbox — only `markReviewed()` (clearing `needsTriage`) does.
     static func inboxTasks(allTasks: [Task]) -> [Task] {
         allTasks.filter {
             ($0.status == .todo || $0.status == .started)
                 && $0.parent == nil
-                && $0.project == nil
-                && $0.assignee == nil
+                && $0.needsTriage
         }
     }
 }

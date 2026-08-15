@@ -25,4 +25,12 @@ enum AppSettingsStore {
         get { UserDefaults.standard.string(forKey: pagePaletteKey).flatMap(ExportPalette.init) ?? .lightShaded }
         set { UserDefaults.standard.set(newValue.rawValue, forKey: pagePaletteKey) }
     }
+
+    private static let taskPanelShownKey = "diaryTaskPanelShown"
+
+    /// Whether the diary's right-hand task panel is shown (defaults to true on first launch).
+    static var taskPanelShown: Bool {
+        get { UserDefaults.standard.object(forKey: taskPanelShownKey) as? Bool ?? true }
+        set { UserDefaults.standard.set(newValue, forKey: taskPanelShownKey) }
+    }
 }
