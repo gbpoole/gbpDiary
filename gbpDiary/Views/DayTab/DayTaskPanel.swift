@@ -15,21 +15,79 @@ struct DayTaskPanel: View {
     @State private var newTaskText = ""
     @State private var editingTask: Task?
     @State private var collapsed: Set<String> = []
+    @State private var searchText = ""
+    @State private var activeFilterIds: Set<String> = []
 
     // The configured "Me" person; the panel is scoped to tasks assigned to them.
     private var mePerson: Person? {
         AppSettingsStore.myPersonID.flatMap { id in allPeople.first { $0.id == id } }
     }
 
+    // Tasks assigned to Me (when configured); otherwise all tasks.
+    private var mineTasks: [Task] {
+        mePerson.map { me in allTasks.filter { $0.assignee?.id == me.id } } ?? allTasks
+    }
+
+    // Me-scoped tasks after applying the panel's filters + fuzzy search.
+    private var visibleTasks: [Task] {
+        let filtered = FilterEngine.apply(mineTasks, filters: panelFilters, activeIds: activeFilterIds)
+        let query = searchText.trimmingCharacters(in: .whitespaces)
+        guard !query.isEmpty else { return filtered }
+        return filtered.filter { FuzzyMatch.matches(query, in: haystack($0)) }
+    }
+
+    private func haystack(_ task: Task) -> String {
+        [task.summary, task.project?.name, task.tags.joined(separator: " ")]
+            .compactMap { $0 }.joined(separator: " ")
+    }
+
+    // A lean filter set (no "incomplete"/status — the panel only shows open tasks; no assignee — all Me).
+    private var panelFilters: [PickerFilter<Task>] {
+        var seenProjects = Set<UUID>()
+        let projects = mineTasks.compactMap(\.project)
+            .filter { seenProjects.insert($0.id).inserted }
+            .sorted { $0.name < $1.name }
+            .map { p in
+                PickerFilter<Task>(id: "project.\(p.id)", label: p.name, chipColor: AppTheme.project,
+                                   group: "Project") { $0.project?.id == p.id }
+            }
+        let priorities = TaskPriority.allCases.filter { $0 != .none }.map { p in
+            PickerFilter<Task>(id: "priority.\(p.rawValue)", label: p.displayName,
+                               chipColor: priorityColor(p), group: "Priority") { $0.priority == p }
+        }
+        var seenTags = Set<String>()
+        let tags = mineTasks.flatMap(\.tags)
+            .filter { seenTags.insert($0).inserted }
+            .sorted()
+            .map { tag in
+                PickerFilter<Task>(id: "tag.\(tag)", label: "#\(tag)", chipColor: AppTheme.tag,
+                                   group: "Tag") { $0.tags.contains(tag) }
+            }
+        let source = [
+            PickerFilter<Task>(id: "source.email", label: "From email", chipColor: AppTheme.person,
+                               group: "Source") { $0.originEmail != nil }
+        ]
+        return projects + priorities + tags + source
+    }
+
+    private func priorityColor(_ p: TaskPriority) -> Color {
+        switch p {
+        case .high:   AppTheme.destructive
+        case .medium: AppTheme.followUp
+        default:      AppTheme.mutedText
+        }
+    }
+
     private var buckets: DayTaskBuckets.Buckets {
-        // Only tasks assigned to Me (when configured); otherwise fall back to all tasks.
-        let mine = mePerson.map { me in allTasks.filter { $0.assignee?.id == me.id } } ?? allTasks
-        return DayTaskBuckets.partition(allTasks: mine, date: date)
+        DayTaskBuckets.partition(allTasks: visibleTasks, date: date)
     }
 
     var body: some View {
         VStack(spacing: 0) {
             header
+            ListToolbar(searchText: $searchText, searchPrompt: "Search tasks…",
+                        filters: panelFilters, activeFilterIds: $activeFilterIds,
+                        onClearAll: { activeFilterIds.removeAll(); searchText = "" })
             Divider()
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 0) {
@@ -51,7 +109,7 @@ struct DayTaskPanel: View {
     private var header: some View {
         HStack(spacing: 6) {
             Image(systemName: "checkmark.square").foregroundStyle(AppTheme.mutedText).font(.system(size: 12))
-            Text("TASKS")
+            Text("My Active Tasks")
                 .font(AppTheme.interfaceFont(size: 12, weight: .semibold))
                 .tracking(0.8).foregroundStyle(AppTheme.mutedText)
             Spacer()
