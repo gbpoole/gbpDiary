@@ -14,7 +14,11 @@ struct DayTaskPanel: View {
 
     @State private var newTaskText = ""
     @State private var editingTask: Task?
+    @State private var quickAddDraft: QuickAddDraft?
     @State private var collapsed: Set<String> = []
+
+    // A pending quick-add: opens the editor in new-task mode so nothing is created unless the user saves.
+    private struct QuickAddDraft: Identifiable { let id = UUID(); let summary: String }
     @State private var searchText = ""
     @State private var activeFilterIds: Set<String> = []
 
@@ -104,6 +108,9 @@ struct DayTaskPanel: View {
         }
         .background(AppTheme.background)
         .sheet(item: $editingTask) { task in TaskEditorSheet(task: task, defaultDate: date) }
+        .sheet(item: $quickAddDraft) { draft in
+            TaskEditorSheet(task: nil, defaultDate: date, presetSummary: draft.summary)
+        }
     }
 
     private var header: some View {
@@ -137,10 +144,10 @@ struct DayTaskPanel: View {
     private func addTask() {
         let trimmed = newTaskText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let task = Task(summary: trimmed)   // needsTriage == true → lands in the Inbox
-        task.assignee = mePerson            // assign to Me so captures appear in this (Me-scoped) panel
-        modelContext.insert(task)
         newTaskText = ""
+        // Open the editor pre-filled (new-task mode: it defaults the assignee to Me and only creates the
+        // task on Save — so cancelling here creates nothing).
+        quickAddDraft = QuickAddDraft(summary: trimmed)
     }
 
     // Action buckets (triaged tasks) — compact two-line rows.
