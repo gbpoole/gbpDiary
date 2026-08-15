@@ -283,20 +283,14 @@ private struct DayTaskPanelRow: View {
 
     private func logTime(_ minutes: Int) {
         let nextOrder = (task.timeEntries.map(\.sortOrder).max() ?? -1) + 1
-        let entry = TaskTimeEntry(date: currentTimeOn(date),
+        // Books to the shown day's current time — or the real weekend time when parked on the green Monday
+        // (so weekend work lands in Friday's overtime). See WeekendPolicy.logNowDate.
+        let entry = TaskTimeEntry(date: WeekendPolicy.logNowDate(viewedDate: date),
                                   duration: Duration(value: Double(minutes) / 60.0, unit: .h),
                                   comment: nil, sortOrder: nextOrder)
         entry.task = task
         modelContext.insert(entry)
         if task.status == .todo { task.status = .started; task.updatedAt = Date() }   // logging = working on it
-    }
-
-    // The current time-of-day applied to the shown diary day (so the entry files on that day).
-    private func currentTimeOn(_ day: Date) -> Date {
-        let cal = Calendar.current
-        let now = Date()
-        return cal.date(bySettingHour: cal.component(.hour, from: now),
-                        minute: cal.component(.minute, from: now), second: 0, of: day) ?? day
     }
 
     // First line: small flag glyphs then the metadata chips (wrap when the panel is narrow).

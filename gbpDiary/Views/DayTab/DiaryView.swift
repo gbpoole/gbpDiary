@@ -132,7 +132,7 @@ struct DiaryView: View {
     private var isCurrentPeriod: Bool {
         switch diary.mode {
         case .day:
-            return Calendar.current.isDateInToday(diary.currentDate)
+            return Calendar.current.startOfDay(for: diary.currentDate) == WeekendPolicy.weekday(for: Date())
         case .week:
             return Calendar.current.isDate(diary.currentDate, equalTo: Date(), toGranularity: .weekOfYear)
         }
@@ -141,6 +141,13 @@ struct DiaryView: View {
     private var dateLabel: String {
         switch diary.mode {
         case .day:
+            // On the weekend, the green Monday actually covers today (Sat/Sun) — show the range it spans
+            // so that's clear. On weekdays, just the single date.
+            if isCurrentPeriod, WeekendPolicy.isWeekend(Date()) {
+                let start = WeekendPolicy.forwardRange(for: diary.currentDate).lowerBound
+                return "\(start.formatted(.dateTime.weekday(.abbreviated).day())) – "
+                    + diary.currentDate.formatted(.dateTime.weekday(.abbreviated).day().month(.wide).year())
+            }
             return diary.currentDate.formatted(.dateTime.weekday(.wide).day().month(.wide).year())
         case .week:
             let cal = Calendar.current
@@ -151,8 +158,12 @@ struct DiaryView: View {
     }
 
     private func stepDate(_ delta: Int) {
-        let unit: Calendar.Component = diary.mode == .day ? .day : .weekOfYear
-        let stepped = Calendar.current.date(byAdding: unit, value: delta, to: diary.currentDate) ?? diary.currentDate
+        let stepped: Date
+        if diary.mode == .day {
+            stepped = WeekendPolicy.steppedWeekday(from: diary.currentDate, delta: delta)   // skip Sat/Sun
+        } else {
+            stepped = Calendar.current.date(byAdding: .weekOfYear, value: delta, to: diary.currentDate) ?? diary.currentDate
+        }
         diary.goTo(stepped)
     }
 }

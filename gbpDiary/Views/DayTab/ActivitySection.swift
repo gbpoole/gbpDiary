@@ -34,7 +34,11 @@ struct ActivitySection: View {
     // Block membership is derived purely from each entry's time — nothing is stored. The block
     // whose range contains the time owns the entry; entries covered by no block are standalone.
     // Task-backed time entries (email-linked entries are shown on their sent-email rows instead).
-    private var taskEntries: [TaskTimeEntry] { todayEntries.filter { $0.email == nil } }
+    // Weekday task entries only — weekend-dated work (folded onto Friday) is shown separately as an
+    // overtime group, not assigned to Friday's focus blocks. (Email-linked entries render on their rows.)
+    private var taskEntries: [TaskTimeEntry] {
+        todayEntries.filter { $0.email == nil && !WeekendPolicy.isWeekend($0.date) }
+    }
 
     private func entries(for block: FocusBlock) -> [TaskTimeEntry] {
         taskEntries.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks)?.id == block.id }
@@ -45,14 +49,36 @@ struct ActivitySection: View {
         taskEntries.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks) == nil }
     }
 
+    private var weekdaySentEmails: [EmailMessage] {
+        sentEmails.filter { !WeekendPolicy.isWeekend($0.date) }
+    }
+
     // Sent emails bucketed into the focus block covering their send time (like time entries); the rest
     // render standalone. Their logged time counts toward that block's net (or the day total).
     private func sentEmails(for block: FocusBlock) -> [EmailMessage] {
-        sentEmails.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks)?.id == block.id }
+        weekdaySentEmails.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks)?.id == block.id }
     }
     private var standaloneSentEmails: [EmailMessage] {
-        sentEmails.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks) == nil }
+        weekdaySentEmails.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks) == nil }
     }
+
+    // MARK: - Weekend work (folded onto Friday, shown as one overtime group)
+    private func isWeekend(_ date: Date) -> Bool { WeekendPolicy.isWeekend(date) }
+    private var weekendEntries: [TaskTimeEntry] {
+        todayEntries.filter { $0.email == nil && isWeekend($0.date) }.sorted { $0.date < $1.date }
+    }
+    private var weekendSentEmails: [EmailMessage] { sentEmails.filter { isWeekend($0.date) } }
+    private var weekendCompletedTasks: [Task] { completedTasks.filter { $0.completedAt.map(isWeekend) ?? false } }
+    private var weekdayCompletedTasks: [Task] { completedTasks.filter { !($0.completedAt.map(isWeekend) ?? false) } }
+    private var hasWeekendWork: Bool {
+        !weekendEntries.isEmpty || !weekendSentEmails.isEmpty || !weekendCompletedTasks.isEmpty
+    }
+    private var weekendHours: Double {
+        weekendEntries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
+            + weekendSentEmails.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
+            + weekendCompletedTasks.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
+    }
+    @State private var weekendCollapsed = false
 
     private enum ActivityRowItem: Identifiable {
         case block(FocusBlock)
@@ -118,7 +144,7 @@ struct ActivitySection: View {
 
     var body: some View {
         let hasContent = !blocks.isEmpty || !todayEntries.isEmpty
-            || !standaloneMeetings.isEmpty || !completedTasks.isEmpty || !sentEmails.isEmpty
+            || !standaloneMeetings.isEmpty || !completedTasks.isEmpty || !sentEmails.isEmpty || hasWeekendWork
 
         activityHeader
 
@@ -143,9 +169,11 @@ struct ActivitySection: View {
                 SentEmailsGroupRow(emails: standaloneSentEmails)
             }
 
-            ForEach(completedTasks) { task in
+            ForEach(weekdayCompletedTasks) { task in
                 CompletedTaskActivityRow(task: task)
             }
+
+            if hasWeekendWork { weekendGroup }
         } else {
             Text("No activity logged for this day.")
                 .foregroundStyle(.tertiary)
@@ -198,13 +226,36 @@ struct ActivitySection: View {
         let standardBlockHours = blocks.filter { !$0.isOvertime }.reduce(0.0) { $0 + $1.duration.hoursNormalized }
         let standaloneHours = standaloneEntries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
         let meetingHours = standaloneMeetings.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
-        let taskHours = completedTasks.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
+        let taskHours = weekdayCompletedTasks.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
         // In-block sent emails count toward their block's net; only standalone ones add to the total.
         let emailHours = standaloneSentEmails.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
         return standardBlockHours + standaloneHours + meetingHours + taskHours + emailHours
     }
     private var overtimeHours: Double {
-        blocks.filter { $0.isOvertime }.flatMap { entries(for: $0) }.reduce(0.0) { $0 + $1.duration.hoursNormalized }
+        let eveningHours = blocks.filter { $0.isOvertime }.flatMap { entries(for: $0) }
+            .reduce(0.0) { $0 + $1.duration.hoursNormalized }
+        return eveningHours + weekendHours   // weekend work is overtime too
+    }
+
+    // Weekend-dated work folded onto Friday: one collapsible group, counted in the Overtime total.
+    @ViewBuilder private var weekendGroup: some View {
+        Button { weekendCollapsed.toggle() } label: {
+            HStack(spacing: 6) {
+                Image(systemName: weekendCollapsed ? "chevron.right" : "chevron.down")
+                    .font(.caption2).foregroundStyle(.tertiary)
+                Text("Weekend").font(.subheadline.bold()).foregroundStyle(AppTheme.accent)
+                Text(Duration(value: weekendHours, unit: .h).displayString)
+                    .font(.caption).foregroundStyle(.secondary)
+                Spacer()
+            }
+            .padding(.horizontal).padding(.top, 12).padding(.bottom, 2)
+        }
+        .buttonStyle(.plain)
+        if !weekendCollapsed {
+            ForEach(weekendEntries) { entry in ActivityEntryRow(entry: entry) }
+            if !weekendSentEmails.isEmpty { SentEmailsGroupRow(emails: weekendSentEmails) }
+            ForEach(weekendCompletedTasks) { task in CompletedTaskActivityRow(task: task) }
+        }
     }
 
     private var activityHeader: some View {

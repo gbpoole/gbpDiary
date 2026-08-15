@@ -8,12 +8,9 @@ struct WeekView: View {
     @Query private var allDayRecords: [DayRecord]
     @State private var banner: BannerMessage? = nil
 
+    // Weekdays only (Mon–Fri): the weekend folds into Monday (inbound) / Friday (work-overtime).
     private var weekDays: [Date] {
-        let cal = Calendar.current
-        guard let weekStart = cal.dateInterval(of: .weekOfYear, for: weekOf)?.start else {
-            return []
-        }
-        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: weekStart) }
+        WeekendPolicy.weekdays(ofWeekContaining: weekOf)
     }
 
     var body: some View {

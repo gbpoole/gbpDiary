@@ -48,14 +48,20 @@ struct DayPageContent: View {
     @Query private var allPeople: [Person]
     @State private var reconcilingThread: EmailThread?
 
+    // Weekend folding: inbound content (received mail) folds forward into Monday; work (time entries,
+    // sent mail, completed-task activity) folds back into Friday. See WeekendPolicy.
+    private var forwardRange: Range<Date> { WeekendPolicy.forwardRange(for: date) }
+    private var workRange: Range<Date> { WeekendPolicy.workRange(for: date) }
+
     private var todayTimeEntries: [TaskTimeEntry] {
-        let cal = Calendar.current
-        return allTimeEntries.filter { cal.isDate($0.date, inSameDayAs: date) }
+        allTimeEntries.filter { workRange.contains($0.date) }
     }
 
     // Received emails accepted onto the diary (sent emails live only in the Activity section now).
     private var dayReceivedEmails: [EmailMessage] {
-        dayEmails.filter { $0.direction == .inbox }
+        allEmails.filter {
+            forwardRange.contains($0.date) && $0.direction == .inbox && $0.triageState == .accepted
+        }
     }
 
     // Received emails for the day grouped into threads (same normalized subject + other party), latest first.
@@ -70,20 +76,16 @@ struct DayPageContent: View {
         .sorted { $0.date > $1.date }
     }
 
-    // Sent emails for the day (shown in the Activity section at their send time).
+    // Sent emails for the day (shown in the Activity section at their send time) — work → Friday.
     private var daySentEmails: [EmailMessage] {
-        dayEmails.filter { $0.direction == .sent }
+        allEmails.filter {
+            workRange.contains($0.date) && $0.direction == .sent && $0.triageState == .accepted
+        }
     }
 
-    // Only accepted emails reach the diary; unclassified ones wait in the triage window.
-    private var dayEmails: [EmailMessage] {
-        let cal = Calendar.current
-        return allEmails.filter { cal.isDate($0.date, inSameDayAs: date) && $0.triageState == .accepted }
-    }
-
+    // Triage hint counts follow the inbound (Monday) window.
     private func dayEmailCount(_ state: EmailTriageState) -> Int {
-        let cal = Calendar.current
-        return allEmails.filter { cal.isDate($0.date, inSameDayAs: date) && $0.triageState == state }.count
+        allEmails.filter { forwardRange.contains($0.date) && $0.triageState == state }.count
     }
     private var dayUnclassifiedCount: Int { dayEmailCount(.unclassified) }
     private var dayDismissedCount: Int { dayEmailCount(.dismissed) }
@@ -122,7 +124,7 @@ struct DayPageContent: View {
         return allTasks.filter { task in
             guard let at = task.completedAt,
                   task.status == .completed,
-                  at >= dayStart && at < dayEnd,
+                  workRange.contains(at),           // completed work → Friday over the weekend
                   !dayTaskIds.contains(task.id),
                   task.duration != nil,
                   task.timeEntries.isEmpty else { return false }
