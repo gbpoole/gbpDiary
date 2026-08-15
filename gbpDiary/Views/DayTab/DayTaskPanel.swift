@@ -10,13 +10,21 @@ struct DayTaskPanel: View {
 
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Task.createdAt) private var allTasks: [Task]
+    @Query private var allPeople: [Person]
 
     @State private var newTaskText = ""
     @State private var editingTask: Task?
     @State private var collapsed: Set<String> = []
 
+    // The configured "Me" person; the panel is scoped to tasks assigned to them.
+    private var mePerson: Person? {
+        AppSettingsStore.myPersonID.flatMap { id in allPeople.first { $0.id == id } }
+    }
+
     private var buckets: DayTaskBuckets.Buckets {
-        DayTaskBuckets.partition(allTasks: allTasks, date: date)
+        // Only tasks assigned to Me (when configured); otherwise fall back to all tasks.
+        let mine = mePerson.map { me in allTasks.filter { $0.assignee?.id == me.id } } ?? allTasks
+        return DayTaskBuckets.partition(allTasks: mine, date: date)
     }
 
     var body: some View {
@@ -53,31 +61,38 @@ struct DayTaskPanel: View {
 
     private var quickAdd: some View {
         HStack(spacing: 6) {
-            Image(systemName: "plus.circle.fill").foregroundStyle(AppTheme.accent)
-            TextField("Quick add task…", text: $newTaskText)
+            Button { addTask() } label: {
+                Image(systemName: "plus.circle.fill").font(.callout).foregroundStyle(AppTheme.accent)
+            }
+            .buttonStyle(.plain)
+            .help("Add task")
+            TextField("Add a task…", text: $newTaskText)
                 .textFieldStyle(.plain)
+                .font(.callout)
                 .onSubmit { addTask() }
         }
-        .padding(.horizontal, 10).padding(.vertical, 7)
-        .background(AppTheme.cardRaised.opacity(0.4), in: RoundedRectangle(cornerRadius: 7))
-        .padding(.horizontal).padding(.bottom, 4)
+        .padding(.horizontal, 9).padding(.vertical, 5)
+        .background(Color.secondary.opacity(0.12), in: Capsule())
+        .padding(.horizontal).padding(.top, 4).padding(.bottom, 6)
     }
 
     private func addTask() {
         let trimmed = newTaskText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        modelContext.insert(Task(summary: trimmed))   // needsTriage == true → lands in the Inbox
+        let task = Task(summary: trimmed)   // needsTriage == true → lands in the Inbox
+        task.assignee = mePerson            // assign to Me so captures appear in this (Me-scoped) panel
+        modelContext.insert(task)
         newTaskText = ""
     }
 
-    // Action buckets (triaged tasks) — simple actionable rows.
+    // Action buckets (triaged tasks) — compact two-line rows.
     @ViewBuilder
     private func bucketSection(_ title: String, key: String, tasks: [Task], tint: Color) -> some View {
         if !tasks.isEmpty {
             sectionHeader(title, key: key, count: tasks.count, tint: tint)
             if !collapsed.contains(key) {
                 ForEach(sortedForDisplay(tasks, key: key)) { task in
-                    TaskRowView(task: task, onEdit: { editingTask = task })
+                    DayTaskPanelRow(task: task, onEdit: { editingTask = task })
                 }
             }
         }
@@ -128,6 +143,103 @@ struct DayTaskPanel: View {
             return tasks.sorted { TaskUrgency.score(for: $0) > TaskUrgency.score(for: $1) }
         default:
             return tasks
+        }
+    }
+}
+
+// A compact two-line task row for the diary panel (email-list style): status icon + metadata chips
+// (project / assignee / priority / dates / flags) on the first line, the summary on the second.
+// No inline edit button — double-click opens the editor; status/log-time/delete live in the context menu.
+private struct DayTaskPanelRow: View {
+    @Bindable var task: Task
+    var onEdit: () -> Void
+
+    @Environment(\.modelContext) private var modelContext
+    @State private var showingLogTime = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            // Line 1: the status icon lines up with the metadata chips.
+            HStack(alignment: .center, spacing: 8) {
+                TaskStatusMenu(task: task) {
+                    Image(systemName: statusIcon)
+                        .foregroundStyle(statusColor).font(.system(size: 15)).frame(width: 20)
+                }
+                metaLine
+                Spacer(minLength: 0)
+            }
+            // Line 2: summary, indented to align under the chips.
+            Text(task.summary)
+                .font(AppTheme.bodyFont(size: 13))
+                .foregroundStyle(task.status == .cancelled ? AppTheme.mutedText : AppTheme.text)
+                .strikethrough(task.status == .cancelled)
+                .lineLimit(2)
+                .padding(.leading, 28)
+        }
+        .padding(.horizontal).padding(.vertical, 4)
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) { onEdit() }
+        .contextMenu {
+            Button("Edit…", action: onEdit)
+            Button("Log time today…") { showingLogTime = true }
+            Divider()
+            Button("Delete", role: .destructive) { modelContext.delete(task) }
+        }
+        .sheet(isPresented: $showingLogTime) {
+            LogTimeSheet(presetTask: task, presetDate: Date())
+        }
+    }
+
+    // First line: small flag glyphs then the metadata chips (wrap when the panel is narrow).
+    private var metaLine: some View {
+        FlowLayout(spacing: 4) {
+            if task.isBlocked { glyph("lock.fill", AppTheme.destructive, "Blocked by an unfinished task") }
+            if task.recurrenceRule != nil { glyph("arrow.clockwise", .secondary, "Repeats") }
+            if let project = task.project { Chip(label: project.name, color: AppTheme.project) }
+            if let assignee = task.assignee { Chip(label: assignee.name, color: AppTheme.person) }
+            if task.priority != .none { Chip(label: task.priority.short, color: priorityChipColor) }
+            if let due = task.dueAt {
+                Chip(label: "⚑ \(due.formatted(.dateTime.day().month()))",
+                     color: task.isOverdue ? AppTheme.destructive : AppTheme.followUp)
+            }
+            if let scheduled = task.scheduledAt {
+                Chip(label: "◷ \(scheduled.formatted(.dateTime.day().month()))", color: AppTheme.accent)
+            }
+            if let dur = task.loggedDuration {
+                Chip(label: dur.displayString, color: AppTheme.duration)
+            }
+            if task.originEmail != nil { glyph("envelope", .secondary, "From an email") }
+        }
+    }
+
+    private func glyph(_ system: String, _ color: Color, _ help: String) -> some View {
+        Image(systemName: system).font(.caption2).foregroundStyle(color).help(help)
+    }
+
+    private var priorityChipColor: Color {
+        switch task.priority {
+        case .high:   AppTheme.destructive
+        case .medium: AppTheme.followUp
+        default:      AppTheme.mutedText
+        }
+    }
+
+    private var statusIcon: String {
+        switch task.status {
+        case .todo:            "circle"
+        case .started:         "play.circle.fill"
+        case .completed:       "checkmark.circle.fill"
+        case .cancelled:       "xmark.circle.fill"
+        case .followUpPending: "arrow.clockwise.circle.fill"
+        }
+    }
+    private var statusColor: Color {
+        switch task.status {
+        case .todo:            AppTheme.mutedText
+        case .started:         AppTheme.started
+        case .completed:       AppTheme.completed
+        case .cancelled:       AppTheme.mutedText
+        case .followUpPending: AppTheme.followUp
         }
     }
 }
