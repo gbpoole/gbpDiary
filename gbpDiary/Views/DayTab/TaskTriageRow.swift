@@ -33,7 +33,7 @@ struct TaskTriageRow: View {
                 projectChip
                 TriageDateChip(label: "Due", date: $task.dueAt, tint: AppTheme.destructive)
                 TriageDateChip(label: "Sched", date: $task.scheduledAt, tint: AppTheme.accent)
-                priorityChip
+                priorityPicker
                 Spacer(minLength: 0)
             }
             .padding(.leading, 28)   // align controls under the summary
@@ -85,26 +85,29 @@ struct TaskTriageRow: View {
         }
     }
 
-    @ViewBuilder private var priorityChip: some View {
-        Menu {
-            ForEach(TaskPriority.allCases, id: \.self) { p in
-                Button {
-                    task.priority = p
-                } label: {
-                    if task.priority == p { Label(p.displayName, systemImage: "checkmark") }
-                    else { Text(p.displayName) }
+    // One-click priority: tap L / M / H to set it; tap the active one again to clear (→ None).
+    @ViewBuilder private var priorityPicker: some View {
+        HStack(spacing: 3) {
+            ForEach([TaskPriority.low, .medium, .high], id: \.self) { p in
+                let active = task.priority == p
+                Button { task.priority = active ? .none : p } label: {
+                    Text(p.short)
+                        .font(.caption2.weight(.semibold))
+                        .frame(minWidth: 15)
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(active ? priorityColor(p).opacity(0.22) : Color.secondary.opacity(0.10),
+                                    in: Capsule())
+                        .foregroundStyle(active ? priorityColor(p) : AppTheme.mutedText)
+                        .overlay(active ? Capsule().stroke(priorityColor(p).opacity(0.75), lineWidth: 1) : nil)
                 }
+                .buttonStyle(.plain)
+                .help("Priority \(p.displayName)")
             }
-        } label: {
-            Chip(label: task.priority == .none ? "Priority" : "Pri \(task.priority.short)",
-                 color: task.priority == .none ? AppTheme.mutedText : priorityColor)
         }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
     }
 
-    private var priorityColor: Color {
-        switch task.priority {
+    private func priorityColor(_ p: TaskPriority) -> Color {
+        switch p {
         case .high:   AppTheme.destructive
         case .medium: AppTheme.followUp
         case .low:    AppTheme.accent

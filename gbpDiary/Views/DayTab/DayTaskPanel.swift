@@ -94,7 +94,9 @@ struct DayTaskPanel: View {
                         onClearAll: { activeFilterIds.removeAll(); searchText = "" })
             Divider()
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) {
+                // Plain VStack (not Lazy): a task moving between buckets changes row type (triage ↔
+                // compact), and LazyVStack reuses the old cell keyed by task id, keeping stale styling.
+                VStack(alignment: .leading, spacing: 0) {
                     quickAdd
                     bucketSection("Overdue", key: "overdue", tasks: buckets.overdue, tint: AppTheme.destructive)
                     bucketSection("Due Today", key: "due", tasks: buckets.dueToday, tint: AppTheme.followUp)
@@ -157,7 +159,7 @@ struct DayTaskPanel: View {
             sectionHeader(title, key: key, count: tasks.count, tint: tint)
             if !collapsed.contains(key) {
                 ForEach(sortedForDisplay(tasks, key: key)) { task in
-                    DayTaskPanelRow(task: task, onEdit: { editingTask = task })
+                    DayTaskPanelRow(task: task, date: date, onEdit: { editingTask = task })
                 }
             }
         }
@@ -217,6 +219,7 @@ struct DayTaskPanel: View {
 // No inline edit button — double-click opens the editor; status/log-time/delete live in the context menu.
 private struct DayTaskPanelRow: View {
     @Bindable var task: Task
+    var date: Date
     var onEdit: () -> Void
 
     @Environment(\.modelContext) private var modelContext
@@ -224,7 +227,7 @@ private struct DayTaskPanelRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            // Line 1: the status icon lines up with the metadata chips.
+            // Line 1: the status icon lines up with the metadata chips; a time quick-add trails on the right.
             HStack(alignment: .center, spacing: 8) {
                 TaskStatusMenu(task: task) {
                     Image(systemName: statusIcon)
@@ -232,6 +235,7 @@ private struct DayTaskPanelRow: View {
                 }
                 metaLine
                 Spacer(minLength: 0)
+                timeMenu
             }
             // Line 2: summary, indented to align under the chips.
             Text(task.summary)
@@ -251,8 +255,48 @@ private struct DayTaskPanelRow: View {
             Button("Delete", role: .destructive) { modelContext.delete(task) }
         }
         .sheet(isPresented: $showingLogTime) {
-            LogTimeSheet(presetTask: task, presetDate: Date())
+            LogTimeSheet(presetTask: task, presetDate: date)
         }
+    }
+
+    // Quick-add time: logs a TaskTimeEntry at the current time-of-day on the shown diary day, so it
+    // lands in the Activity timeline chronologically. A menu keeps the compact row clean; Custom… opens
+    // the full sheet.
+    private var timeMenu: some View {
+        Menu {
+            Button("15 min")    { logTime(15) }
+            Button("30 min")    { logTime(30) }
+            Button("1 hour")    { logTime(60) }
+            Button("1.5 hours") { logTime(90) }
+            Button("2 hours")   { logTime(120) }
+            Divider()
+            Button("Custom…")   { showingLogTime = true }
+        } label: {
+            Image(systemName: "plus.circle").font(.system(size: 13)).foregroundStyle(AppTheme.action)
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .tint(AppTheme.action)   // borderless menu tints its label with the accent otherwise
+        .fixedSize()
+        .help("Log time — appears in the Activity timeline")
+    }
+
+    private func logTime(_ minutes: Int) {
+        let nextOrder = (task.timeEntries.map(\.sortOrder).max() ?? -1) + 1
+        let entry = TaskTimeEntry(date: currentTimeOn(date),
+                                  duration: Duration(value: Double(minutes) / 60.0, unit: .h),
+                                  comment: nil, sortOrder: nextOrder)
+        entry.task = task
+        modelContext.insert(entry)
+        if task.status == .todo { task.status = .started; task.updatedAt = Date() }   // logging = working on it
+    }
+
+    // The current time-of-day applied to the shown diary day (so the entry files on that day).
+    private func currentTimeOn(_ day: Date) -> Date {
+        let cal = Calendar.current
+        let now = Date()
+        return cal.date(bySettingHour: cal.component(.hour, from: now),
+                        minute: cal.component(.minute, from: now), second: 0, of: day) ?? day
     }
 
     // First line: small flag glyphs then the metadata chips (wrap when the panel is narrow).
