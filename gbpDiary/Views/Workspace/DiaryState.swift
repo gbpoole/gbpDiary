@@ -4,7 +4,8 @@ import Foundation
 // date and Day/Week mode survive switching to another tab (e.g. an open meeting) and back —
 // DiaryView itself is recreated on tab switch and must not own this in transient @State.
 @Observable final class DiaryState {
-    var currentDate: Date = Calendar.current.startOfDay(for: Date())
+    // The diary is Mon–Fri: a weekend "today" resolves forward to the upcoming Monday.
+    var currentDate: Date = WeekendPolicy.weekday(for: Date())
     var mode: DiaryMode = .day
     // Set to request the day view scroll to a specific note; cleared once consumed.
     var scrollTargetNoteId: UUID? = nil
@@ -13,10 +14,11 @@ import Foundation
     // other day clears it. See DiaryDayRollover.
     var tracksToday: Bool = true
 
-    /// Move to `date` (normalised to start-of-day) and update `tracksToday` from whether it is today.
+    /// Move to `date` — snapping a weekend to its Monday — and update `tracksToday` from whether the
+    /// destination is the weekday "today" belongs to.
     func goTo(_ date: Date, calendar: Calendar = .current) {
-        currentDate = calendar.startOfDay(for: date)
-        tracksToday = calendar.isDateInToday(currentDate)
+        currentDate = WeekendPolicy.weekday(for: date, calendar: calendar)
+        tracksToday = currentDate == WeekendPolicy.weekday(for: Date(), calendar: calendar)
     }
 
     /// On reactivation/appear, advance to today if we were tracking it and it is now in the past.

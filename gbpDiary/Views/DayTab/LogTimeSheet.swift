@@ -198,14 +198,10 @@ struct LogTimeSheet: View {
         }
     }
 
+    // The current time-of-day on the shown day — or the real weekend time when parked on the green
+    // Monday (so weekend work books to Friday's overtime). See WeekendPolicy.logNowDate.
     private func currentTimeOn(_ date: Date) -> Date {
-        let cal = Calendar.current
-        let quarterHour = 15.0 * 60.0
-        let rounded = (Date().timeIntervalSinceReferenceDate / quarterHour).rounded() * quarterHour
-        let roundedNow = Date(timeIntervalSinceReferenceDate: rounded)
-        let h = cal.component(.hour, from: roundedNow)
-        let m = cal.component(.minute, from: roundedNow)
-        return cal.date(bySettingHour: h, minute: m, second: 0, of: date) ?? date
+        WeekendPolicy.logNowDate(viewedDate: date)
     }
 
     private func save() {

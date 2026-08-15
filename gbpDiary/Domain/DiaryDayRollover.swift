@@ -9,7 +9,9 @@ enum DiaryDayRollover {
     static func rolledForwardDate(currentDate: Date, tracksToday: Bool, now: Date,
                                   calendar: Calendar = .current) -> Date? {
         guard tracksToday else { return nil }
-        let today = calendar.startOfDay(for: now)
-        return calendar.startOfDay(for: currentDate) < today ? today : nil
+        // Roll to the weekday `now` belongs to (a weekend resolves forward to Monday), so a tracked
+        // Friday advances to Monday over the weekend rather than to a hidden Sat/Sun.
+        let target = WeekendPolicy.weekday(for: now, calendar: calendar)
+        return calendar.startOfDay(for: currentDate) < target ? target : nil
     }
 }

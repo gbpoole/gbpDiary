@@ -62,6 +62,23 @@ struct DayTaskBucketsTests {
         #expect(b.isEmpty)   // waiting tasks aren't shown anywhere (not even To Do)
     }
 
+    @Test func mondayWindow_absorbsWeekendDueAndScheduled() {
+        // On a Monday the "today window" spans the preceding weekend, so Sat/Sun due/scheduled tasks
+        // are due-today/scheduled (not overdue); a Friday due date is overdue. (2024-01-08 is a Monday.)
+        let gcal = Calendar(identifier: .gregorian)
+        func at(_ d: Int, _ h: Int) -> Date { gcal.date(from: DateComponents(year: 2024, month: 1, day: d, hour: h))! }
+        let monday = at(8, 0)
+
+        let dueSat = reviewed("dueSat");   dueSat.dueAt = at(6, 10)
+        let schedSun = reviewed("schedSun"); schedSun.scheduledAt = at(7, 10)
+        let dueFri = reviewed("dueFri");   dueFri.dueAt = at(5, 10)
+
+        let b = DayTaskBuckets.partition(allTasks: [dueSat, schedSun, dueFri], date: monday, calendar: gcal)
+        #expect(b.dueToday.map(\.id) == [dueSat.id])
+        #expect(b.scheduled.map(\.id) == [schedSun.id])
+        #expect(b.overdue.map(\.id) == [dueFri.id])
+    }
+
     @Test func completedAndSubtasks_excludedEverywhere() {
         let completed = reviewed("done", status: .completed)
         let child = reviewed("child"); child.parent = reviewed("parent")
