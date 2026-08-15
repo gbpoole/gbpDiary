@@ -77,14 +77,15 @@ struct DayTaskFilteringTests {
         #expect(result.map(\.id) == [todoWithin.id])
     }
 
-    @Test func inbox_includesUnassignedTopLevelActiveTasks() {
-        let unassigned = Task(summary: "inbox", status: .todo)
+    @Test func inbox_includesUntriagedTopLevelActiveTasks() {
+        let untriaged = Task(summary: "inbox", status: .todo)   // needsTriage == true by init
 
+        let reviewed = Task(summary: "reviewed", status: .todo)
+        reviewed.markReviewed()
+
+        // A project no longer removes a task from the inbox — only Review does.
         let withProject = Task(summary: "has-project", status: .todo)
         withProject.project = Project(name: "P")
-
-        let withAssignee = Task(summary: "has-assignee", status: .todo)
-        withAssignee.assignee = Person(name: "Alice")
 
         let child = Task(summary: "child", status: .todo)
         let parent = Task(summary: "parent")
@@ -93,9 +94,9 @@ struct DayTaskFilteringTests {
         let completed = Task(summary: "completed", status: .completed)
 
         let result = DayTaskFiltering.inboxTasks(
-            allTasks: [unassigned, withProject, withAssignee, child, completed]
+            allTasks: [untriaged, reviewed, withProject, child, completed]
         )
-        #expect(result.map(\.id) == [unassigned.id])
+        #expect(Set(result.map(\.id)) == Set([untriaged.id, withProject.id]))
     }
 
     @Test func inbox_includesStartedButExcludesOtherStatuses() {

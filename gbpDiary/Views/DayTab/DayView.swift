@@ -140,16 +140,6 @@ struct DayPageContent: View {
         (dayRecord?.noteItems ?? []).sorted { $0.sortOrder < $1.sortOrder }
     }
 
-    // Tasks scheduled for the sidebar section (excludes tasks already in newTasks).
-    private var scheduled: [Task] {
-        let dayTaskIds = Set((dayRecord?.tasks ?? []).map(\.persistentModelID))
-        return DayTaskFiltering.scheduledTasks(
-            allTasks: allTasks, dayStart: dayStart, dayEnd: dayEnd, taskEntryIds: dayTaskIds)
-    }
-
-    private var inbox: [Task] {
-        DayTaskFiltering.inboxTasks(allTasks: allTasks)
-    }
 
     // Mirrors ActivitySection.canAddBlock — evening is always addable; otherwise no more slots if
     // allDay is taken, or both morning and afternoon are already filled.
@@ -195,7 +185,7 @@ struct DayPageContent: View {
                     completedTasksSection
                     notesSection
                     emailsSection
-                    if showTaskSections { sidebarSections }
+                    // Scheduled/Inbox now live in the diary's right-hand DayTaskPanel, not inline here.
                 }
                 .padding(.vertical, 8)
             }
@@ -315,24 +305,6 @@ struct DayPageContent: View {
             DaySectionHeader(title: "Completed")
             ForEach(completedTasks) { task in
                 CompletedTaskRow(task: task, onEdit: { _ in editingTask = task })
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var sidebarSections: some View {
-        if !scheduled.isEmpty {
-            SectionHeader(title: "Scheduled")
-            ForEach(scheduled) { task in
-                TaskRowView(task: task, onEdit: { editingTask = task })
-            }
-        }
-
-        let inboxTasks = inbox
-        if !inboxTasks.isEmpty {
-            SectionHeader(title: "Inbox")
-            ForEach(inboxTasks) { task in
-                TaskRowView(task: task, onEdit: { editingTask = task })
             }
         }
     }

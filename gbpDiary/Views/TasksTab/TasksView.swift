@@ -68,6 +68,9 @@ struct TasksView: View {
         let showWaiting = filterState.activeFilterIds.contains("flag.waiting")
         return allTasks.filter { task in
             if pendingStatusIds.contains(task.id) { return true }
+            // Untriaged, still-open tasks live in the Inbox (Triage view) — hidden from Reviewed until
+            // reviewed. Completed/cancelled tasks always show (no need to triage a closed task).
+            if task.isOpen && task.needsTriage { return false }
             guard matched.contains(task.id) else { return false }
             if task.isWaiting && !showWaiting { return false }   // deferred tasks hidden until revealed
             if let range = filterState.dateRange, !range.contains(task.createdAt) {
@@ -86,6 +89,13 @@ struct TasksView: View {
     // Sortable rows (urgency precomputed), ordered by the per-tab column sort order.
     private var rows: [TaskRow] {
         filteredTasks.map(TaskRow.init).sorted(using: filterState.sortOrder)
+    }
+
+    // The Inbox: open, top-level tasks awaiting Review, oldest first (clear the backlog).
+    private var triageTasks: [Task] {
+        allTasks
+            .filter { $0.needsTriage && $0.parent == nil && $0.isOpen }
+            .sorted { $0.createdAt < $1.createdAt }
     }
 
     private var selectedTasks: [Task] {
@@ -132,10 +142,13 @@ struct TasksView: View {
     var body: some View {
         @Bindable var filter = filterState
         return VStack(spacing: 0) {
-            TasksToolbar(filters: taskFilters, filter: filter)
-            bulkBar
+            viewModePicker
             Divider()
-            taskTable
+            switch filter.viewMode {
+            case .reviewed:   reviewedPane
+            case .triage:     triagePane
+            case .sideBySide: sideBySidePane
+            }
         }
         .background(AppTheme.background)
         .sheet(item: $editingTask) { task in
@@ -156,6 +169,70 @@ struct TasksView: View {
             if result.selection != selection { selection = result.selection }
             if result.stashed != stashedSelection { stashedSelection = result.stashed }
         }
+    }
+
+    // The Reviewed / Triage / Side-by-side switcher, with a live inbox count on the Triage tab.
+    private var viewModePicker: some View {
+        @Bindable var filter = filterState
+        return HStack(spacing: 10) {
+            Picker("", selection: $filter.viewMode) {
+                ForEach(TaskViewMode.allCases, id: \.self) { mode in
+                    Text(mode.label).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .fixedSize()
+            if !triageTasks.isEmpty {
+                Text("\(triageTasks.count) to review")
+                    .font(.caption).foregroundStyle(AppTheme.accent)
+            }
+            Spacer()
+        }
+        .padding(.horizontal).padding(.vertical, 6)
+    }
+
+    // The normal filterable table (search/filters/columns/bulk), scoped to triaged tasks.
+    private var reviewedPane: some View {
+        @Bindable var filter = filterState
+        return VStack(spacing: 0) {
+            TasksToolbar(filters: taskFilters, filter: filter)
+            bulkBar
+            Divider()
+            taskTable
+        }
+    }
+
+    // The inbox: untriaged tasks with inline quick-set + Reviewed.
+    private var triagePane: some View {
+        Group {
+            if triageTasks.isEmpty {
+                ContentUnavailableView("Inbox clear", systemImage: "tray",
+                                       description: Text("No tasks to review."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(triageTasks) { task in
+                    TaskTriageRow(task: task, onEdit: { editingTask = task })
+                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
+            }
+        }
+        .background(AppTheme.background)
+    }
+
+    private var sideBySidePane: some View {
+        #if os(macOS)
+        HSplitView {
+            reviewedPane.frame(minWidth: 380)
+            triagePane.frame(minWidth: 320, idealWidth: 440)
+        }
+        #else
+        triagePane
+        #endif
     }
 
     private var bulkBar: some View {

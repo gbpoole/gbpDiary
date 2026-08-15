@@ -20,6 +20,10 @@ import SwiftData
     var createdAt: Date
     var updatedAt: Date
     var sourceContext: SourceContext?
+    // Task inbox/triage: a new task must be explicitly Reviewed before it leaves the inbox and appears
+    // in the normal (Reviewed) task list. Stored default `false` so existing rows migrate as already
+    // triaged; `init` sets it `true` so every newly-created task needs triage. See `markReviewed()`.
+    var needsTriage: Bool = false
 
     // Array attributes stored as JSON strings (CoreData cannot materialize Array<T>)
     var tagsJSON: String
@@ -87,6 +91,7 @@ import SwiftData
         self.focusBlocks = []
         self.createdAt = createdAt
         self.updatedAt = createdAt
+        self.needsTriage = true   // every newly-created task lands in the inbox until Reviewed
     }
 }
 
@@ -129,6 +134,13 @@ extension Task {
         status = .completed
         if completedAt == nil { completedAt = now }
         updatedAt = now
+    }
+
+    /// Clear the inbox/triage flag (the task has been Reviewed) so it enters the normal task list.
+    func markReviewed() {
+        guard needsTriage else { return }
+        needsTriage = false
+        updatedAt = Date()
     }
 
     func unmarkCompleted() {

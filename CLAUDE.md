@@ -81,9 +81,12 @@ DayPageContent
               ├── newTasksSection     DiaryTaskRow per Task with dayRecord == thisRecord
               ├── completedTasksSection  CompletedTaskRow for tasks completedAt in day
               ├── documentsSection    DayDocumentRow per Document.dayRecord == thisRecord
-              ├── notesSection        MarkdownDocumentEditor per Note in dayRecord.noteItems (drag-to-reorder)
-              └── sidebarSections     (Scheduled + Inbox; hidden when showTaskSections == false)
+              └── notesSection        MarkdownDocumentEditor per Note in dayRecord.noteItems (drag-to-reorder)
 ```
+The Scheduled/Inbox task lists are **no longer inline** in the day scroll — they moved to the diary's
+always-visible right-hand **`DayTaskPanel`** (see Task inbox/triage). `DiaryView` places the day/week
+content beside the panel in a macOS `HSplitView` (toggle in the diary bar, persisted via
+`AppSettingsStore.taskPanelShown`); on iOS/compact the panel is omitted.
 
 Old `DayEntry(kind:.note)` entries are auto-migrated into `DayRecord.notes` the first time each day is opened (`migrateOldNotes()` called on `.onAppear`). The legacy `DayRecord.notes: String?` field is then migrated into a `Note` item via `migrateDayNote()`, also called on `.onAppear`, and cleared afterward.
 
@@ -97,8 +100,8 @@ Old `DayEntry(kind:.note)` entries are auto-migrated into `DayRecord.notes` the 
 | Completed | Inline | `status == .completed && completedAt` in `[dayStart, dayEnd)`, excluding dayRecord tasks |
 | Meetings | Inline | `DayEntry.kind == .meeting` in this DayRecord |
 | Documents | Inline | `Document.dayRecord == thisRecord` |
-| Scheduled | Sidebar | `scheduledAt` in `[dayStart, dayEnd)` AND status todo/started |
-| Inbox | Sidebar | status todo/started AND parent == nil AND project == nil AND assignee == nil |
+| Scheduled | Task panel | `scheduledAt` in `[dayStart, dayEnd)` AND status todo/started (triaged) — via `DayTaskBuckets` |
+| Inbox | Task panel / Tasks-Triage | open, top-level, `needsTriage` — via `DayTaskFiltering.inboxTasks` / `DayTaskBuckets` |
 
 All use `@Query(sort: \Task.createdAt) var allTasks` filtered in-memory.
 
@@ -128,6 +131,7 @@ Task
   blocking → [Task]          (inverse of dependsOn — tasks waiting on this one)
   isBlocked/isBlocking       (computed; blocked while any prerequisite is still open → auto-unblocks)
   waitUntil: Date?           (hidden from lists until this date; `isWaiting` computed)
+  needsTriage: Bool          (task inbox: stored default false [existing rows migrate as triaged]; `init` sets it true so EVERY new task lands in the inbox until `markReviewed()`. Recurrence-spawned instances inherit false. See Task inbox/triage)
   until    : Date?           (auto-cancelled once past — swept by TaskRecurrenceDriver)
   recurrenceRule: String?    (e.g. "1w"/"2mo"; completing spawns the next instance)
   recurrenceParentID: UUID?  (lineage of a spawned recurring instance)
@@ -418,13 +422,29 @@ default = urgency desc), and **multi-select bulk actions** (`Table(selection:)` 
 menu: Complete / Started / To do / Cancel / Delete). Search + sort order live on the per-tab
 `TasksFilterState`.
 
+**Task inbox / triage.** Every newly-created task starts with `Task.needsTriage == true` (set in `init`;
+stored default `false` so existing rows migrate as already-triaged, and recurrence-spawned instances
+inherit `false`). Such **open, top-level** tasks form the **inbox** and are **hidden from the normal
+(Reviewed) Tasks table** until `markReviewed()` clears the flag — forcing a deliberate second look
+(add project/priority/dates) and encouraging regular review. `TasksView` has a **view-mode toggle** on the
+per-tab `TasksFilterState.viewMode` (`TaskViewMode`: **Reviewed / Triage / Side-by-side**): *Reviewed* is
+the existing filterable table scoped to `!(isOpen && needsTriage)` (closed tasks always show — no need to
+triage a done task); *Triage* is a `List` of inbox tasks (oldest first) rendered as **`TaskTriageRow`**
+(`Views/DayTab/TaskTriageRow.swift` — status + summary, then grouped inline **project / due / scheduled /
+priority** setters and a **Reviewed** button; parallels `EmailTriageRow`); *Side-by-side* is a macOS
+`HSplitView` of the two, so you triage with the reviewed list in view for context. The **Tasks sidebar
+item shows a `.badge`** of the inbox count (`WorkspaceView.taskInboxCount`). The same inbox also surfaces
+in the diary's `DayTaskPanel` Inbox bucket. All edits are live via the shared `@Query` store. The hiding
+is scoped to the Reviewed table only — the diary New-Tasks section, project/person task lists, etc. are
+unchanged.
+
 **List-page filtering.** Every list page (`TasksView`, `ProjectsView`, `PeopleView`, `MinutesListView`, `DocumentsListView`) filters through the shared `FilterBar` + `FilterEngine` pattern (`Views/FilterBar.swift`), reusing the FuzzyPickerField filter language. The page builds `[PickerFilter<Model>]` from its queried data (each filter has an `id`, `label`, `chipColor`, `group`, and a `test` closure), holds `@State activeFilterIds: Set<String>`, renders `FilterBar(filters:activeFilterIds:…)`, and computes its filtered list via `FilterEngine.apply(_:filters:activeIds:)`. Semantics: **OR within a group, AND across groups**; a group with no active filter is ignored; empty selection returns everything. `FilterBar` shows one neutral dropdown per group with the chosen values as removable chips, plus "Clear all filters" (`onClearAll`) and an optional `extraRows` slot for non-discrete filters (e.g. `DateRangeFilterRow` on Tasks). `ProjectsView` seeds `activeFilterIds = ["status.active"]` to preserve its hide-completed default. `InstitutionsView` and `TagsView` have no discrete filter dimension and use no `FilterBar`.
 
 **Tasks-page toolbar (exception).** `TasksView` does **not** render the tall shared `FilterBar`; it uses a compact **`TasksToolbar`** (`Views/TasksTab/TasksToolbar.swift`) over the same `taskFilters`/`FilterEngine`. Layout is one wrapping block: a compact capsule **search** (fuzzy, `FuzzyMatch`), one-tap **`PresetChip`** toggles — **Incomplete · From email · Overdue · Due today · Mine · Others** (each flips a single `activeFilterId`) plus a mutually-exclusive **Today · Week · Month** date trio (each sets `TasksFilterState.datePreset` + `dateRange` from `DateWindow.range`) — a **"Filters ▾"** popover holding the detailed per-field `FilterGroupSelector` rows + `DateRangeFilterRow` (a custom range clears the date preset) + "Clear all filters", and a removable **active-filter chip** row. The Tasks **date filter matches the `createdAt` (captured) date only**. New preset filters live in `taskFilters`: `preset.incomplete` (group "State" → `isOpen`) and `preset.mine`/`preset.others` (group "Assignee" → assignee ==/≠ `AppSettingsStore.myPersonID`, so they OR with the per-person assignee filters). Filter/search/sort state persists per tab on `TasksFilterState` (`activeFilterIds`, `dateRange`, `datePreset`, `searchText`, `sortOrder`); a new tab **defaults to `activeFilterIds = ["preset.incomplete"]`**. The **Active filters** row is always shown (reads "none" when empty). Table columns are **Summary · Project · Status · Pri · Urg · Assignee · Created · Due · Scheduled** (the three trailing date columns each header-sortable via `TaskRow.createdAt`/`dueKey`/`scheduledKey`); the Summary cell carries small glyphs for blocked/waiting/recurring. `TasksToolbar` is a thin wrapper over the shared `ListToolbar` (see the **List / Table page style** section) supplying the Tasks-specific presets + date-range slot; double-click, bulk bar, and selection-follows-filtering use the shared `.onTableRowDoubleClick` / `BulkActionBar` / `TableSelectionReconcile`.
 
 ### Task state transitions
 
-All transitions are in `Task` extension methods (`markCompleted()`, `unmarkCompleted()`, `markCancelled()`, `unmarkCancelled()`, `setFollowUp(date:)`, `markFollowUpDone()`, `setDuration(_:)`). Call these methods from views; do not mutate `status`, `completedAt`, `cancelledAt`, or `followUpAt` directly.
+All transitions are in `Task` extension methods (`markCompleted()`, `unmarkCompleted()`, `markCancelled()`, `unmarkCancelled()`, `setFollowUp(date:)`, `markFollowUpDone()`, `setDuration(_:)`, `markReviewed()` [clears the inbox `needsTriage` flag]). Call these methods from views; do not mutate `status`, `completedAt`, `cancelledAt`, `followUpAt`, or `needsTriage` directly.
 
 Status is changed via **`TaskStatusMenu`** (`Views/DayTab/TaskStatusMenu.swift`) — clicking the status
 icon opens a **menu to jump directly to any state** (To do / Started / Completed / Cancelled, current one
@@ -633,7 +653,8 @@ survives).
 - `FocusBlockRow` — collapsible row for one `FocusBlock`. Shows source icon (folder for project-backed, checkmark for task-backed), slot/duration chip, net remaining time label, "+" to open `LogTimeSheet`, pencil to edit. Context menu includes delete with alert when activities exist.
 - `FocusBlockEditorSheet` — sheet for creating or editing a `FocusBlock`. Segmented picker: Task or Project source. Duration text field with `Duration.parse(_:)` validation.
 - `LogTimeSheet` — lightweight sheet for adding a `TaskTimeEntry`. Pre-fillable with `presetTask`, `presetFocusBlock`, `presetDate`. Task picker shown when no preset task.
-- `DayTaskSidebar` — collapsible sidebar with Scheduled and Inbox sections for a given day.
+- `DayTaskSidebar` — collapsible sidebar with Scheduled and Inbox sections for a given day. (Legacy; superseded by `DayTaskPanel`.)
+- `DayTaskPanel` (`Views/DayTab/DayTaskPanel.swift`) — the diary's always-visible right-hand task panel: a **quick-add** capture field (creates a bare `Task` → lands in the Inbox) plus collapsible buckets **Overdue · Due today · In-progress · Scheduled · To Do · Inbox** (partitioned by `DayTaskBuckets`; **To Do** is the catch-all so every open, triaged, top-level task is visible even when undated). Action buckets use `TaskRowView`; the Inbox uses `TaskTriageRow`. Placed beside the day/week content by `DiaryView` in a macOS `HSplitView` (toggle in the diary bar, persisted via `AppSettingsStore.taskPanelShown`).
 - `DaySectionHeader` — reusable section header with title and optional "+" button.
 - `CompletedTaskRow` — read-only struck-through task row with completion time; tap opens `TaskEditorSheet`.
 - `DayDocumentRow` — document row in the day's Documents section. Shows icon + summary + attachment count chip (gray) + pencil edit button on the first line; `documentDescription` as caption on the second line when non-empty. Requires `onEdit: () -> Void`.
@@ -742,7 +763,9 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | `TimeFormat.short(hours:)` renders minute-scale email time: "Nm" under an hour, "Nh" for whole hours, else "Hh Mm"; a tiny non-zero value rounds up to "1m"; 0 → "0m" | Email time-logging / activity | gbpDiaryTests/Domain/TimeFormatTests.swift | `short_zero_isZeroMinutes`, `short_tinyValue_roundsUpToOneMinute`, `short_minutesUnderAnHour`, `short_wholeHours`, `short_mixedHoursAndMinutes` |
 | Timesheet includes only completed tasks with duration in selected interval | Timesheet | gbpDiaryTests/Domain/TimesheetComputationTests.swift | `tasksInRange_requiresCompletedAtAndDuration` |
 | Scheduled filter uses `scheduledAt` in `[dayStart, dayEnd)` and todo/started status | Day view sections | gbpDiaryTests/Domain/DayTaskFilteringTests.swift | `scheduled_requiresTodoOrStartedAndWithinDayBounds`, `scheduled_excludesTasksAlreadyInEntries` |
-| Inbox filter: status todo/started, parent == nil, project == nil, assignee == nil | Day view sidebar | gbpDiaryTests/Domain/DayTaskFilteringTests.swift | `inbox_includesUnassignedTopLevelActiveTasks`, `inbox_includesStartedButExcludesOtherStatuses` |
+| Inbox filter: open (todo/started), top-level (parent == nil), `needsTriage` — enriching no longer removes a task, only Review does | Task inbox / triage | gbpDiaryTests/Domain/DayTaskFilteringTests.swift | `inbox_includesUntriagedTopLevelActiveTasks`, `inbox_includesStartedButExcludesOtherStatuses` |
+| Task inbox flag: a freshly `init`-ed Task has `needsTriage == true`; `markReviewed()` clears it (and is a no-op / doesn't bump `updatedAt` when already reviewed) | Task inbox / triage | `gbpDiaryTests/Models/TaskStateTransitionTests.swift` | `newTask_needsTriageByDefault`, `markReviewed_clearsNeedsTriage`, `markReviewed_noOpWhenAlreadyReviewed` |
+| Diary task-panel buckets: `DayTaskBuckets.partition(allTasks:date:)` splits into mutually-exclusive `inbox` (untriaged, open, top-level) and — for triaged, open, top-level, non-waiting tasks — `overdue → dueToday → inProgress(.started) → scheduled(today) → todo` by priority (`todo` is the catch-all so undated tasks stay visible); waiting/completed/subtasks excluded; empty → empty | Diary task panel | `gbpDiaryTests/Domain/DayTaskBucketsTests.swift` | `emptyInput_isEmpty`, `inbox_isUntriagedTopLevelOpen`, `actionBuckets_assignByPriority`, `mutuallyExclusive_overdueWinsOverStarted`, `waitingTasks_excludedFromActionBuckets`, `completedAndSubtasks_excludedEverywhere` |
 | notesId derives a stable focus ID by bit-complementing all 16 UUID bytes; result is its own inverse and never collides with organic UUIDs | Inline task notes / meeting minutes | gbpDiaryTests/Models/DayEntryContentTests.swift | (tested indirectly via `notesAreaFocusId` usage) |
 | `entriesInRange` filters `TaskTimeEntry` objects whose `date` falls within the interval; `totalHours(entries:)` sums their `hoursNormalized` | Timesheet entry-based aggregation | gbpDiaryTests/Domain/TimesheetComputationTests.swift | `entriesInRange_filtersCorrectly`, `totalHours_entries_sumsHours` |
 | `FocusBlockMath.netHours(capacity:loggedHours:)` = max(0, capacity − loggedHours); the view sums time-derived entry + meeting hours as `loggedHours` (FocusBlock stores no child-entry relationship) | Activity section | `gbpDiaryTests/Models/FocusBlockTests.swift` | `focusBlockMath_netHours_subtractsLogged`, `focusBlockMath_netHours_clampsToZero` |

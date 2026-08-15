@@ -13,6 +13,9 @@ struct DiaryView: View {
     @Query(sort: \Task.createdAt) private var allTasks: [Task]
     @Query private var allDayRecords: [DayRecord]
 
+    // The always-visible right-hand task panel (persisted). macOS/regular-width only.
+    @State private var taskPanelShown = AppSettingsStore.taskPanelShown
+
     private var dayRecord: DayRecord? {
         allDayRecords.first { Calendar.current.isDate($0.date, inSameDayAs: diary.currentDate) }
     }
@@ -28,22 +31,37 @@ struct DiaryView: View {
     }
 
     @ViewBuilder private var content: some View {
-        if diary.mode == .day {
-            VStack(spacing: 0) {
-                diaryBar
-                Divider()
-                DayView(date: diary.currentDate, dayRecord: dayRecord, allTasks: allTasks)
+        VStack(spacing: 0) {
+            diaryBar
+            Divider()
+            withPanel {
+                if diary.mode == .day {
+                    DayView(date: diary.currentDate, dayRecord: dayRecord, allTasks: allTasks)
+                        .frame(maxWidth: .infinity)
+                } else {
+                    WeekView(weekOf: diary.currentDate)
+                }
             }
-            .frame(maxWidth: .infinity)
-            .background(AppTheme.background)
-        } else {
-            VStack(spacing: 0) {
-                diaryBar
-                Divider()
-                WeekView(weekOf: diary.currentDate)
-            }
-            .background(AppTheme.background)
         }
+        .background(AppTheme.background)
+    }
+
+    // Places the day/week content beside the persistent task panel (a resizable macOS split); on
+    // iOS/compact the panel is omitted and the tasks stay inline in the day scroll.
+    @ViewBuilder private func withPanel<Content: View>(@ViewBuilder _ main: () -> Content) -> some View {
+        #if os(macOS)
+        if taskPanelShown {
+            HSplitView {
+                main().frame(minWidth: 420)
+                DayTaskPanel(date: diary.currentDate)
+                    .frame(minWidth: 260, idealWidth: 320, maxWidth: 460)
+            }
+        } else {
+            main()
+        }
+        #else
+        main()
+        #endif
     }
 
     private var diaryBar: some View {
@@ -93,6 +111,18 @@ struct DiaryView: View {
             }
             .pickerStyle(.segmented)
             .fixedSize()
+
+            #if os(macOS)
+            Button {
+                taskPanelShown.toggle()
+                AppSettingsStore.taskPanelShown = taskPanelShown
+            } label: {
+                Image(systemName: taskPanelShown ? "sidebar.right" : "sidebar.trailing")
+                    .foregroundStyle(taskPanelShown ? AppTheme.accent : AppTheme.mutedText)
+            }
+            .buttonStyle(.plain)
+            .help(taskPanelShown ? "Hide task panel" : "Show task panel")
+            #endif
         }
         .padding(.horizontal)
         .padding(.vertical, 8)

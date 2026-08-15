@@ -210,9 +210,26 @@ struct ChatLabState {
 // One browsing pane: a back/forward history of destinations, like a browser tab. Sidebar
 // selection and in-place drilldowns navigate within a single tab; only explicit "open in new
 // tab" actions (e.g. meeting minutes) create another tab.
+// The Tasks page's three presentations: the normal (Reviewed) table, the inbox Triage list, and both
+// side by side. Session-only per tab (not persisted).
+enum TaskViewMode: String, CaseIterable {
+    case reviewed
+    case triage
+    case sideBySide
+
+    var label: String {
+        switch self {
+        case .reviewed:    "Reviewed"
+        case .triage:      "Triage"
+        case .sideBySide:  "Side-by-side"
+        }
+    }
+}
+
 // Per-tab Tasks-page filter state, so filters are remembered when you navigate away and back, and two
 // tabs can hold different Tasks filters at once.
 @Observable final class TasksFilterState {
+    var viewMode: TaskViewMode = .reviewed
     // New Tasks tabs default to showing only incomplete tasks (mirrors ProjectsView's hide-completed).
     var activeFilterIds: Set<String> = ["preset.incomplete"]
     var dateRange: ClosedRange<Date>? = nil

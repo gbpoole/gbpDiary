@@ -47,6 +47,7 @@ struct TaskRecurrenceDriver: View {
         next.dueAt = rule.next(after: base)
         next.recurrenceRule = t.recurrenceRule
         next.recurrenceParentID = t.id
+        next.needsTriage = false   // a recurring instance is already reviewed — don't re-triage each cycle
         context.insert(next)
         t.recurrenceRule = nil   // the completed occurrence is history; the new one carries the rule
     }
