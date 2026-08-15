@@ -192,11 +192,12 @@ private struct DayTaskPanelRow: View {
 
     // First line: small flag glyphs then the metadata chips (wrap when the panel is narrow).
     private var metaLine: some View {
-        FlowLayout(spacing: 4) {
+        // Centred so the small flag/mail glyphs line up with the taller chips. Assignee is omitted —
+        // every task in this panel is assigned to Me by construction.
+        FlowLayout(spacing: 4, centerVertically: true) {
             if task.isBlocked { glyph("lock.fill", AppTheme.destructive, "Blocked by an unfinished task") }
             if task.recurrenceRule != nil { glyph("arrow.clockwise", .secondary, "Repeats") }
             if let project = task.project { Chip(label: project.name, color: AppTheme.project) }
-            if let assignee = task.assignee { Chip(label: assignee.name, color: AppTheme.person) }
             if task.priority != .none { Chip(label: task.priority.short, color: priorityChipColor) }
             if let due = task.dueAt {
                 Chip(label: "⚑ \(due.formatted(.dateTime.day().month()))",
