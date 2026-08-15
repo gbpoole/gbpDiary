@@ -44,23 +44,28 @@ struct TaskTriageRow: View {
             Button("Edit…", action: onEdit)
             Button("Log time today…") { showingLogTime = true }
             Divider()
-            Button("Reviewed") { task.markReviewed() }
+            Button("Reviewed") { task.markReviewed() }.disabled(!canReview)
         }
         .sheet(isPresented: $showingLogTime) {
             LogTimeSheet(presetTask: task, presetDate: Date())
         }
     }
 
+    // A task must have a project before it can be reviewed out of the inbox.
+    private var canReview: Bool { task.project != nil }
+
     private var reviewedButton: some View {
         Button { task.markReviewed() } label: {
             Label("Reviewed", systemImage: "checkmark.circle")
                 .font(.caption.weight(.semibold))
                 .padding(.horizontal, 8).padding(.vertical, 3)
-                .background(AppTheme.completed.opacity(0.16), in: Capsule())
-                .foregroundStyle(AppTheme.completed)
+                .background((canReview ? AppTheme.completed : AppTheme.mutedText).opacity(0.16), in: Capsule())
+                .foregroundStyle(canReview ? AppTheme.completed : AppTheme.mutedText)
         }
         .buttonStyle(.plain)
-        .help("Mark reviewed — moves this task out of the inbox")
+        .disabled(!canReview)
+        .help(canReview ? "Mark reviewed — moves this task out of the inbox"
+                        : "Assign a project before marking this task reviewed")
     }
 
     @ViewBuilder private var projectChip: some View {
