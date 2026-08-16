@@ -601,6 +601,22 @@ the on-device `SystemLanguageModel.default` through `FoundationModelsChatAnswere
 validated against supplied citation labels. If Apple Intelligence is unavailable, Chat still shows
 the locally ranked source links. No networking, external AI API, or Private Cloud Compute is used.
 
+**Answer orchestration + evaluation harness.** The whole answer sequence (capability check → follow-up
+detection → scope parse + back-ref inherit → retrieve → `ChatScopedRanking` → deterministic time totals →
+`ChatPromptBuilder` → model call → assembly) lives in **`ChatAnswerPipeline`** (`Domain/ChatAnswerPipeline.swift`),
+extracted from the view so it is testable. `ChatView.answerPendingQuestion` is a thin caller that maps the
+returned `ChatPipelineResult` (which exposes **every stage** — parsed scope, chosen sources,
+`computedTotals`, the assembled `ChatPromptBundle`, and a `ChatPipelineOutcome` of
+capability/noResults/unavailable/answered/generationFailed) onto `state.messages`. The pipeline depends only
+on injected abstractions — a `retrieve` closure (production = `ChatRetrievalWorker`) and a `ChatAnswering`
+(production = `FoundationModelsChatAnswerer`) — so a **golden-corpus evaluation harness**
+(`gbpDiaryTests/Domain/ChatEvalCorpus.swift` + `ChatEvalTests.swift`) runs representative questions end-to-end
+over a fixed, frozen-`now` corpus with a **mock answerer**, asserting the deterministic stages (scope,
+must-include/exclude sources, exact totals, prompt properties) — the regression signal for every Chat change.
+**GUIDING PRINCIPLE (RULE): the on-device model never filters, counts, dates, scopes, or sums — it only
+turns a question into intent and writes prose over data the app has already made correct. Any Chat behaviour
+change MUST add/adjust a `ChatEvalTests` case.**
+
 **Email Explorer** mode is a session-only summary experiment lab. Its single email selection uses the
 shared `FuzzyPickerField`; the body is fetched transiently from Mail, held only in that tab's
 `ChatState`, and discarded when the email changes/tab closes. Candidate generation uses
@@ -920,6 +936,8 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Chat synthesis prompt: `ChatPromptBuilder.build` (non-transformation) instructs a grouped, condensed summary (themed bullets by default, prose when `wantsOverview`), grouping by project across projects, reports a supplied `computedTotals` block verbatim, and nudges the model to **lead with higher-importance sources**; still labels sources `[S1]…`. A `requiresCitation:` override lets the database synthesis path accept an un-cited summary (falling back to the ranked sources) while still rejecting hallucinated labels | Chat / grounded answers | `gbpDiaryTests/Domain/ChatAnswerDomainTests.swift` | `promptBuilder_synthesisInstructionAndOverviewToggleAndTotals`, `synthesisAnswer_allowsUncitedSummaryAndUsesRankedSourcesAsFallback` |
 | Email importance: `EmailImportance` (H/M/L) `short`/`weight`/`rank`; `.low` default is neutral (weight 0). `EmailMessage.importance` round-trips through `importanceRaw` (unknown → `.low`); `isImportant` false only for `.low` | Email importance | `gbpDiaryTests/Models/EmailImportanceTests.swift` | `enum_shortWeightRankAndOrdering`, `message_defaultsToLow_andIsNotImportant`, `message_importance_roundTripsThroughRaw`, `message_unknownRaw_fallsBackToLow` |
 | Chat importance boost: `ChatImportanceBoost.adjust(score:importanceWeight:)` leaves Low (weight 0) unchanged, scales Medium/High monotonically (High = +25%), keeps a zero-relevance chunk at 0, and stays mild enough not to overtake a much-higher base score; `ChatCorpusBuilder` sets `importanceWeight` on the email document (+ an `Importance:` field for M/H only) and `projectionVersion == 3`; `ChatScopedRanking` breaks an exact date tie by importance | Chat / email importance | `gbpDiaryTests/Domain/ChatImportanceBoostTests.swift`, `gbpDiaryTests/Domain/ChatCorpusBuilderTests.swift`, `gbpDiaryTests/Domain/ChatScopedRankingTests.swift` | `lowWeight_leavesScoreUnchanged`, `mediumAndHigh_scaleMonotonically`, `zeroScore_staysZero`, `mildBoost_doesNotOvertakeAMuchHigherBaseScore`, `email_carriesImportanceWeightAndFieldForMediumHighOnly`, `projectionVersion_isCurrent`, `interval_sameDate_importanceBreaksTie` |
+| Chat answer pipeline: `ChatAnswerPipeline.run` reproduces the full orchestration (capability → follow-up/scope+inherit → retrieve → scope-filter → deterministic totals → prompt → model → assembly) over injected `retrieve`/`ChatAnswering`, exposing scope/sources/`computedTotals`/prompt and a capability·noResults·unavailable·answered·generationFailed outcome | Chat / answer orchestration | `gbpDiaryTests/Domain/ChatEvalTests.swift` | `capability_shortCircuitsBeforeRetrieval`, `noResults_whenIntervalWindowIsEmpty`, `unavailableModel_returnsSourcesNotAnswer`, `generationFailure_degradesToSources`, `answered_mapsCitationsFromPromptSources` |
+| Chat evaluation harness: representative questions run end-to-end through `ChatAnswerPipeline` over the fixed `ChatEvalCorpus` with a mock answerer assert deterministic scope, must-include/must-exclude sources (a "last week" question never surfaces a February meeting), exact interval time totals, follow-up scope inheritance, and prompt shape (grouped bullets; no totals instruction unless requested) | Chat / eval harness | `gbpDiaryTests/Domain/ChatEvalTests.swift` | `scope_emailsForProjectInInterval`, `retrieval_lastWeekEmails_scopeToProjectAndWindow`, `retrieval_lastWeek_neverSurfacesFebruaryMeeting`, `totals_computedDeterministicallyOverInterval`, `totals_notRequested_promptForbidsInventingThem`, `followUp_inheritsPriorProjectIntervalAndKind`, `prompt_defaultsToGroupedBullets` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 

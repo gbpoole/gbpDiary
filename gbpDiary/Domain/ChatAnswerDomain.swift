@@ -249,5 +249,10 @@ nonisolated enum ChatAnswerError: Error, Equatable, Sendable, LocalizedError {
 
 nonisolated protocol ChatAnswering {
     var isAvailable: Bool { get }
+    var unavailableReason: String? { get }
     func answer(request: ChatAnswerRequest) async throws -> ChatAnswer
+}
+
+extension ChatAnswering {
+    var unavailableReason: String? { nil }
 }

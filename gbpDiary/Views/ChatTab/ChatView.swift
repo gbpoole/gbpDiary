@@ -338,86 +338,37 @@ struct ChatView: View {
             if state.isCurrentAnswerRequest(requestToken) { state.isAnswering = false }
         }
 
-        if let capabilityAnswer = ChatCapabilityResponse.answer(for: question) {
-            guard state.isCurrentAnswerRequest(requestToken) else { return }
-            state.messages.append(ChatMessage(role: .assistant, content: capabilityAnswer))
-            return
-        }
-
         let priorMessages = Array(state.messages.dropLast())
         let history = priorMessages.map { ChatHistoryMessage(role: $0.role, text: $0.content) }
-        let isTransformation = ChatFollowUpIntent.isTransformation(question: question, history: history)
         let priorSources = priorMessages.reversed().first { $0.role == .assistant && !$0.sources.isEmpty }?.sources ?? []
-        let retrievalQuery = ChatFollowUpIntent.retrievalQuery(question: question, history: history)
-        // Scope is parsed from the user's actual question (not the follow-up-expanded retrieval query).
-        // A back-referencing follow-up ("...for that as well") inherits the prior question's project/interval/kind.
-        let projectNames = projects.map(\.name)
-        var scope = isTransformation
-            ? ChatQueryScope()
-            : ChatQueryScopeParser.parse(question: question, knownProjectNames: projectNames,
-                                         now: Date(), calendar: .current)
-        if !isTransformation, ChatQueryScopeParser.isBackReference(question),
-           let priorQuestion = priorMessages.last(where: { $0.role == .user })?.content {
-            let priorScope = ChatQueryScopeParser.parse(question: priorQuestion, knownProjectNames: projectNames,
-                                                        now: Date(), calendar: .current)
-            scope = scope.inheriting(from: priorScope)
-        }
-        // Rank a larger candidate set, then hard-restrict to the detected kind/project/interval (fallback to unscoped).
-        let ranking = await rankedSources(for: retrievalQuery, limit: 40)
+        let input = ChatAnswerPipeline.Input(
+            question: question, history: history, priorSources: priorSources,
+            knownProjectNames: projects.map(\.name), now: Date())
+
+        let result = await ChatAnswerPipeline().run(
+            input,
+            retrieve: { await rankedSources(for: $0, limit: $1) },
+            timeRecords: { timeRecords() },
+            answerer: answerer)
+
         guard state.isCurrentAnswerRequest(requestToken) else { return }
-        state.answerError = ranking.error
-        let scoped = ChatScopedRanking.apply(ranking.chunks, scope: scope)
-        let ranked = Array(scoped.prefix(10))
-        guard !ranked.isEmpty || isTransformation else {
-            guard state.isCurrentAnswerRequest(requestToken) else { return }
+        state.answerError = result.answerError
+        switch result.outcome {
+        case .capability(let text):
+            state.messages.append(ChatMessage(role: .assistant, content: text))
+        case .noResults:
             state.messages.append(ChatMessage(role: .assistant,
                                               content: "I could not find relevant information in the local workspace."))
-            return
-        }
-        let fallbackSources = uniqueSources((isTransformation ? priorSources : []) + ranked.map(\.chunk.source))
-        guard answerer.isAvailable else {
-            guard state.isCurrentAnswerRequest(requestToken) else { return }
+        case .unavailable(let reason, let sources):
             state.messages.append(ChatMessage(role: .assistant,
-                                              content: answerer.unavailableReason ?? "Apple Intelligence is unavailable.",
-                                              sources: fallbackSources))
-            return
-        }
-
-        // Deterministic time totals over the requested interval — the app sums; the model must not.
-        var computedTotals: String? = nil
-        if scope.wantsTimeTotals, let interval = scope.interval, let label = scope.intervalLabel {
-            let totals = ChatTimeTotals.compute(records: timeRecords(), interval: interval,
-                                                projectName: scope.projectName)
-            computedTotals = totals.authoritativeBlock(intervalLabel: label)
-                ?? "Computed time totals for \(label) (authoritative): no time was logged in this interval — report 0 hours."
-        }
-
-        let prompt = ChatPromptBuilder.build(
-            question: question,
-            rankedChunks: ranked,
-            history: history,
-            allowsUncitedTransformation: isTransformation,
-            wantsOverview: scope.wantsOverview,
-            computedTotals: computedTotals,
-            // A grouped summary needn't cite every point inline; the ranked sources are shown as links.
-            // Keep the transformation path's own rule (nil → its default). Unknown labels are still rejected.
-            requiresCitation: isTransformation ? nil : false
-        )
-        do {
-            let answer = try await answerer.answer(request: ChatAnswerRequest(
-                prompt: prompt,
-                fallbackCitations: isTransformation ? priorSources : fallbackSources
-            ))
-            guard state.isCurrentAnswerRequest(requestToken) else { return }
-            state.messages.append(ChatMessage(role: .assistant, content: answer.text,
-                                              sources: answer.citations))
-        } catch {
-            guard state.isCurrentAnswerRequest(requestToken) else { return }
-            state.answerError = "The on-device answer could not be generated: \(error.localizedDescription)"
-            guard state.isCurrentAnswerRequest(requestToken) else { return }
+                                              content: reason ?? "Apple Intelligence is unavailable.",
+                                              sources: sources))
+        case .answered(let answer):
+            state.messages.append(ChatMessage(role: .assistant, content: answer.text, sources: answer.citations))
+        case .generationFailed(_, let sources):
             state.messages.append(ChatMessage(role: .assistant,
                                               content: "I found these relevant local sources, but could not generate a grounded answer.",
-                                              sources: fallbackSources))
+                                              sources: sources))
         }
     }
 
@@ -558,11 +509,6 @@ struct ChatView: View {
         for index in state.lab.candidates.indices {
             state.lab.candidates[index].isAdopted = state.lab.candidates[index].id == candidate.id
         }
-    }
-
-    private func uniqueSources(_ sources: [ChatSourceReference]) -> [ChatSourceReference] {
-        var seen = Set<ChatSourceKey>()
-        return sources.filter { seen.insert($0.key).inserted }
     }
 
     private func open(_ source: ChatSourceReference) {
