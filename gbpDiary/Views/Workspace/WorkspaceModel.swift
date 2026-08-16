@@ -113,6 +113,7 @@ struct ChatMessage: Identifiable {
     var role: ChatRole
     var content: String
     var sources: [ChatSourceReference] = []
+    var elapsed: TimeInterval? = nil   // wall-clock time to produce an assistant answer
 }
 
 enum ChatLabRating: String, CaseIterable, Identifiable {

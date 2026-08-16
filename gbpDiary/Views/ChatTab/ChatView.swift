@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import Textual
 #if os(macOS)
 import AppKit
 #endif
@@ -135,9 +136,18 @@ struct ChatView: View {
             Text(message.role == .user ? "YOU" : "ON-DEVICE ANSWER")
                 .font(AppTheme.interfaceFont(size: 10, weight: .semibold))
                 .foregroundStyle(message.role == .user ? AppTheme.accent : AppTheme.duration)
-            Text(message.content)
-                .font(AppTheme.bodyFont(size: 14))
-                .textSelection(.enabled)
+            if message.role == .user {
+                Text(message.content)
+                    .font(AppTheme.bodyFont(size: 14))
+                    .textSelection(.enabled)
+            } else {
+                // Answers are markdown — render them with Textual (as note/minutes previews do) so bold,
+                // lists and headings format instead of showing raw syntax.
+                StructuredText(markdown: ChatAnswerMarkdown.render(message.content), syntaxExtensions: [])
+                    .textual.textSelection(.enabled)
+                    .textual.structuredTextStyle(.gitHub)
+                    .font(AppTheme.bodyFont(size: 14))
+            }
             if !message.sources.isEmpty {
                 FlowLayout(spacing: 5) {
                     ForEach(message.sources, id: \.key) { source in
@@ -147,6 +157,13 @@ struct ChatView: View {
                         .buttonStyle(.plain)
                     }
                 }
+            }
+            if let elapsed = message.elapsed {
+                Text(ChatDurationFormat.short(elapsed))
+                    .font(AppTheme.interfaceFont(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .help("Time to generate this response")
             }
         }
         .padding(14)
@@ -345,6 +362,7 @@ struct ChatView: View {
             question: question, history: history, priorSources: priorSources,
             knownProjectNames: projects.map(\.name), now: Date())
 
+        let startedAt = Date()
         let result = await ChatAnswerPipeline().run(
             input,
             retrieve: { await rankedSources(for: $0, limit: $1) },
@@ -352,25 +370,28 @@ struct ChatView: View {
             activityProvider: { activityDigest(for: $0) },
             answerer: answerer,
             scopeResolver: FoundationModelsScopeResolver())
+        let elapsed = Date().timeIntervalSince(startedAt)
 
         guard state.isCurrentAnswerRequest(requestToken) else { return }
         state.answerError = result.answerError
         switch result.outcome {
         case .capability(let text):
-            state.messages.append(ChatMessage(role: .assistant, content: text))
+            state.messages.append(ChatMessage(role: .assistant, content: text, elapsed: elapsed))
         case .noResults:
             state.messages.append(ChatMessage(role: .assistant,
-                                              content: "I could not find relevant information in the local workspace."))
+                                              content: "I could not find relevant information in the local workspace.",
+                                              elapsed: elapsed))
         case .unavailable(let reason, let sources):
             state.messages.append(ChatMessage(role: .assistant,
                                               content: reason ?? "Apple Intelligence is unavailable.",
-                                              sources: sources))
+                                              sources: sources, elapsed: elapsed))
         case .answered(let answer):
-            state.messages.append(ChatMessage(role: .assistant, content: answer.text, sources: answer.citations))
+            state.messages.append(ChatMessage(role: .assistant, content: answer.text,
+                                              sources: answer.citations, elapsed: elapsed))
         case .generationFailed(_, let sources):
             state.messages.append(ChatMessage(role: .assistant,
                                               content: "I found these relevant local sources, but could not generate a grounded answer.",
-                                              sources: sources))
+                                              sources: sources, elapsed: elapsed))
         }
     }
 
