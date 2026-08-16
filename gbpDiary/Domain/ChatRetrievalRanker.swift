@@ -25,14 +25,15 @@ nonisolated struct ChatHybridRanker {
             let semantic = queryVector.flatMap { queryVector in
                 embedder?.vector(for: chunk.text).flatMap { ChatVectorMath.cosineSimilarity(queryVector, $0) }
             }
-            let score: Float
+            let base: Float
             if let semantic {
                 let clampedSemantic = max(0, min(1, semantic))
                 let totalWeight = max(lexicalWeight + semanticWeight, .leastNonzeroMagnitude)
-                score = (lexical * lexicalWeight + clampedSemantic * semanticWeight) / totalWeight
+                base = (lexical * lexicalWeight + clampedSemantic * semanticWeight) / totalWeight
             } else {
-                score = lexical
+                base = lexical
             }
+            let score = ChatImportanceBoost.adjust(score: base, importanceWeight: chunk.importanceWeight)
             return ChatRankedChunk(chunk: chunk, score: score, lexicalScore: lexical, semanticScore: semantic)
         }
         .filter { $0.score > 0 }
@@ -52,7 +53,8 @@ nonisolated struct ChatHybridRanker {
             let semantic = queryVector.flatMap { query in
                 indexed.vector.flatMap { ChatVectorMath.cosineSimilarity(query, $0) }
             }
-            let score = combinedScore(lexical: lexical, semantic: semantic)
+            let base = combinedScore(lexical: lexical, semantic: semantic)
+            let score = ChatImportanceBoost.adjust(score: base, importanceWeight: indexed.chunk.importanceWeight)
             return ChatRankedChunk(chunk: indexed.chunk, score: score,
                                    lexicalScore: lexical, semanticScore: semantic)
         }

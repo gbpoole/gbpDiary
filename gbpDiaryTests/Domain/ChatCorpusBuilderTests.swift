@@ -74,6 +74,33 @@ struct ChatCorpusBuilderTests {
         #expect(result.attachmentFailures.isEmpty)
     }
 
+    @Test func email_carriesImportanceWeightAndFieldForMediumHighOnly() {
+        let high = EmailMessage(messageId: "h", account: "local", mailbox: "INBOX", direction: .inbox,
+                                fromAddress: "a@b.com", fromName: nil, subject: "Important one",
+                                date: Date(timeIntervalSince1970: 1_700_000_300), id: id(20))
+        high.importance = .high
+        let low = EmailMessage(messageId: "l", account: "local", mailbox: "INBOX", direction: .inbox,
+                               fromAddress: "c@d.com", fromName: nil, subject: "Ordinary one",
+                               date: Date(timeIntervalSince1970: 1_700_000_400), id: id(21))
+        // low stays at the default .low
+
+        let result = ChatCorpusBuilder().build(
+            projects: [], tasks: [], people: [], institutions: [],
+            meetings: [], notes: [], days: [], documents: [],
+            emails: [high, low], attachments: []
+        )
+        let highDoc = result.documents.first { $0.source.id == high.id }
+        let lowDoc = result.documents.first { $0.source.id == low.id }
+        #expect(highDoc?.importanceWeight == 1.0)
+        #expect(highDoc?.markdown.contains("Importance: High") == true)
+        #expect(lowDoc?.importanceWeight == 0.0)
+        #expect(lowDoc?.markdown.contains("Importance") == false)   // neutral Low is not surfaced
+    }
+
+    @Test func projectionVersion_isCurrent() {
+        #expect(ChatCorpusBuilder.projectionVersion == 3)
+    }
+
     @Test func attachmentExtractor_supportsUTF8TypesAndHasDeterministicFailuresAndCap() throws {
         let yamlURL = temporaryURL(extension: "yaml")
         try Data("key: abcdef".utf8).write(to: yamlURL)

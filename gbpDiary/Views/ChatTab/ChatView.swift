@@ -349,10 +349,25 @@ struct ChatView: View {
         let isTransformation = ChatFollowUpIntent.isTransformation(question: question, history: history)
         let priorSources = priorMessages.reversed().first { $0.role == .assistant && !$0.sources.isEmpty }?.sources ?? []
         let retrievalQuery = ChatFollowUpIntent.retrievalQuery(question: question, history: history)
-        let ranking = await rankedSources(for: retrievalQuery, limit: 10)
+        // Scope is parsed from the user's actual question (not the follow-up-expanded retrieval query).
+        // A back-referencing follow-up ("...for that as well") inherits the prior question's project/interval/kind.
+        let projectNames = projects.map(\.name)
+        var scope = isTransformation
+            ? ChatQueryScope()
+            : ChatQueryScopeParser.parse(question: question, knownProjectNames: projectNames,
+                                         now: Date(), calendar: .current)
+        if !isTransformation, ChatQueryScopeParser.isBackReference(question),
+           let priorQuestion = priorMessages.last(where: { $0.role == .user })?.content {
+            let priorScope = ChatQueryScopeParser.parse(question: priorQuestion, knownProjectNames: projectNames,
+                                                        now: Date(), calendar: .current)
+            scope = scope.inheriting(from: priorScope)
+        }
+        // Rank a larger candidate set, then hard-restrict to the detected kind/project/interval (fallback to unscoped).
+        let ranking = await rankedSources(for: retrievalQuery, limit: 40)
         guard state.isCurrentAnswerRequest(requestToken) else { return }
         state.answerError = ranking.error
-        let ranked = ranking.chunks
+        let scoped = ChatScopedRanking.apply(ranking.chunks, scope: scope)
+        let ranked = Array(scoped.prefix(10))
         guard !ranked.isEmpty || isTransformation else {
             guard state.isCurrentAnswerRequest(requestToken) else { return }
             state.messages.append(ChatMessage(role: .assistant,
@@ -368,16 +383,30 @@ struct ChatView: View {
             return
         }
 
+        // Deterministic time totals over the requested interval — the app sums; the model must not.
+        var computedTotals: String? = nil
+        if scope.wantsTimeTotals, let interval = scope.interval, let label = scope.intervalLabel {
+            let totals = ChatTimeTotals.compute(records: timeRecords(), interval: interval,
+                                                projectName: scope.projectName)
+            computedTotals = totals.authoritativeBlock(intervalLabel: label)
+                ?? "Computed time totals for \(label) (authoritative): no time was logged in this interval — report 0 hours."
+        }
+
         let prompt = ChatPromptBuilder.build(
             question: question,
             rankedChunks: ranked,
             history: history,
-            allowsUncitedTransformation: isTransformation
+            allowsUncitedTransformation: isTransformation,
+            wantsOverview: scope.wantsOverview,
+            computedTotals: computedTotals,
+            // A grouped summary needn't cite every point inline; the ranked sources are shown as links.
+            // Keep the transformation path's own rule (nil → its default). Unknown labels are still rejected.
+            requiresCitation: isTransformation ? nil : false
         )
         do {
             let answer = try await answerer.answer(request: ChatAnswerRequest(
                 prompt: prompt,
-                fallbackCitations: isTransformation ? priorSources : []
+                fallbackCitations: isTransformation ? priorSources : fallbackSources
             ))
             guard state.isCurrentAnswerRequest(requestToken) else { return }
             state.messages.append(ChatMessage(role: .assistant, content: answer.text,
@@ -462,6 +491,32 @@ struct ChatView: View {
         } catch {
             return ([], "The local search index location is unavailable.")
         }
+    }
+
+    /// Every logged-time record (task time entries, standalone email time entries, and meetings) with its own
+    /// date + project(s). Chat sums these deterministically for interval totals — never the RAG corpus/model.
+    private func timeRecords() -> [ChatTimeRecord] {
+        var records: [ChatTimeRecord] = []
+        for task in tasks {
+            let names = [task.project?.name].compactMap { $0 }
+            for entry in task.timeEntries {
+                records.append(ChatTimeRecord(sourceKey: entry.id.uuidString, date: entry.date,
+                                              hours: entry.duration.hoursNormalized, projectNames: names))
+            }
+        }
+        for email in emails {
+            let names = email.projects.map(\.name)
+            for entry in email.timeEntries where entry.task == nil {
+                records.append(ChatTimeRecord(sourceKey: entry.id.uuidString, date: entry.date,
+                                              hours: entry.duration.hoursNormalized, projectNames: names))
+            }
+        }
+        for meeting in meetings {
+            guard let hours = meeting.duration?.hoursNormalized, hours > 0 else { continue }
+            records.append(ChatTimeRecord(sourceKey: meeting.id.uuidString, date: meeting.meetingAt,
+                                          hours: hours, projectNames: meeting.projects.map(\.name)))
+        }
+        return records
     }
 
     private func corpusSnapshot() -> ChatCorpusSnapshot {

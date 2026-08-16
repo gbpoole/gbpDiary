@@ -22,7 +22,10 @@ nonisolated struct ChatCorpusSnapshot: Equatable, Sendable {
 }
 
 struct ChatCorpusBuilder {
-    static let projectionVersion = 1
+    // v2: chunks carry projectNames + sortDate metadata for query-scoped retrieval.
+    // v3: chunks carry importanceWeight (+ an Importance field for M/H emails) — bumped to force a
+    // one-time reindex.
+    static let projectionVersion = 3
 
     var limits = ChatCorpusLimits()
     var attachmentExtractor = ChatAttachmentTextExtractor()
@@ -52,7 +55,7 @@ struct ChatCorpusBuilder {
                         ("Institutions", list(project.institutions.map(\.name))),
                         ("Development team", list(Project.teamNames(lead: project.devLead, team: project.devTeam))),
                         ("Science team", list(Project.teamNames(lead: project.sciLead, team: project.sciTeam)))
-                     ])
+                     ], projectNames: [project.name], sortDate: project.updatedAt)
         }
         append(tasks, kind: .task, to: &output) { task in
             document(id: task.id, kind: .task, title: task.summary, navigation: .task,
@@ -63,7 +66,7 @@ struct ChatCorpusBuilder {
                         ("Tags", list(task.tags)), ("Due", date(task.dueAt)),
                         ("Scheduled", date(task.scheduledAt)), ("Recurrence", task.recurrenceRule),
                         ("Blocked by", list(task.dependsOn.map(\.summary)))
-                     ])
+                     ], projectNames: [task.project?.name].compactMap { $0 }, sortDate: task.createdAt)
         }
         append(people, kind: .person, to: &output) { person in
             document(id: person.id, kind: .person, title: person.name, navigation: .person,
@@ -72,14 +75,14 @@ struct ChatCorpusBuilder {
                         ("Tags", list(person.tags)),
                         ("Development projects", list(person.devProjects.map(\.name))),
                         ("Science projects", list(person.sciProjects.map(\.name)))
-                     ])
+                     ], projectNames: (person.devProjects + person.sciProjects).map(\.name))
         }
         append(institutions, kind: .institution, to: &output) { institution in
             document(id: institution.id, kind: .institution, title: institution.name, navigation: .institution,
                      detail: nil, fields: [
                         ("People", list(institution.members.map(\.name))),
                         ("Projects", list(institution.projects.map(\.name)))
-                     ])
+                     ], projectNames: institution.projects.map(\.name))
         }
         append(meetings, kind: .meeting, to: &output) { meeting in
             document(id: meeting.id, kind: .meeting, title: meeting.summary ?? "Meeting", navigation: .meeting,
@@ -90,7 +93,7 @@ struct ChatCorpusBuilder {
                         ("Minutes", meeting.note?.content ?? meeting.minutesContent),
                         ("Action items", list(meeting.newTasks.map(\.summary))),
                         ("Documents", list(meeting.documents.compactMap(\.summary)))
-                     ])
+                     ], projectNames: meeting.projects.map(\.name), sortDate: meeting.meetingAt)
         }
         append(notes.filter { $0.minutes == nil }, kind: .note, to: &output) { note in
             let title = nonempty(note.title) ?? note.dayRecord.map { "Diary note \(date($0.date) ?? "")" } ?? "Note"
@@ -98,7 +101,7 @@ struct ChatCorpusBuilder {
                             detail: joined([note.dayRecord.flatMap { date($0.date) }, note.project?.name]), fields: [
                                 ("Date", note.dayRecord.flatMap { date($0.date) }),
                                 ("Project", note.project?.name), ("Tags", list(note.tags)), ("Content", note.content)
-                            ])
+                            ], projectNames: [note.project?.name].compactMap { $0 }, sortDate: note.dayRecord?.date)
         }
         append(days, kind: .day, to: &output) { day in
             document(id: day.id, kind: .day, title: date(day.date) ?? "Diary", navigation: .day,
@@ -107,7 +110,7 @@ struct ChatCorpusBuilder {
                         ("Legacy notes", day.notes), ("Tasks", list(day.tasks.map(\.summary))),
                         ("Notes", list(day.noteItems.compactMap { nonempty($0.title) })),
                         ("Documents", list(day.documents.compactMap(\.summary)))
-                     ])
+                     ], sortDate: day.date)
         }
         append(documents, kind: .document, to: &output) { item in
             document(id: item.id, kind: .document, title: item.summary ?? "Document", navigation: .document,
@@ -115,15 +118,20 @@ struct ChatCorpusBuilder {
                         ("Description", item.documentDescription), ("Projects", list(item.projects.map(\.name))),
                         ("Meetings", list(item.meetings.compactMap(\.summary))),
                         ("Files", list(item.attachments.map(\.libraryName)))
-                     ])
+                     ], projectNames: item.projects.map(\.name), sortDate: item.createdAt)
         }
         append(emails.filter { !$0.dismissed }, kind: .email, to: &output) { email in
-            document(id: email.id, kind: .email, title: nonempty(email.subject) ?? "Email", navigation: .email,
+            // Importance shown to the model only for Medium/High (Low is neutral); the weight also drives
+            // the ranking boost in ChatHybridRanker.
+            let importanceField = email.isImportant ? email.importance.displayName : nil
+            return document(id: email.id, kind: .email, title: nonempty(email.subject) ?? "Email", navigation: .email,
                      detail: joined([date(email.date), email.person?.name]), fields: [
                         ("Subject", email.subject), ("Stored summary", email.summary),
+                        ("Importance", importanceField),
                         ("Date", date(email.date)), ("Person", email.person?.name),
                         ("Projects", list(email.projects.map(\.name)))
-                     ])
+                     ], projectNames: email.projects.map(\.name), sortDate: email.date,
+                     importanceWeight: email.importance.weight)
         }
 
         let attachmentDescriptors = capped(attachments, kind: .attachment).map { attachment in
@@ -156,7 +164,9 @@ struct ChatCorpusBuilder {
     }
 
     private func document(id: UUID, kind: ChatSourceKind, title: String, navigation: ChatNavigationKind,
-                          navigationID: UUID? = nil, detail: String?, fields: [(String, String?)]) -> ChatRetrievalDocument {
+                          navigationID: UUID? = nil, detail: String?, fields: [(String, String?)],
+                          projectNames: [String] = [], sortDate: Date? = nil,
+                          importanceWeight: Double = 0) -> ChatRetrievalDocument {
         let metadata = fields.compactMap { label, value -> String? in
             guard let value = nonempty(value) else { return nil }
             return "\(label): \(value)"
@@ -165,7 +175,12 @@ struct ChatCorpusBuilder {
         let bounded = String(content.prefix(max(0, limits.maximumCharactersPerSource)))
         let source = ChatSourceReference(id: id, kind: kind, title: title, detail: detail,
                                          navigationKind: navigation, navigationID: navigationID)
-        return ChatRetrievalDocument(source: source, markdown: bounded)
+        let normalizedProjects = projectNames
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+            .filter { !$0.isEmpty }
+        return ChatRetrievalDocument(source: source, markdown: bounded,
+                                     projectNames: normalizedProjects, sortDate: sortDate,
+                                     importanceWeight: importanceWeight)
     }
 
     private func navigation(for attachment: Attachment) -> (kind: ChatNavigationKind, id: UUID, detail: String?, url: URL?) {

@@ -25,7 +25,10 @@ nonisolated enum ChatPromptBuilder {
     static func build(question: String, rankedChunks: [ChatRankedChunk], history: [ChatHistoryMessage],
                       maxHistoryMessages: Int = 6, maxHistoryCharacters: Int = 3_000,
                       maxSourceCharacters: Int = 8_000,
-                      allowsUncitedTransformation: Bool = false) -> ChatPromptBundle {
+                      allowsUncitedTransformation: Bool = false,
+                      wantsOverview: Bool = false,
+                      computedTotals: String? = nil,
+                      requiresCitation requiresCitationOverride: Bool? = nil) -> ChatPromptBundle {
         let recentHistory = boundedHistory(history, maxMessages: maxHistoryMessages, maxCharacters: maxHistoryCharacters)
         var sourceCharacters = 0
         var sources: [ChatPromptSource] = []
@@ -42,13 +45,30 @@ nonisolated enum ChatPromptBuilder {
             sourceCharacters += text.count
         }
 
+        let hasTotals = (computedTotals?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false)
+        let shape = wantsOverview
+            ? "Write a short prose overview (a few sentences), not a list."
+            : "Write a short bulleted list of themed points. Combine several sources into each point; never list sources one by one."
+        // Only mention time totals when a computed block is actually supplied — otherwise the model
+        // invents an empty "Computed time totals" section.
+        let totalsInstruction = hasTotals
+            ? " A 'Computed time totals' block is supplied below. Reproduce that block once, verbatim, as a single line at the very end of your answer. Do NOT place totals inside the per-project sections, do NOT split the block across sections, and do NOT compute your own running totals or subtotals."
+            : " Do not report or invent any time totals or hours; none were requested."
         let groundingInstruction = allowsUncitedTransformation
             ? "Transform only the material in the recent conversation and supplied sources. Do not add facts. Inline citations are optional in the transformed output."
-            : "Answer using only the supplied sources. Cite factual claims with source labels such as [S1]. If the sources do not answer the question, say so."
+            : "Answer using only the supplied sources, synthesising them into a real summary — group related information and combine multiple sources into each point rather than describing each source in turn. "
+              + shape
+              + " If the material spans more than one project, group your answer by project (a short lead-in per project) unless the question asks for a single combined view."
+              + totalsInstruction
+              + " When a source is marked with higher importance, lead with it."
+              + " Cite the key supporting sources with labels such as [S1] where useful — not every sentence. If the sources do not answer the question, say so."
         var sections = [groundingInstruction]
         if !recentHistory.isEmpty {
             let lines = recentHistory.map { "\($0.role == .user ? "User" : "Assistant"): \($0.text)" }
             sections.append("Recent conversation:\n" + lines.joined(separator: "\n"))
+        }
+        if let computedTotals, !computedTotals.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            sections.append(computedTotals)
         }
         if !sources.isEmpty {
             let rendered = sources.map { source in
@@ -58,7 +78,7 @@ nonisolated enum ChatPromptBuilder {
         }
         sections.append("Question: \(question.trimmingCharacters(in: .whitespacesAndNewlines))")
         return ChatPromptBundle(prompt: sections.joined(separator: "\n\n"), sources: sources,
-                                requiresCitation: !allowsUncitedTransformation)
+                                requiresCitation: requiresCitationOverride ?? !allowsUncitedTransformation)
     }
 
     static func boundedHistory(_ history: [ChatHistoryMessage], maxMessages: Int,

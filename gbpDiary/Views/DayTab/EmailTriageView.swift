@@ -27,7 +27,8 @@ struct EmailTriageView: View {
     private func count(_ category: EmailTriageCategory) -> Int { emails(category).count }
 
     // The selected bucket's emails grouped by calendar day, most-recent day first (allEmails is
-    // date-descending, so each day's rows stay latest-first and the day order is descending too).
+    // date-descending, so the day order is descending too). Within each day, more-important emails
+    // (High → Medium → Low) float to the top, then latest-first.
     private var dayGroups: [(day: Date, emails: [EmailMessage])] {
         let cal = Calendar.current
         var order: [Date] = []
@@ -37,7 +38,12 @@ struct EmailTriageView: View {
             if map[day] == nil { order.append(day); map[day] = [] }
             map[day]?.append(email)
         }
-        return order.map { ($0, map[$0] ?? []) }
+        return order.map { day in
+            let sorted = (map[day] ?? []).sorted { a, b in
+                a.importance.rank != b.importance.rank ? a.importance.rank > b.importance.rank : a.date > b.date
+            }
+            return (day, sorted)
+        }
     }
 
     var body: some View {
@@ -249,6 +255,7 @@ private struct EmailTriageRow: View {
                     projectChip
                     todoChip
                     triageActions
+                    EmailImportancePicker(importance: email.importance) { email.importance = $0 }
                     Spacer(minLength: 8)
                     Text(email.date.formatted(date: .omitted, time: .shortened))
                         .font(.caption2).foregroundStyle(.secondary)

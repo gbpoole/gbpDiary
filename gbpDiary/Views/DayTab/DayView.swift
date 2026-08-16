@@ -73,7 +73,8 @@ struct DayPageContent: View {
         return groups.map { key, msgs in
             EmailThread(key: key, messages: msgs.sorted { $0.date > $1.date })
         }
-        .sorted { $0.date > $1.date }
+        // More-important threads (High → Medium → Low) lead the day, then latest-first.
+        .sorted { $0.importance.rank != $1.importance.rank ? $0.importance.rank > $1.importance.rank : $0.date > $1.date }
     }
 
     // Sent emails for the day (shown in the Activity section at their send time) — work → Friday.
