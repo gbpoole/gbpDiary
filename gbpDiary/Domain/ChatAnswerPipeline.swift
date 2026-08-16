@@ -49,6 +49,7 @@ struct ChatAnswerPipeline {
     func run(_ input: Input,
              retrieve: (String, Int) async -> (chunks: [ChatRankedChunk], error: String?),
              timeRecords: () -> [ChatTimeRecord],
+             activityProvider: (Range<Date>) -> ChatActivityDigest = { _ in ChatActivityDigest(items: []) },
              answerer: any ChatAnswering,
              scopeResolver: any ChatScopeResolving = HeuristicScopeResolver()) async -> ChatPipelineResult {
         let question = input.question
@@ -77,43 +78,79 @@ struct ChatAnswerPipeline {
         let ranking = await retrieve(retrievalQuery, candidateLimit)
         let scoped = ChatScopedRanking.apply(ranking.chunks, scope: scope)
         let ranked = Array(scoped.prefix(promptSourceLimit))
+
+        // 4. Route to a lens. Transformations always stay in the open box; otherwise the selector picks
+        //    the deterministic time-report / activity-digest lens or falls through to the open box.
+        let lens = isTransformation ? .openBox : ChatLensSelector.select(scope: scope, question: question)
+
+        // 4a. Time-report lens — the app computes and RENDERS the answer (no model, never degrades, and
+        //     no noResults short-circuit). Retrieval is used only for click-through source citations.
+        if lens == .timeReport {
+            let totals = ChatTimeTotals.compute(records: timeRecords(), interval: scope.interval,
+                                                projectName: scope.projectName, calendar: input.calendar)
+            let text = totals.report(intervalLabel: scope.intervalLabel, projectName: scope.projectName)
+            return ChatPipelineResult(
+                scope: scope, retrievalError: ranking.error, rankedSources: ranked,
+                computedTotals: totals.authoritativeBlock(intervalLabel: scope.intervalLabel ?? "all time"),
+                prompt: nil,
+                outcome: .answered(ChatAnswer(text: text, citations: Self.unique(ranked.map(\.chunk.source)),
+                                              summaryCandidates: [])))
+        }
+
+        // 4b. Activity-digest lens — the app assembles the window's REAL items (weekend-folded); the model
+        //     may only rephrase that block, and if it's unavailable/misbehaves the app's rendering is the
+        //     answer. It can never invent a Saturday or a meeting that didn't happen, and never degrades.
+        if lens == .activityDigest, let interval = scope.interval {
+            let digest = activityProvider(interval)
+            guard !digest.isEmpty else {
+                return ChatPipelineResult(scope: scope, retrievalError: ranking.error, rankedSources: ranked,
+                    computedTotals: nil, prompt: nil,
+                    outcome: .answered(ChatAnswer(
+                        text: "You have no recorded activity for \(scope.intervalLabel ?? "that period").",
+                        citations: [], summaryCandidates: [])))
+            }
+            let block = digest.render(calendar: input.calendar)
+            if answerer.isAvailable {
+                let bundle = ChatPromptBundle(
+                    prompt: ChatActivityDigestBuilder.phrasingPrompt(block: block, intervalLabel: scope.intervalLabel),
+                    sources: [], requiresCitation: false)
+                if let answer = try? await answerer.answer(request: ChatAnswerRequest(prompt: bundle, fallbackCitations: digest.sources)) {
+                    return ChatPipelineResult(scope: scope, retrievalError: ranking.error, rankedSources: ranked,
+                        computedTotals: nil, prompt: bundle,
+                        outcome: .answered(ChatAnswer(text: answer.text, citations: digest.sources, summaryCandidates: [])))
+                }
+            }
+            return ChatPipelineResult(scope: scope, retrievalError: ranking.error, rankedSources: ranked,
+                computedTotals: nil, prompt: nil,
+                outcome: .answered(ChatAnswer(text: block, citations: digest.sources, summaryCandidates: [])))
+        }
+
+        // 4c. Open box: retrieval synthesis, best effort.
         guard !ranked.isEmpty || isTransformation else {
             return ChatPipelineResult(scope: scope, retrievalError: ranking.error, rankedSources: [],
                                       computedTotals: nil, prompt: nil, outcome: .noResults)
         }
-
         let fallbackSources = Self.unique((isTransformation ? priorSources : []) + ranked.map(\.chunk.source))
         guard answerer.isAvailable else {
             return ChatPipelineResult(scope: scope, retrievalError: ranking.error, rankedSources: ranked,
                                       computedTotals: nil, prompt: nil,
                                       outcome: .unavailable(reason: answerer.unavailableReason, sources: fallbackSources))
         }
-
-        // 4. Deterministic time totals over the requested interval — the app sums; the model must not.
-        var computedTotals: String? = nil
-        if scope.wantsTimeTotals, let interval = scope.interval, let label = scope.intervalLabel {
-            let totals = ChatTimeTotals.compute(records: timeRecords(), interval: interval,
-                                                projectName: scope.projectName)
-            computedTotals = totals.authoritativeBlock(intervalLabel: label)
-                ?? "Computed time totals for \(label) (authoritative): no time was logged in this interval — report 0 hours."
-        }
-
-        // 5. Assemble the grounded prompt and call the model.
         let prompt = ChatPromptBuilder.build(
             question: question, rankedChunks: ranked, history: history,
             allowsUncitedTransformation: isTransformation, wantsOverview: scope.wantsOverview,
-            computedTotals: computedTotals,
+            computedTotals: nil,
             // A grouped summary needn't cite every point inline; the ranked sources are shown as links.
             requiresCitation: isTransformation ? nil : false)
         do {
             let answer = try await answerer.answer(request: ChatAnswerRequest(
                 prompt: prompt, fallbackCitations: isTransformation ? priorSources : fallbackSources))
             return ChatPipelineResult(scope: scope, retrievalError: ranking.error, rankedSources: ranked,
-                                      computedTotals: computedTotals, prompt: prompt, outcome: .answered(answer))
+                                      computedTotals: nil, prompt: prompt, outcome: .answered(answer))
         } catch {
             return ChatPipelineResult(
                 scope: scope, retrievalError: ranking.error, rankedSources: ranked,
-                computedTotals: computedTotals, prompt: prompt,
+                computedTotals: nil, prompt: prompt,
                 outcome: .generationFailed(
                     message: "The on-device answer could not be generated: \(error.localizedDescription)",
                     sources: fallbackSources))

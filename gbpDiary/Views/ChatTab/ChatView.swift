@@ -349,6 +349,7 @@ struct ChatView: View {
             input,
             retrieve: { await rankedSources(for: $0, limit: $1) },
             timeRecords: { timeRecords() },
+            activityProvider: { activityDigest(for: $0) },
             answerer: answerer,
             scopeResolver: FoundationModelsScopeResolver())
 
@@ -448,27 +449,51 @@ struct ChatView: View {
     /// Every logged-time record (task time entries, standalone email time entries, and meetings) with its own
     /// date + project(s). Chat sums these deterministically for interval totals — never the RAG corpus/model.
     private func timeRecords() -> [ChatTimeRecord] {
+        // All logged time is work — weekend entries fold back to the preceding Friday (overtime), so
+        // interval/week bucketing never attributes work to a Saturday.
         var records: [ChatTimeRecord] = []
         for task in tasks {
             let names = [task.project?.name].compactMap { $0 }
             for entry in task.timeEntries {
-                records.append(ChatTimeRecord(sourceKey: entry.id.uuidString, date: entry.date,
+                records.append(ChatTimeRecord(sourceKey: entry.id.uuidString, date: ChatWeekendFold.foldWork(entry.date),
                                               hours: entry.duration.hoursNormalized, projectNames: names))
             }
         }
         for email in emails {
             let names = email.projects.map(\.name)
             for entry in email.timeEntries where entry.task == nil {
-                records.append(ChatTimeRecord(sourceKey: entry.id.uuidString, date: entry.date,
+                records.append(ChatTimeRecord(sourceKey: entry.id.uuidString, date: ChatWeekendFold.foldWork(entry.date),
                                               hours: entry.duration.hoursNormalized, projectNames: names))
             }
         }
         for meeting in meetings {
             guard let hours = meeting.duration?.hoursNormalized, hours > 0 else { continue }
-            records.append(ChatTimeRecord(sourceKey: meeting.id.uuidString, date: meeting.meetingAt,
+            records.append(ChatTimeRecord(sourceKey: meeting.id.uuidString, date: ChatWeekendFold.foldWork(meeting.meetingAt),
                                           hours: hours, projectNames: meeting.projects.map(\.name)))
         }
         return records
+    }
+
+    /// The real activity (meetings attended + tasks completed) in a window, weekend-folded, for the
+    /// activity-digest lens. Only genuine records — the model rephrases these and can invent nothing.
+    private func activityDigest(for interval: Range<Date>) -> ChatActivityDigest {
+        var items: [ChatActivityItem] = []
+        for meeting in meetings {
+            let date = ChatWeekendFold.fold(meeting.meetingAt, kind: .meeting)
+            let title = meeting.summary ?? "Meeting"
+            let label = meeting.duration.map { "Meeting: \(title) (\($0.displayString))" } ?? "Meeting: \(title)"
+            let ref = ChatSourceReference(id: meeting.id, kind: .meeting, title: title, detail: nil,
+                                          navigationKind: .meeting, navigationID: meeting.id)
+            items.append(ChatActivityItem(date: date, label: label, source: ref))
+        }
+        for task in tasks {
+            guard task.status == .completed, let completedAt = task.completedAt else { continue }
+            let date = ChatWeekendFold.foldWork(completedAt)
+            let ref = ChatSourceReference(id: task.id, kind: .task, title: task.summary, detail: nil,
+                                          navigationKind: .task, navigationID: task.id)
+            items.append(ChatActivityItem(date: date, label: "Completed: \(task.summary)", source: ref))
+        }
+        return ChatActivityDigestBuilder.build(items: items, interval: interval)
     }
 
     private func corpusSnapshot() -> ChatCorpusSnapshot {

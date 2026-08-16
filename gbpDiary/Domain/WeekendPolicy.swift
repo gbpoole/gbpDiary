@@ -21,6 +21,16 @@ enum WeekendPolicy {
         return day
     }
 
+    /// The diary weekday **work** belongs to: a weekend date resolves BACK to the preceding weekday
+    /// (Friday) as overtime; a weekday is itself. Result is start-of-day. Mirror of `weekday(for:)`.
+    static func workWeekday(for date: Date, calendar: Calendar = .current) -> Date {
+        var day = calendar.startOfDay(for: date)
+        while isWeekend(day, calendar: calendar) {
+            day = calendar.date(byAdding: .day, value: -1, to: day) ?? day
+        }
+        return day
+    }
+
     /// Step whole weekdays, skipping Sat/Sun (Fri +1 → Mon; Mon −1 → Fri). Start-of-day result.
     static func steppedWeekday(from date: Date, delta: Int, calendar: Calendar = .current) -> Date {
         var day = calendar.startOfDay(for: date)

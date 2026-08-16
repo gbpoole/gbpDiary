@@ -45,7 +45,8 @@ nonisolated enum ChatQueryScopeParser {
         scope.wantsOverview = containsAny(normalized, ["overview", "paragraph", "prose", "narrative"])
         scope.wantsTimeTotals = containsAny(normalized,
             ["time spent", "time on", "how long", "how much time", "total time", "time total",
-             "time totals", "totals", "hours", "time did"])
+             "time totals", "totals", "hours", "time did", "how many weeks", "how many days",
+             "how many hours", "work on", "worked on", "spent on", "spend on", "time working"])
         return scope
     }
 

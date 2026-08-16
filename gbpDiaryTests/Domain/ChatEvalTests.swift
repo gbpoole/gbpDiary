@@ -43,8 +43,9 @@ struct ChatEvalTests {
             knownProjectNames: ChatEvalCorpus.knownProjectNames,
             now: ChatEvalCorpus.now, calendar: ChatEvalCorpus.calendar)
         return await ChatAnswerPipeline().run(input, retrieve: { fx.retrieve($0, $1) },
-                                              timeRecords: { fx.timeRecords }, answerer: answerer,
-                                              scopeResolver: scopeResolver)
+                                              timeRecords: { fx.timeRecords },
+                                              activityProvider: { fx.activity($0) },
+                                              answerer: answerer, scopeResolver: scopeResolver)
     }
 
     private func keys(_ result: ChatPipelineResult) -> [ChatSourceKey] {
@@ -85,16 +86,33 @@ struct ChatEvalTests {
     // MARK: time totals
 
     @Test func totals_computedDeterministicallyOverInterval() async {
+        // A time question routes to the time-report lens: the app RENDERS the answer deterministically
+        // (no model), so it's always correct and never degrades.
         let fx = ChatEvalCorpus.build()
         let r = await run(fx, "how much time did I spend on NODES - 2026B last month")
         #expect(r.scope.wantsTimeTotals)
-        #expect(r.computedTotals == "Computed time totals for last month (authoritative — report these exact figures): NODES - 2026B — 1h; Total — 1h")
-        #expect(r.prompt?.prompt.contains("Reproduce that block once") == true)
+        guard case .answered(let answer) = r.outcome else { Issue.record("expected answered"); return }
+        #expect(answer.text.contains("NODES - 2026B"))
+        #expect(answer.text.contains("1h"))
+        #expect(answer.text.contains("last month"))
+        #expect(r.prompt == nil)   // deterministic — the model was not consulted
+    }
+
+    @Test func timeReport_allTime_perProject_neverDegrades() async {
+        // The reported bug: "how many weeks did I work on each project" used to return the degraded
+        // "could not generate a grounded answer". Now it is a deterministic per-project report.
+        let fx = ChatEvalCorpus.build()
+        let r = await run(fx, "how many weeks did I work on each project")
+        #expect(r.scope.wantsTimeTotals)
+        guard case .answered(let answer) = r.outcome else { Issue.record("expected answered, got \(r.outcome)"); return }
+        #expect(answer.text.contains("NODES - 2026B"))
+        #expect(answer.text.contains("week"))            // distinct-weeks-active phrasing
     }
 
     @Test func totals_notRequested_promptForbidsInventingThem() async {
+        // An open-box question (no time intent, no interval/digest verb) still forbids inventing totals.
         let fx = ChatEvalCorpus.build()
-        let r = await run(fx, "summarise NODES - 2026B last week")
+        let r = await run(fx, "tell me about NODES - 2026B")
         #expect(r.computedTotals == nil)
         #expect(r.prompt?.prompt.contains("Do not report or invent any time totals") == true)
     }
@@ -113,18 +131,17 @@ struct ChatEvalTests {
         #expect(r.scope.intervalLabel == "last week")
         #expect(r.scope.kinds == [.email])
         #expect(r.scope.wantsTimeTotals)
-        // KNOWN GAP surfaced by the harness (Phase 2 candidate): a bare totals follow-up retrieves nothing
-        // (its own words have no corpus traction) and short-circuits before reporting the computed totals —
-        // back-reference follow-ups should expand the retrieval query with the prior question like
-        // transformations do. Pinned here so a future fix is a deliberate, visible change.
-        if case .noResults = r.outcome {} else { Issue.record("expected current noResults behaviour for bare follow-up") }
+        // Now fixed (was the "noResults" gap): the time-report lens answers deterministically regardless of
+        // retrieval — even when there's no logged time in the inherited window it reports 0, never degrading.
+        guard case .answered(let answer) = r.outcome else { Issue.record("expected answered, got \(r.outcome)"); return }
+        #expect(answer.text.contains("last week"))
     }
 
     // MARK: synthesis prompt shape
 
     @Test func prompt_defaultsToGroupedBullets() async {
         let fx = ChatEvalCorpus.build()
-        let r = await run(fx, "summarise NODES - 2026B last week")
+        let r = await run(fx, "tell me about NODES - 2026B")   // open box
         #expect(r.prompt?.prompt.contains("bulleted list") == true)
         #expect(r.prompt?.prompt.contains("group your answer by project") == true)
     }
@@ -147,7 +164,7 @@ struct ChatEvalTests {
     @Test func unavailableModel_returnsSourcesNotAnswer() async {
         let fx = ChatEvalCorpus.build()
         let mock = MockChatAnswerer(); mock.available = false
-        let r = await run(fx, "summarise NODES - 2026B last week", answerer: mock)
+        let r = await run(fx, "tell me about NODES - 2026B", answerer: mock)
         if case .unavailable(_, let sources) = r.outcome { #expect(!sources.isEmpty) }
         else { Issue.record("expected unavailable outcome") }
     }
@@ -155,10 +172,40 @@ struct ChatEvalTests {
     @Test func generationFailure_degradesToSources() async {
         let fx = ChatEvalCorpus.build()
         let mock = MockChatAnswerer(); mock.shouldThrow = true
-        let r = await run(fx, "summarise NODES - 2026B last week", answerer: mock)
+        let r = await run(fx, "tell me about NODES - 2026B", answerer: mock)
         if case .generationFailed(_, let sources) = r.outcome { #expect(!sources.isEmpty) }
         else { Issue.record("expected generationFailed outcome") }
         #expect(r.answerError?.contains("could not be generated") == true)
+    }
+
+    // MARK: activity digest + weekend fidelity
+
+    @Test func digest_summariseLastWeek_foldsWeekendAndInventsNothing() async {
+        // Model unavailable → the app's deterministic digest IS the answer (proves it's weekend-safe).
+        let fx = ChatEvalCorpus.build()
+        let mock = MockChatAnswerer(); mock.available = false
+        let r = await run(fx, "give me a summary of my last week", answerer: mock)
+        guard case .answered(let answer) = r.outcome else { Issue.record("expected answered, got \(r.outcome)"); return }
+        #expect(answer.text.contains("Fri 12 Jun"))        // the Saturday meeting folded to Friday
+        #expect(answer.text.contains("NODES sprint push"))
+        #expect(!answer.text.contains("Sat"))              // never a weekend day
+        #expect(!answer.text.contains("13 Jun"))           // the raw Saturday date is gone
+    }
+
+    @Test func digest_handsModelAWeekendFreeBlock() async {
+        let fx = ChatEvalCorpus.build()
+        let r = await run(fx, "summarise my last week")    // model available (default mock)
+        guard case .answered = r.outcome else { Issue.record("expected answered"); return }
+        #expect(r.prompt?.prompt.contains("Rewrite the following") == true)
+        #expect(r.prompt?.prompt.contains("Fri 12 Jun") == true)
+        #expect(r.prompt?.prompt.contains("13 Jun") == false)   // no weekend date reaches the model
+    }
+
+    @Test func corpus_foldsWeekendMeetingDateToWeekday() {
+        let fx = ChatEvalCorpus.build()
+        let doc = fx.document("satMeeting", .meeting)
+        #expect(doc?.markdown.contains("Fri 12 Jun 2026") == true)
+        #expect(doc?.markdown.contains("13 Jun") == false)
     }
 
     @Test func pipeline_usesInjectedScopeResolver() async {
@@ -175,7 +222,7 @@ struct ChatEvalTests {
     @Test func answered_mapsCitationsFromPromptSources() async {
         let fx = ChatEvalCorpus.build()
         let mock = MockChatAnswerer()
-        let r = await run(fx, "summarise NODES - 2026B last week", answerer: mock)
+        let r = await run(fx, "tell me about NODES - 2026B", answerer: mock)
         if case .answered(let answer) = r.outcome {
             #expect(!answer.citations.isEmpty)
             #expect(mock.lastRequest?.prompt.sources.isEmpty == false)

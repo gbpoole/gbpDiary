@@ -61,6 +61,7 @@ nonisolated enum ChatPromptBuilder {
               + " If the material spans more than one project, group your answer by project (a short lead-in per project) unless the question asks for a single combined view."
               + totalsInstruction
               + " When a source is marked with higher importance, lead with it."
+              + " State only facts present in the sources; do not infer or invent dates, days of the week, or events. The working week is Monday–Friday; never claim weekend work."
               + " Cite the key supporting sources with labels such as [S1] where useful — not every sentence. If the sources do not answer the question, say so."
         var sections = [groundingInstruction]
         if !recentHistory.isEmpty {

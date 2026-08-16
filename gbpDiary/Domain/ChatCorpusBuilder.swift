@@ -63,8 +63,8 @@ struct ChatCorpusBuilder {
                         ("Notes", task.notes), ("Status", task.status.rawValue),
                         ("Priority", task.priority.displayName), ("Project", task.project?.name),
                         ("Assignee", task.assignee?.name), ("Institution", task.institution?.name),
-                        ("Tags", list(task.tags)), ("Due", date(task.dueAt)),
-                        ("Scheduled", date(task.scheduledAt)), ("Recurrence", task.recurrenceRule),
+                        ("Tags", list(task.tags)), ("Due", foldedDate(task.dueAt, kind: .task)),
+                        ("Scheduled", foldedDate(task.scheduledAt, kind: .task)), ("Recurrence", task.recurrenceRule),
                         ("Blocked by", list(task.dependsOn.map(\.summary)))
                      ], projectNames: [task.project?.name].compactMap { $0 }, sortDate: task.createdAt)
         }
@@ -87,7 +87,7 @@ struct ChatCorpusBuilder {
         append(meetings, kind: .meeting, to: &output) { meeting in
             document(id: meeting.id, kind: .meeting, title: meeting.summary ?? "Meeting", navigation: .meeting,
                      detail: date(meeting.meetingAt), fields: [
-                        ("Date", date(meeting.meetingAt)), ("Projects", list(meeting.projects.map(\.name))),
+                        ("Date", foldedDate(meeting.meetingAt, kind: .meeting)), ("Projects", list(meeting.projects.map(\.name))),
                         ("Attendees", list(meeting.attendees.map(\.name))),
                         ("Duration", meeting.duration?.displayString),
                         ("Minutes", meeting.note?.content ?? meeting.minutesContent),
@@ -96,17 +96,17 @@ struct ChatCorpusBuilder {
                      ], projectNames: meeting.projects.map(\.name), sortDate: meeting.meetingAt)
         }
         append(notes.filter { $0.minutes == nil }, kind: .note, to: &output) { note in
-            let title = nonempty(note.title) ?? note.dayRecord.map { "Diary note \(date($0.date) ?? "")" } ?? "Note"
+            let title = nonempty(note.title) ?? note.dayRecord.map { "Diary note \(foldedDate($0.date, kind: .note) ?? "")" } ?? "Note"
             return document(id: note.id, kind: .note, title: title, navigation: .note,
                             detail: joined([note.dayRecord.flatMap { date($0.date) }, note.project?.name]), fields: [
-                                ("Date", note.dayRecord.flatMap { date($0.date) }),
+                                ("Date", note.dayRecord.flatMap { foldedDate($0.date, kind: .note) }),
                                 ("Project", note.project?.name), ("Tags", list(note.tags)), ("Content", note.content)
                             ], projectNames: [note.project?.name].compactMap { $0 }, sortDate: note.dayRecord?.date)
         }
         append(days, kind: .day, to: &output) { day in
-            document(id: day.id, kind: .day, title: date(day.date) ?? "Diary", navigation: .day,
+            document(id: day.id, kind: .day, title: foldedDate(day.date, kind: .day) ?? "Diary", navigation: .day,
                      detail: nil, fields: [
-                        ("Date", date(day.date)), ("Focus tags", list(day.focusTags)),
+                        ("Date", foldedDate(day.date, kind: .day)), ("Focus tags", list(day.focusTags)),
                         ("Legacy notes", day.notes), ("Tasks", list(day.tasks.map(\.summary))),
                         ("Notes", list(day.noteItems.compactMap { nonempty($0.title) })),
                         ("Documents", list(day.documents.compactMap(\.summary)))
@@ -128,7 +128,7 @@ struct ChatCorpusBuilder {
                      detail: joined([date(email.date), email.person?.name]), fields: [
                         ("Subject", email.subject), ("Stored summary", email.summary),
                         ("Importance", importanceField),
-                        ("Date", date(email.date)), ("Person", email.person?.name),
+                        ("Date", foldedDate(email.date, kind: .email)), ("Person", email.person?.name),
                         ("Projects", list(email.projects.map(\.name)))
                      ], projectNames: email.projects.map(\.name), sortDate: email.date,
                      importanceWeight: email.importance.weight)
@@ -178,8 +178,10 @@ struct ChatCorpusBuilder {
         let normalizedProjects = projectNames
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
             .filter { !$0.isEmpty }
+        // Fold the sort date too, so interval filtering / recency bucket weekend records on their weekday.
+        let foldedSort = sortDate.map { ChatWeekendFold.fold($0, kind: kind) }
         return ChatRetrievalDocument(source: source, markdown: bounded,
-                                     projectNames: normalizedProjects, sortDate: sortDate,
+                                     projectNames: normalizedProjects, sortDate: foldedSort,
                                      importanceWeight: importanceWeight)
     }
 
@@ -213,10 +215,24 @@ struct ChatCorpusBuilder {
         return Self.dateFormatter.string(from: value)
     }
 
+    /// A model-visible date, **weekend-folded** for its kind (so the model never sees a Sat/Sun) and
+    /// formatted as a plain weekday date. Every date the model reads goes through this.
+    private func foldedDate(_ value: Date?, kind: ChatSourceKind) -> String? {
+        guard let value else { return nil }
+        return Self.humanDateFormatter.string(from: ChatWeekendFold.fold(value, kind: kind))
+    }
+
     private static let dateFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime]
         formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        return formatter
+    }()
+
+    private static let humanDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "EEE d MMM yyyy"   // e.g. "Fri 8 Aug 2026" — always a weekday after folding
         return formatter
     }()
 

@@ -23,6 +23,13 @@ struct WeekendPolicyTests {
         #expect(WeekendPolicy.weekday(for: d(1, 3), calendar: cal) == d(1, 3))   // Wed → itself
     }
 
+    @Test func workWeekday_resolvesWeekendBackToFriday() {
+        #expect(WeekendPolicy.workWeekday(for: d(1, 6), calendar: cal) == d(1, 5))   // Sat → preceding Fri
+        #expect(WeekendPolicy.workWeekday(for: d(1, 7), calendar: cal) == d(1, 5))   // Sun → preceding Fri
+        #expect(WeekendPolicy.workWeekday(for: d(1, 8), calendar: cal) == d(1, 8))   // Mon → itself
+        #expect(WeekendPolicy.workWeekday(for: d(1, 3), calendar: cal) == d(1, 3))   // Wed → itself
+    }
+
     @Test func steppedWeekday_skipsWeekends() {
         #expect(WeekendPolicy.steppedWeekday(from: d(1, 5), delta: 1, calendar: cal) == d(1, 8))   // Fri +1 → Mon
         #expect(WeekendPolicy.steppedWeekday(from: d(1, 8), delta: -1, calendar: cal) == d(1, 5))  // Mon −1 → Fri

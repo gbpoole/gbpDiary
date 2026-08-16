@@ -29,12 +29,19 @@ enum ChatEvalCorpus {
         let chunks: [ChatRetrievalChunk]
         let ids: [String: UUID]
         let timeRecords: [ChatTimeRecord]
+        let activityItems: [ChatActivityItem]
 
         func retrieve(_ query: String, _ limit: Int) -> (chunks: [ChatRankedChunk], error: String?) {
             (ChatHybridRanker().rank(query: query, chunks: chunks, embedder: nil, limit: limit), nil)
         }
         func key(_ name: String, _ kind: ChatSourceKind) -> ChatSourceKey {
             ChatSourceKey(kind: kind, modelID: ids[name]!)
+        }
+        func activity(_ interval: Range<Date>) -> ChatActivityDigest {
+            ChatActivityDigestBuilder.build(items: activityItems, interval: interval)
+        }
+        func document(_ name: String, _ kind: ChatSourceKind) -> ChatRetrievalDocument? {
+            documents.first { $0.source.key == key(name, kind) }
         }
     }
 
@@ -56,18 +63,29 @@ enum ChatEvalCorpus {
                                        summary: "NODES kickoff.", date: date(2026, 2, 10),
                                        projects: [nodesProject])
 
-        // Meetings: one far out of window (February), one in "last month" (May) with a duration.
+        // Meetings: one far out of window (February), one in "last month" (May) with a duration, and one
+        // on a SATURDAY in last week (13 Jun 2026) — it must fold to Friday and never read as "Saturday".
         let febMeeting = meeting(uuid(20), summary: "NODES February planning",
                                  date: date(2026, 2, 10), projects: [nodesProject])
         let mayMeeting = meeting(uuid(21), summary: "NODES May planning",
                                  date: date(2026, 5, 20), projects: [nodesProject],
                                  duration: Duration(value: 1, unit: .h))
+        let satMeeting = meeting(uuid(22), summary: "NODES sprint push",
+                                 date: date(2026, 6, 13), projects: [nodesProject],
+                                 duration: Duration(value: 1, unit: .h))
 
+        let meetings = [febMeeting, mayMeeting, satMeeting]
         let result = ChatCorpusBuilder().build(
             projects: [nodesProject, otherProject], tasks: [], people: [], institutions: [],
-            meetings: [febMeeting, mayMeeting], notes: [], days: [], documents: [],
+            meetings: meetings, notes: [], days: [], documents: [],
             emails: [nodesEmailThisWeek, nodesEmailLastWeek, otherEmailLastWeek, nodesEmailFebruary],
             attachments: [])
+        let activityItems = meetings.map { m -> ChatActivityItem in
+            let ref = ChatSourceReference(id: m.id, kind: .meeting, title: m.summary ?? "Meeting", detail: nil,
+                                          navigationKind: .meeting, navigationID: m.id)
+            return ChatActivityItem(date: ChatWeekendFold.fold(m.meetingAt, kind: .meeting, calendar: calendar),
+                                    label: "Meeting: \(m.summary ?? "Meeting")", source: ref)
+        }
 
         let documents = result.documents
         let chunks = documents.flatMap { ChatChunker.chunks(document: $0) }
@@ -82,9 +100,10 @@ enum ChatEvalCorpus {
             "nodesProject": uuid(1), "otherProject": uuid(2),
             "nodesEmailThisWeek": uuid(10), "nodesEmailLastWeek": uuid(11),
             "otherEmailLastWeek": uuid(12), "nodesEmailFebruary": uuid(13),
-            "febMeeting": uuid(20), "mayMeeting": uuid(21),
+            "febMeeting": uuid(20), "mayMeeting": uuid(21), "satMeeting": uuid(22),
         ]
-        return Fixture(documents: documents, chunks: chunks, ids: ids, timeRecords: timeRecords)
+        return Fixture(documents: documents, chunks: chunks, ids: ids, timeRecords: timeRecords,
+                       activityItems: activityItems)
     }
 
     private static func email(_ id: UUID, subject: String, summary: String, date: Date,
