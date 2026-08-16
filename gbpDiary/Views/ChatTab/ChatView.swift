@@ -349,7 +349,8 @@ struct ChatView: View {
             input,
             retrieve: { await rankedSources(for: $0, limit: $1) },
             timeRecords: { timeRecords() },
-            answerer: answerer)
+            answerer: answerer,
+            scopeResolver: FoundationModelsScopeResolver())
 
         guard state.isCurrentAnswerRequest(requestToken) else { return }
         state.answerError = result.answerError

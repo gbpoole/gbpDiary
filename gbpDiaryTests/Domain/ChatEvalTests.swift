@@ -27,15 +27,24 @@ struct ChatEvalTests {
         }
     }
 
+    // A resolver returning a fixed scope, to prove the pipeline delegates intent to the injected resolver.
+    struct StubScopeResolver: ChatScopeResolving {
+        let scope: ChatQueryScope
+        func resolve(question: String, history: [ChatHistoryMessage], knownProjectNames: [String],
+                     now: Date, calendar: Calendar) async -> ChatQueryScope { scope }
+    }
+
     private func run(_ fx: ChatEvalCorpus.Fixture, _ question: String,
                      history: [ChatHistoryMessage] = [], priorSources: [ChatSourceReference] = [],
-                     answerer: any ChatAnswering = MockChatAnswerer()) async -> ChatPipelineResult {
+                     answerer: any ChatAnswering = MockChatAnswerer(),
+                     scopeResolver: any ChatScopeResolving = HeuristicScopeResolver()) async -> ChatPipelineResult {
         let input = ChatAnswerPipeline.Input(
             question: question, history: history, priorSources: priorSources,
             knownProjectNames: ChatEvalCorpus.knownProjectNames,
             now: ChatEvalCorpus.now, calendar: ChatEvalCorpus.calendar)
         return await ChatAnswerPipeline().run(input, retrieve: { fx.retrieve($0, $1) },
-                                              timeRecords: { fx.timeRecords }, answerer: answerer)
+                                              timeRecords: { fx.timeRecords }, answerer: answerer,
+                                              scopeResolver: scopeResolver)
     }
 
     private func keys(_ result: ChatPipelineResult) -> [ChatSourceKey] {
@@ -150,6 +159,17 @@ struct ChatEvalTests {
         if case .generationFailed(_, let sources) = r.outcome { #expect(!sources.isEmpty) }
         else { Issue.record("expected generationFailed outcome") }
         #expect(r.answerError?.contains("could not be generated") == true)
+    }
+
+    @Test func pipeline_usesInjectedScopeResolver() async {
+        // The pipeline must take its scope from the resolver (Phase 1 seam), not hardcoded parsing.
+        let fx = ChatEvalCorpus.build()
+        var forced = ChatQueryScope()
+        forced.kinds = [.email]
+        forced.projectName = ChatEvalCorpus.nodes
+        let r = await run(fx, "anything at all", scopeResolver: StubScopeResolver(scope: forced))
+        #expect(r.scope.kinds == [.email])
+        #expect(r.scope.projectName == ChatEvalCorpus.nodes)
     }
 
     @Test func answered_mapsCitationsFromPromptSources() async {

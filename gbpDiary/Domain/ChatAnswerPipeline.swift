@@ -49,7 +49,8 @@ struct ChatAnswerPipeline {
     func run(_ input: Input,
              retrieve: (String, Int) async -> (chunks: [ChatRankedChunk], error: String?),
              timeRecords: () -> [ChatTimeRecord],
-             answerer: any ChatAnswering) async -> ChatPipelineResult {
+             answerer: any ChatAnswering,
+             scopeResolver: any ChatScopeResolving = HeuristicScopeResolver()) async -> ChatPipelineResult {
         let question = input.question
 
         // 1. Standalone capability/help questions answer immediately, before any retrieval.
@@ -63,19 +64,14 @@ struct ChatAnswerPipeline {
         let priorSources = input.priorSources
         let retrievalQuery = ChatFollowUpIntent.retrievalQuery(question: question, history: history)
 
-        // 2. Scope from the user's actual question (not the follow-up-expanded retrieval query); a
-        //    back-referencing follow-up inherits the prior question's project/interval/kind.
-        var scope = isTransformation
+        // 2. Resolve the retrieval scope. Transformations ("turn this into a joke") reuse the prior
+        //    answer and don't retrieve fresh, so they carry no scope; everything else goes through the
+        //    injected resolver (on-device model in production, heuristic fallback / in tests).
+        let scope = isTransformation
             ? ChatQueryScope()
-            : ChatQueryScopeParser.parse(question: question, knownProjectNames: input.knownProjectNames,
-                                         now: input.now, calendar: input.calendar)
-        if !isTransformation, ChatQueryScopeParser.isBackReference(question),
-           let priorQuestion = history.last(where: { $0.role == .user })?.text {
-            let priorScope = ChatQueryScopeParser.parse(question: priorQuestion,
-                                                        knownProjectNames: input.knownProjectNames,
-                                                        now: input.now, calendar: input.calendar)
-            scope = scope.inheriting(from: priorScope)
-        }
+            : await scopeResolver.resolve(question: question, history: history,
+                                          knownProjectNames: input.knownProjectNames,
+                                          now: input.now, calendar: input.calendar)
 
         // 3. Rank a larger candidate set, then hard-restrict to the detected kind/project/interval.
         let ranking = await retrieve(retrievalQuery, candidateLimit)
