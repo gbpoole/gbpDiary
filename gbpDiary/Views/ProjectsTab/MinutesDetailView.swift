@@ -222,9 +222,11 @@ struct MinutesDetailView: View {
         if let note {
             modelContext.delete(note)
         }
-        let minutesId = minutes.id
+        // Match by persistentModelID, never `.id` — reading `.id` (a backing attribute) on a dangling
+        // `entry.minutes` (a Minutes deleted elsewhere) traps; persistentModelID never faults.
+        let targetID = minutes.persistentModelID
         if let entries = try? modelContext.fetch(FetchDescriptor<DayEntry>()) {
-            for entry in entries where entry.minutes?.id == minutesId {
+            for entry in entries where entry.minutes?.persistentModelID == targetID {
                 modelContext.delete(entry)
             }
         }

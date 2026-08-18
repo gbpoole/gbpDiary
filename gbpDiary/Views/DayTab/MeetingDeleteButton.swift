@@ -30,11 +30,14 @@ struct MeetingDeleteButton: View {
         let id = minutes.persistentModelID
         workspace.closeEntity(id)
         // Remove the diary meeting entry (if any) pointing at these minutes; nothing else references it.
+        // (DayEntry.minutes has no nullify inverse, so an un-deleted entry would dangle onto the deleted
+        // Minutes — hence the explicit delete + save so both commit atomically and no orphan can persist.)
         if let entries = try? modelContext.fetch(FetchDescriptor<DayEntry>()) {
             for entry in entries where entry.minutes?.persistentModelID == id {
                 modelContext.delete(entry)
             }
         }
         modelContext.delete(minutes)
+        try? modelContext.save()
     }
 }

@@ -134,8 +134,13 @@ struct DayPageContent: View {
     }
 
     private var dayMeetings: [DayEntry] {
-        (dayRecord?.entries ?? [])
-            .filter { $0.kind == .meeting }
+        // A meeting entry can outlive its Minutes (a deleted-in-context object, or — after relaunch — a
+        // dangling reference to a row that no longer exists). Reading ANY backing property (meetingAt) on
+        // such a reference traps and crash-loops the diary. So validate by IDENTITY against the live
+        // Minutes set (persistentModelID doesn't fault) and drop invalid entries before sorting.
+        let live = Set((try? modelContext.fetch(FetchDescriptor<Minutes>()))?.map(\.persistentModelID) ?? [])
+        return (dayRecord?.entries ?? [])
+            .filter { $0.kind == .meeting && ($0.minutes.map { live.contains($0.persistentModelID) } ?? false) }
             .sorted { ($0.minutes?.meetingAt ?? .distantPast) < ($1.minutes?.meetingAt ?? .distantPast) }
     }
 

@@ -56,6 +56,7 @@ struct gbpDiaryApp: App {
                 .environment(hotkeys)
                 .onAppear {
                     sweepOrphanedAttachments()
+                    sweepOrphanedMeetingEntries()
                     runBundleImportIfRequested()
                 }
         }
@@ -102,6 +103,21 @@ struct gbpDiaryApp: App {
         for file in files where !known.contains(file) {
             try? FileManager.default.removeItem(at: file)
         }
+    }
+
+    // Removes meeting `DayEntry`s whose linked `Minutes` was deleted (a dangling reference — `DayEntry.minutes`
+    // has no nullify inverse) or is missing. Such orphans crash any reader that touches their `meetingAt`/`id`,
+    // so we delete them once at launch. `persistentModelID` never faults, so it's safe to read on a dangling ref.
+    private func sweepOrphanedMeetingEntries() {
+        let context = sharedModelContainer.mainContext
+        guard let entries = try? context.fetch(FetchDescriptor<DayEntry>()) else { return }
+        let live = Set((try? context.fetch(FetchDescriptor<Minutes>()))?.map(\.persistentModelID) ?? [])
+        var removed = false
+        for entry in entries where entry.kind == .meeting {
+            let valid = entry.minutes.map { live.contains($0.persistentModelID) } ?? false
+            if !valid { context.delete(entry); removed = true }
+        }
+        if removed { try? context.save() }
     }
 
     private func runBundleImportIfRequested() {
