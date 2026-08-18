@@ -54,6 +54,49 @@ enum TaskPriority: String, Codable, CaseIterable {
     }
 }
 
+// Manual per-email importance. Default `.low` is the neutral baseline (no chip, no ranking boost);
+// only Medium/High carry signal. Mirrors `TaskPriority`: `weight` feeds the Chat ranking boost, `short`
+// is the H/M/L chip (Low shows nothing).
+enum EmailImportance: String, Codable, CaseIterable {
+    case low
+    case medium
+    case high
+
+    var displayName: String {
+        switch self {
+        case .low:    "Low"
+        case .medium: "Medium"
+        case .high:   "High"
+        }
+    }
+
+    var short: String {
+        switch self {
+        case .low:    ""
+        case .medium: "M"
+        case .high:   "H"
+        }
+    }
+
+    /// Relative weight (0…1) — Low is neutral (0), so it applies no Chat ranking boost.
+    var weight: Double {
+        switch self {
+        case .low:    0.0
+        case .medium: 0.5
+        case .high:   1.0
+        }
+    }
+
+    /// Ordinal for sorting (low=0 … high=2).
+    var rank: Int {
+        switch self {
+        case .low:    0
+        case .medium: 1
+        case .high:   2
+        }
+    }
+}
+
 // Quick "created within" windows for the Tasks toolbar date presets (rolling, ending now).
 enum DateWindow: String, CaseIterable {
     case today

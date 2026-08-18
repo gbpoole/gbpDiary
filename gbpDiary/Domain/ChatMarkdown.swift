@@ -54,7 +54,9 @@ nonisolated enum ChatChunker {
                 if length >= maxCharacters { break }
             }
             let chunkText = words[start..<end].joined(separator: " ")
-            result.append(ChatRetrievalChunk(source: document.source, index: result.count, text: chunkText))
+            result.append(ChatRetrievalChunk(source: document.source, index: result.count, text: chunkText,
+                                             projectNames: document.projectNames, sortDate: document.sortDate,
+                                             importanceWeight: document.importanceWeight))
             guard end < words.count else { break }
 
             var nextStart = end

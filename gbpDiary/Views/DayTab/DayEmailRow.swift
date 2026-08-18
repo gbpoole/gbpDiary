@@ -21,6 +21,11 @@ struct EmailThread: Identifiable {
     var summary: String? { latest.summary }
     var isSummarizing: Bool { latest.isSummarizing }
 
+    /// Thread importance = the highest across its messages (setting it writes them all — see the row).
+    var importance: EmailImportance {
+        messages.map(\.importance).max(by: { $0.rank < $1.rank }) ?? .low
+    }
+
     /// To-dos made from any message in the thread.
     var tasks: [Task] { messages.flatMap(\.tasks) }
     var taskCount: Int { tasks.count }
@@ -64,6 +69,7 @@ struct DayEmailThreadRow: View {
                         EmailTodoChip(count: thread.taskCount, hasOpen: thread.hasOpenTasks,
                                       onOpen: { openingTask = thread.tasks.first })
                     }
+                    EmailImportanceChip(importance: thread.importance)
                     Spacer(minLength: 0)
                     if thread.count > 1 {
                         Chip(label: "\(thread.count)", color: .gray)
@@ -83,6 +89,11 @@ struct DayEmailThreadRow: View {
             Button("Open in Mail", systemImage: "envelope.open") { openInMail() }
             EmailExperimentInChatButton(email: thread.latest)
             Button("Regenerate summary", systemImage: "sparkles") { regenerateSummary() }
+            Menu("Set importance") {
+                Button("High") { setImportance(.high) }
+                Button("Medium") { setImportance(.medium) }
+                Button("Low") { setImportance(.low) }
+            }
         }
         .alert("Couldn't open email", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
             Button("OK", role: .cancel) {}
@@ -97,6 +108,11 @@ struct DayEmailThreadRow: View {
             message.summary = nil
             message.summaryState = EmailSummaryState.pending.rawValue
         }
+    }
+
+    // Thread importance writes every message so the thread's max stays consistent.
+    private func setImportance(_ importance: EmailImportance) {
+        for message in thread.messages { message.importance = importance }
     }
 
     private func openInMail() {

@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import Textual
 #if os(macOS)
 import AppKit
 #endif
@@ -19,6 +20,7 @@ struct ChatView: View {
     @Query private var documents: [Document]
     @Query(sort: \EmailMessage.date, order: .reverse) private var emails: [EmailMessage]
     @Query private var attachments: [Attachment]
+    @Query private var focusBlocks: [FocusBlock]
 
     @State private var mailService = MailScriptService()
     @State private var selectedTask: Task?
@@ -40,6 +42,7 @@ struct ChatView: View {
             }
         }
         .background(AppTheme.background)
+        .onAppear { answerer.prewarm() }   // load the on-device model ahead of the first question
         .task(id: state.answerRequestToken) {
             let token = state.answerRequestToken
             guard token > 0 else { return }
@@ -135,9 +138,18 @@ struct ChatView: View {
             Text(message.role == .user ? "YOU" : "ON-DEVICE ANSWER")
                 .font(AppTheme.interfaceFont(size: 10, weight: .semibold))
                 .foregroundStyle(message.role == .user ? AppTheme.accent : AppTheme.duration)
-            Text(message.content)
-                .font(AppTheme.bodyFont(size: 14))
-                .textSelection(.enabled)
+            if message.role == .user {
+                Text(message.content)
+                    .font(AppTheme.bodyFont(size: 14))
+                    .textSelection(.enabled)
+            } else {
+                // Answers are markdown — render them with Textual (as note/minutes previews do) so bold,
+                // lists and headings format instead of showing raw syntax.
+                StructuredText(markdown: ChatAnswerMarkdown.render(message.content), syntaxExtensions: [])
+                    .textual.textSelection(.enabled)
+                    .textual.structuredTextStyle(.gitHub)
+                    .font(AppTheme.bodyFont(size: 14))
+            }
             if !message.sources.isEmpty {
                 FlowLayout(spacing: 5) {
                     ForEach(message.sources, id: \.key) { source in
@@ -147,6 +159,13 @@ struct ChatView: View {
                         .buttonStyle(.plain)
                     }
                 }
+            }
+            if let elapsed = message.elapsed {
+                Text(ChatDurationFormat.short(elapsed))
+                    .font(AppTheme.interfaceFont(size: 10))
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .help("Time to generate this response")
             }
         }
         .padding(14)
@@ -338,57 +357,44 @@ struct ChatView: View {
             if state.isCurrentAnswerRequest(requestToken) { state.isAnswering = false }
         }
 
-        if let capabilityAnswer = ChatCapabilityResponse.answer(for: question) {
-            guard state.isCurrentAnswerRequest(requestToken) else { return }
-            state.messages.append(ChatMessage(role: .assistant, content: capabilityAnswer))
-            return
-        }
-
         let priorMessages = Array(state.messages.dropLast())
         let history = priorMessages.map { ChatHistoryMessage(role: $0.role, text: $0.content) }
-        let isTransformation = ChatFollowUpIntent.isTransformation(question: question, history: history)
         let priorSources = priorMessages.reversed().first { $0.role == .assistant && !$0.sources.isEmpty }?.sources ?? []
-        let retrievalQuery = ChatFollowUpIntent.retrievalQuery(question: question, history: history)
-        let ranking = await rankedSources(for: retrievalQuery, limit: 10)
-        guard state.isCurrentAnswerRequest(requestToken) else { return }
-        state.answerError = ranking.error
-        let ranked = ranking.chunks
-        guard !ranked.isEmpty || isTransformation else {
-            guard state.isCurrentAnswerRequest(requestToken) else { return }
-            state.messages.append(ChatMessage(role: .assistant,
-                                              content: "I could not find relevant information in the local workspace."))
-            return
-        }
-        let fallbackSources = uniqueSources((isTransformation ? priorSources : []) + ranked.map(\.chunk.source))
-        guard answerer.isAvailable else {
-            guard state.isCurrentAnswerRequest(requestToken) else { return }
-            state.messages.append(ChatMessage(role: .assistant,
-                                              content: answerer.unavailableReason ?? "Apple Intelligence is unavailable.",
-                                              sources: fallbackSources))
-            return
-        }
+        let input = ChatAnswerPipeline.Input(
+            question: question, history: history, priorSources: priorSources,
+            knownProjectNames: projects.map(\.name), now: Date())
 
-        let prompt = ChatPromptBuilder.build(
-            question: question,
-            rankedChunks: ranked,
-            history: history,
-            allowsUncitedTransformation: isTransformation
-        )
-        do {
-            let answer = try await answerer.answer(request: ChatAnswerRequest(
-                prompt: prompt,
-                fallbackCitations: isTransformation ? priorSources : []
-            ))
-            guard state.isCurrentAnswerRequest(requestToken) else { return }
+        let startedAt = Date()
+        let result = await ChatAnswerPipeline().run(
+            input,
+            retrieve: { await rankedSources(for: $0, limit: $1) },
+            timeLedger: { TimeLedgerProjection.ledger(focusBlocks: focusBlocks, tasks: tasks, emails: emails,
+                                                      meetings: meetings, interval: $0) },
+            activityProvider: { activityDigest(for: $0) },
+            answerer: answerer,
+            scopeResolver: FoundationModelsScopeResolver())
+        let elapsed = Date().timeIntervalSince(startedAt)
+
+        guard state.isCurrentAnswerRequest(requestToken) else { return }
+        state.answerError = result.answerError
+        switch result.outcome {
+        case .capability(let text):
+            state.messages.append(ChatMessage(role: .assistant, content: text, elapsed: elapsed))
+        case .noResults:
+            state.messages.append(ChatMessage(role: .assistant,
+                                              content: "I could not find relevant information in the local workspace.",
+                                              elapsed: elapsed))
+        case .unavailable(let reason, let sources):
+            state.messages.append(ChatMessage(role: .assistant,
+                                              content: reason ?? "Apple Intelligence is unavailable.",
+                                              sources: sources, elapsed: elapsed))
+        case .answered(let answer):
             state.messages.append(ChatMessage(role: .assistant, content: answer.text,
-                                              sources: answer.citations))
-        } catch {
-            guard state.isCurrentAnswerRequest(requestToken) else { return }
-            state.answerError = "The on-device answer could not be generated: \(error.localizedDescription)"
-            guard state.isCurrentAnswerRequest(requestToken) else { return }
+                                              sources: answer.citations, elapsed: elapsed))
+        case .generationFailed(_, let sources):
             state.messages.append(ChatMessage(role: .assistant,
                                               content: "I found these relevant local sources, but could not generate a grounded answer.",
-                                              sources: fallbackSources))
+                                              sources: sources, elapsed: elapsed))
         }
     }
 
@@ -453,15 +459,42 @@ struct ChatView: View {
     }
 
     private func rankedSources(for query: String, limit: Int) async -> (chunks: [ChatRankedChunk], error: String?) {
-        let snapshot = corpusSnapshot()
         do {
             let url = try ChatSemanticIndex.defaultURL()
-            let result = await retrievalWorker.rebuildAndSearch(snapshot: snapshot, indexURL: url,
+            // Fast path: search the driver-maintained index (no corpus projection / rebuild).
+            let hits = await retrievalWorker.searchOnly(indexURL: url, query: query, limit: limit)
+            if !hits.chunks.isEmpty { return (hits.chunks, hits.error) }
+            // Empty index (first run before the background driver has built it) — build once, then search.
+            let result = await retrievalWorker.rebuildAndSearch(snapshot: corpusSnapshot(), indexURL: url,
                                                                 query: query, limit: limit)
             return (result.chunks, result.error)
         } catch {
             return ([], "The local search index location is unavailable.")
         }
+    }
+
+    /// Every logged-time record (task time entries, standalone email time entries, and meetings) with its own
+    /// date + project(s). Chat sums these deterministically for interval totals — never the RAG corpus/model.
+    /// The real activity (meetings attended + tasks completed) in a window, weekend-folded, for the
+    /// activity-digest lens. Only genuine records — the model rephrases these and can invent nothing.
+    private func activityDigest(for interval: Range<Date>) -> ChatActivityDigest {
+        var items: [ChatActivityItem] = []
+        for meeting in meetings {
+            let date = ChatWeekendFold.fold(meeting.meetingAt, kind: .meeting)
+            let title = meeting.summary ?? "Meeting"
+            let label = meeting.duration.map { "Meeting: \(title) (\($0.displayString))" } ?? "Meeting: \(title)"
+            let ref = ChatSourceReference(id: meeting.id, kind: .meeting, title: title, detail: nil,
+                                          navigationKind: .meeting, navigationID: meeting.id)
+            items.append(ChatActivityItem(date: date, label: label, source: ref))
+        }
+        for task in tasks {
+            guard task.status == .completed, let completedAt = task.completedAt else { continue }
+            let date = ChatWeekendFold.foldWork(completedAt)
+            let ref = ChatSourceReference(id: task.id, kind: .task, title: task.summary, detail: nil,
+                                          navigationKind: .task, navigationID: task.id)
+            items.append(ChatActivityItem(date: date, label: "Completed: \(task.summary)", source: ref))
+        }
+        return ChatActivityDigestBuilder.build(items: items, interval: interval)
     }
 
     private func corpusSnapshot() -> ChatCorpusSnapshot {
@@ -503,11 +536,6 @@ struct ChatView: View {
         for index in state.lab.candidates.indices {
             state.lab.candidates[index].isAdopted = state.lab.candidates[index].id == candidate.id
         }
-    }
-
-    private func uniqueSources(_ sources: [ChatSourceReference]) -> [ChatSourceReference] {
-        var seen = Set<ChatSourceKey>()
-        return sources.filter { seen.insert($0.key).inserted }
     }
 
     private func open(_ source: ChatSourceReference) {

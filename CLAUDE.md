@@ -68,6 +68,24 @@ All persistence is SwiftData. Models live in `gbpDiary/Models/`. The `ModelConta
 
 **Task is the canonical domain object.** Tasks are identity-stable across all views. They do not "belong" to a day via a stored list — they appear in day sections through date predicate queries on `scheduledAt` and `completedAt`.
 
+### Time accounting (canonical — one source of truth)
+
+**All "time spent" aggregation goes through `Domain/TimeLedger.swift`** — the diary Activity total/overtime,
+the Timesheet per-project breakdown, and Chat's time report. The rule, once: each **logged activity** (task
+time entry, meeting, sent-email time, completed-task legacy `duration`) counts **once** against **its own**
+project; each **standard focus block** contributes its **net** = `max(0, capacity − Σ in-block activity
+hours)` to the **block's** project (overtime/evening blocks contribute no capacity — only their in-block
+activities count, as overtime); weekend work folds to Friday (overtime). So per-project = block-nets +
+activities, and it equals the diary's `standardTotal` + `overtime` except when a block is **over-logged**
+(then per-project is the more accurate actual). `TimeLedger.compute(blocks:activities:interval:)` returns
+`perProject` (+ `distinctWeeks`), `standardTotal` (the diary "Total"), `overtime`, `grandTotal`, and
+per-block `blockNet`. `Domain/TimeLedgerProjection.swift` (`@MainActor`) maps `@Model`s → ledger inputs
+using `FocusBlockAssignment.containingBlock` (membership) + `WeekendPolicy` (fold), with a task-shaped
+`project(tasks:…)` (Chat/Timesheet) and a diary-shaped `projectDiary(taskEntries:…)` sharing one code path.
+**RULE: never re-implement time aggregation — extend `TimeLedger`/`TimeLedgerProjection` and add a
+`TimeLedgerTests` case.** (`FocusBlockRow.netHours` still uses the shared `FocusBlockMath.netHours` primitive
+— consistent with the ledger's `blockNet`.)
+
 ### Day view architecture
 
 The Day tab renders a `DayPageContent` view with four typed sections. Meetings are the only diary `DayEntry` blocks still used; tasks are anchored directly to a `DayRecord` via `Task.dayRecord`.
@@ -570,10 +588,76 @@ attachment extraction, chunking, embedding, and sidecar I/O to the shared `ChatR
 it rebuilds on launch/source membership changes so deleted or dismissed content is removed even when
 Chat is idle. Source identity is `(kind, UUID)` because UUID uniqueness is per SwiftData model.
 `ChatHybridRanker` combines semantic cosine similarity with lexical overlap and falls back to
-lexical search when embeddings are unavailable. A bounded, source-labelled prompt is sent only to
+lexical search when embeddings are unavailable.
+
+**Query-scoped retrieval + synthesis.** Each `ChatRetrievalDocument`/`ChatRetrievalChunk` carries
+filterable metadata — `projectNames: [String]` (lowercased) + `sortDate: Date?` — populated by
+`ChatCorpusBuilder` from the same models it projects (bumping `projectionVersion` forces a one-time
+reindex). `ChatQueryScopeParser.parse(question:knownProjectNames:now:calendar:)`
+(`Domain/ChatQueryScope.swift`, pure) reads the **user's** question (not the follow-up-expanded
+retrieval query) into a `ChatQueryScope`: requested `kinds` (singular/plural keyword map), the longest
+matching known `projectName`, a date `interval`+`intervalLabel` (today/yesterday/this·last week·month,
+this year, "past N days/weeks/months", "recent"), `wantsOverview`, and `wantsTimeTotals`. `ChatView`
+ranks a **larger candidate set (~40)**, then `ChatScopedRanking.apply` (`Domain/ChatScopedRanking.swift`)
+**hard-restricts** to the scope's kind(s)+project and, when an interval is set, keeps in-window chunks
+ordered newest-first — **falling back to the unscoped ranking when the filter empties** — before the
+prompt takes the top ~10. When the question asks about time, `ChatView` computes it from the **canonical `TimeLedger`** (see the
+**Time accounting** section — the same module the diary and Timesheet use, via `TimeLedgerProjection`),
+interval-scoped to `scope.interval` (nil = all time); `ChatTimeTotals.from(ledger:projectName:)` filters
+to the asked project and `report(...)` renders the answer **deterministically (no model, never degrades)**.
+The model never sums. `ChatPromptBuilder.build` (given
+`wantsOverview` + the optional `computedTotals` block) instructs a **grouped, condensed summary** (themed
+bullets by default, prose on request, grouped **by project** when the material spans several) rather than
+a per-source list, and nudges the model to **lead with higher-importance sources**. **Email importance**
+(`EmailMessage.importance`, manual H/M/L, Low = neutral) rides the corpus as `importanceWeight` on each
+`ChatRetrievalDocument`/`ChatRetrievalChunk`; `ChatImportanceBoost.adjust` applies a mild multiplicative
+score boost in `ChatHybridRanker` (High +25% / Medium +12.5% / Low unchanged — it re-orders near-ties, never
+resurrects a zero-relevance chunk), and it breaks exact date ties in `ChatScopedRanking`. Medium/High
+emails also render an `Importance:` line in their corpus fields (Low omitted). Bumping
+`ChatCorpusBuilder.projectionVersion` (now **3**) forces the one-time reindex. A bounded, source-labelled prompt is sent only to
 the on-device `SystemLanguageModel.default` through `FoundationModelsChatAnswerer`; guided output is
 validated against supplied citation labels. If Apple Intelligence is unavailable, Chat still shows
 the locally ranked source links. No networking, external AI API, or Private Cloud Compute is used.
+
+**Deterministic lenses + weekend fidelity.** After scope resolution the pipeline picks a **lens**
+(`Domain/ChatLens.swift`, `ChatLensSelector`): **time report** (`wantsTimeTotals`), **activity digest**
+(an interval-bounded "what did I do / summarise my …" recap), or the **open box** (retrieval synthesis).
+Both lenses are **failure-proof — the app owns every fact and renders the answer itself; the model at most
+rephrases app-built text, and if it's unavailable or errors the app's rendering IS the answer** (so a lens
+never returns the degraded outcome). The **time-report lens** computes per-project time in-app via
+`ChatTimeTotals.compute` (interval-optional — nil = all time; per-project **distinct active weeks** +
+hours, deduped by source key) and renders the table deterministically (no model). The **activity-digest
+lens** (`Domain/ChatActivityDigest.swift`) assembles the window's **real** items (meetings + completed
+tasks, projected by `ChatView.activityDigest(for:)`), grouped by weekday, and the model may only rephrase
+that block ("add nothing, infer nothing, never mention a day not listed"). **Weekend fold
+(`Domain/ChatWeekendFold.swift` over `WeekendPolicy`) is applied to every date entering Chat** — corpus
+field text + sort dates (per kind: work→Friday, inbound→Monday) and the time records (work→Friday) — so the
+model never sees a Saturday, plus a faithfulness clause in the open-box prompt forbids inferring
+days-of-week. Chat had been the one place ignoring `WeekendPolicy`.
+
+**Answer orchestration + evaluation harness.** The whole answer sequence (capability check → follow-up
+detection → scope resolve → retrieve → `ChatScopedRanking` → **lens** → deterministic report/digest OR
+`ChatPromptBuilder` → model call → assembly) lives in **`ChatAnswerPipeline`** (`Domain/ChatAnswerPipeline.swift`),
+extracted from the view so it is testable. `ChatView.answerPendingQuestion` is a thin caller that maps the
+returned `ChatPipelineResult` (which exposes **every stage** — parsed scope, chosen sources,
+`computedTotals`, the assembled `ChatPromptBundle`, and a `ChatPipelineOutcome` of
+capability/noResults/unavailable/answered/generationFailed) onto `state.messages`. **Intent resolution is model-driven with a deterministic backstop** (`Domain/ChatQuerySpec.swift`): the
+pipeline resolves scope through an injected `ChatScopeResolving`. Production uses
+`FoundationModelsScopeResolver` — it asks the on-device model to fill a small `@Generable ChatQuerySpecDraft`
+(kinds · project · period · totals/overview flags, resolving references like "that" from recent history),
+then **merges that over** the deterministic `HeuristicScopeResolver` (the old `ChatQueryScopeParser` + back-ref
+inherit) via the pure `ChatQuerySpecMapping` (validates the project against the known list, whitelists kinds,
+maps the period to an interval, **unions** the flags). The merge can only *refine*, never regress, and any
+model unavailability returns the heuristic scope unchanged. The harness and unit tests inject
+`HeuristicScopeResolver` (or a stub) so scope stays deterministic. The pipeline depends only
+on injected abstractions — a `retrieve` closure (production = `ChatRetrievalWorker`), a `ChatAnswering`
+(production = `FoundationModelsChatAnswerer`), and a `ChatScopeResolving` — so a **golden-corpus evaluation harness**
+(`gbpDiaryTests/Domain/ChatEvalCorpus.swift` + `ChatEvalTests.swift`) runs representative questions end-to-end
+over a fixed, frozen-`now` corpus with a **mock answerer**, asserting the deterministic stages (scope,
+must-include/exclude sources, exact totals, prompt properties) — the regression signal for every Chat change.
+**GUIDING PRINCIPLE (RULE): the on-device model never filters, counts, dates, scopes, or sums — it only
+turns a question into intent and writes prose over data the app has already made correct. Any Chat behaviour
+change MUST add/adjust a `ChatEvalTests` case.**
 
 **Email Explorer** mode is a session-only summary experiment lab. Its single email selection uses the
 shared `FuzzyPickerField`; the body is fetched transiently from Mail, held only in that tab's
@@ -587,6 +671,17 @@ immediately replace it. Every physical `WorkspaceTabState` owns an independent `
 away/back in that tab preserves it, while session restoration restores only the `.chat` destination
 with fresh Database state. **Experiment in Chat** on diary thread, sent-activity, and triage email rows
 always creates a new Chat tab in Email Explorer mode for that email; it never reuses another Chat tab.
+
+**Email importance (surface the most important things).** `EmailMessage` carries a **manual** importance
+(`importanceRaw`/computed `importance: EmailImportance` — H/M/L, **default Low**; `isImportant` = not Low),
+mirroring `Task.priorityRaw`/`priority`. **Low is the neutral baseline**: no chip, no ranking boost — only
+Medium/High carry signal, so unrated email stays clean. It's set with a one-click **`EmailImportancePicker`**
+(M/H toggle cloned from `TaskTriageRow.priorityPicker`; tapping the active level clears to Low) shown in
+`EmailTriageRow`, and via a **"Set importance"** context menu on `DayEmailThreadRow` (writes every message
+in the thread; the thread's importance is the **max** across its messages). A read-only **`EmailImportanceChip`**
+(Medium/High only; `Views/DayTab/EmailImportanceControls.swift`) shows on the diary thread row. Both the diary
+Email section and each Triage day-section **sort importance-first, then by time**. Importance also feeds Chat
+(ranking boost + prompt nudge — see the Chat query-scoped retrieval paragraph).
 
 **Managing the day's email (clean / file / connect).** `EmailMessage` carries three management fields
 (all defaulted for lightweight migration): `dismissed: Bool`, `person: Person?` (the resolved "other
@@ -877,6 +972,21 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Chat prompts bound recent history/source context and label every source; standalone capability/help questions get an immediate deterministic privacy-aware response before retrieval; contextual transformations retrieve using the preceding question, may omit awkward inline citations while retaining the prior grounded source links, and still reject unknown labels; plain-text model answers are trimmed, map valid citation labels to sources, and are rejected with actionable errors when empty or citations are unknown/missing | On-device workspace Chat / grounded answers | `gbpDiaryTests/Domain/ChatAnswerDomainTests.swift` | `boundedHistory_keepsRecentMessagesWithinCharacterLimit`, `promptBuilder_labelsSourcesAndBoundsContext`, `capabilityResponse_handlesOnlyStandaloneHelpQuestions`, `followUpTransformation_usesPriorQuestionAndAllowsCitationFreeOutput`, `followUpTransformation_requiresContextAndRejectsUnknownCitations`, `citationValidator_acceptsKnownDedupesAndRejectsUnknown`, `answerAssembly_acceptsPlainTextAndMapsCitations`, `answerAssembly_rejectsEmptyMissingAndUnknownCitations`, `answerErrors_haveActionableDescriptions` |
 | Every workspace tab owns independent session-only Chat mode/messages/lab state; `openEmailExplorerInNewTab` always opens a fresh configured Chat tab; navigating away/back preserves that tab's state; changing email clears transient body/candidates but preserves the experiment prompt; request revisions reject stale A→B→A completions, each answer request is consumed once even if SwiftUI restarts its task, and Clear invalidates in-flight answers; restoring `.chat` resets to Database/no selected email; token is `chat` | Chat navigation / Email Summary Lab | `gbpDiaryTests/Views/WorkspaceModelTests.swift`, `gbpDiaryTests/Domain/WorkspaceSessionTests.swift` | `openEmailExplorerInNewTab_alwaysCreatesConfiguredIndependentChatTab`, `chatState_survivesNavigationWithinItsWorkspaceTab`, `chatState_changingEmailClearsTransientLabDataButKeepsPrompt`, `chatState_selectionRevision_rejectsOldAAfterAtoBtoA`, `chatState_staleLabFinish_doesNotClearNewerSpinner`, `chatState_clearChat_invalidatesInFlightAnswer`, `chatState_answerRequest_isConsumedOnlyOnce`, `restore_chatStartsWithDefaultSessionOnlyState`, `categoryTokens_roundTrip` |
 | Adopting an Email Summary Lab candidate trims/cleans non-empty output, stores `.done`, and records the selected prompt version; blank candidates cannot be adopted | Email Summary Lab / candidate adoption | `gbpDiaryTests/Domain/EmailSummaryExperimentTests.swift` | `adoption_trimsAndMarksSummaryDoneAtCurrentVersion`, `adoption_rejectsBlankSummary` |
+| Chat query scope: `ChatQueryScopeParser.parse` detects requested kinds (singular/plural, dropping `.project` when a project is named), the longest matching known project name (punctuation-tolerant), a date interval + label (named periods / "past N units" / "recent"), and the `wantsOverview`/`wantsTimeTotals` flags (totals also from "totals"/"time totals"); empty scope when no signals. A back-referencing follow-up (`isBackReference` — "that"/"as well"/"same"/"again", excluding "this/these") inherits the prior question's project/interval/kind via `scope.inheriting(from:)` (only filling unspecified fields) | Chat / query-scoped retrieval | `gbpDiaryTests/Domain/ChatQueryScopeTests.swift` | `emailsForProject_detectsKind_projectAndDropsProjectKind`, `projectMatch_prefersLongestKnownName`, `kinds_detectSingularAndPlural`, `interval_namedPeriods`, `interval_pastN`, `overviewAndTimeTotals_flags`, `empty_whenNoSignals`, `wantsTimeTotals_detectsTotalsPhrasings`, `isBackReference_detectsFollowUps`, `inheriting_fillsUnspecifiedFieldsFromPriorScope`, `inheriting_doesNotOverrideSpecifiedFields` |
+| Chat scoped ranking: `ChatScopedRanking.apply` soft-restricts hybrid-ranked chunks to the scope's kind(s)+project (falling back to the unscoped ranking when that empties, since metadata may be missing), then applies any interval as a **hard** bound — dropping out-of-window chunks with no fallback and ordering the rest newest-first — so an explicit "last week" never surfaces an out-of-window item; returns the input unchanged for an empty scope | Chat / scoped retrieval | `gbpDiaryTests/Domain/ChatScopedRankingTests.swift` | `noScope_returnsUnchanged`, `filtersByKindAndProject`, `intervalOrdersRecentFirstAndDropsOutOfWindow`, `emptyFilter_fallsBackToUnscoped`, `intervalWithNothingInWindow_returnsEmptyNotOutOfWindow`, `intervalDropsOutOfWindow_evenWhenProjectFallbackApplies` |
+| Chat time totals: `ChatTimeTotals.compute(records:interval:projectName:)` sums only in-interval records (optionally project-filtered), dedupes by source key, and reports per-project (desc) + overall hours; `authoritativeBlock` renders the report-these-exact-figures prompt block (nil when empty) | Chat / deterministic time totals | `gbpDiaryTests/Domain/ChatTimeTotalsTests.swift` | `sumsOnlyInIntervalRecords`, `dedupesBySourceKey`, `perProjectDescendingAndProjectFilter`, `empty_whenNoInIntervalRecords`, `authoritativeBlock_formatsFigures` |
+| Chat synthesis prompt: `ChatPromptBuilder.build` (non-transformation) instructs a grouped, condensed summary (themed bullets by default, prose when `wantsOverview`), grouping by project across projects, reports a supplied `computedTotals` block verbatim, and nudges the model to **lead with higher-importance sources**; still labels sources `[S1]…`. A `requiresCitation:` override lets the database synthesis path accept an un-cited summary (falling back to the ranked sources) while still rejecting hallucinated labels | Chat / grounded answers | `gbpDiaryTests/Domain/ChatAnswerDomainTests.swift` | `promptBuilder_synthesisInstructionAndOverviewToggleAndTotals`, `synthesisAnswer_allowsUncitedSummaryAndUsesRankedSourcesAsFallback` |
+| Email importance: `EmailImportance` (H/M/L) `short`/`weight`/`rank`; `.low` default is neutral (weight 0). `EmailMessage.importance` round-trips through `importanceRaw` (unknown → `.low`); `isImportant` false only for `.low` | Email importance | `gbpDiaryTests/Models/EmailImportanceTests.swift` | `enum_shortWeightRankAndOrdering`, `message_defaultsToLow_andIsNotImportant`, `message_importance_roundTripsThroughRaw`, `message_unknownRaw_fallsBackToLow` |
+| Chat importance boost: `ChatImportanceBoost.adjust(score:importanceWeight:)` leaves Low (weight 0) unchanged, scales Medium/High monotonically (High = +25%), keeps a zero-relevance chunk at 0, and stays mild enough not to overtake a much-higher base score; `ChatCorpusBuilder` sets `importanceWeight` on the email document (+ an `Importance:` field for M/H only) and `projectionVersion == 3`; `ChatScopedRanking` breaks an exact date tie by importance | Chat / email importance | `gbpDiaryTests/Domain/ChatImportanceBoostTests.swift`, `gbpDiaryTests/Domain/ChatCorpusBuilderTests.swift`, `gbpDiaryTests/Domain/ChatScopedRankingTests.swift` | `lowWeight_leavesScoreUnchanged`, `mediumAndHigh_scaleMonotonically`, `zeroScore_staysZero`, `mildBoost_doesNotOvertakeAMuchHigherBaseScore`, `email_carriesImportanceWeightAndFieldForMediumHighOnly`, `projectionVersion_isCurrent`, `interval_sameDate_importanceBreaksTie` |
+| Chat answer pipeline: `ChatAnswerPipeline.run` reproduces the full orchestration (capability → follow-up/scope+inherit → retrieve → scope-filter → deterministic totals → prompt → model → assembly) over injected `retrieve`/`ChatAnswering`, exposing scope/sources/`computedTotals`/prompt and a capability·noResults·unavailable·answered·generationFailed outcome | Chat / answer orchestration | `gbpDiaryTests/Domain/ChatEvalTests.swift` | `capability_shortCircuitsBeforeRetrieval`, `noResults_whenIntervalWindowIsEmpty`, `unavailableModel_returnsSourcesNotAnswer`, `generationFailure_degradesToSources`, `answered_mapsCitationsFromPromptSources` |
+| Chat evaluation harness: representative questions run end-to-end through `ChatAnswerPipeline` over the fixed `ChatEvalCorpus` with a mock answerer assert deterministic scope, must-include/must-exclude sources (a "last week" question never surfaces a February meeting), exact interval time totals, follow-up scope inheritance, prompt shape (grouped bullets; no totals instruction unless requested), and that the pipeline takes its scope from the injected `ChatScopeResolving` | Chat / eval harness | `gbpDiaryTests/Domain/ChatEvalTests.swift` | `scope_emailsForProjectInInterval`, `retrieval_lastWeekEmails_scopeToProjectAndWindow`, `retrieval_lastWeek_neverSurfacesFebruaryMeeting`, `totals_computedDeterministicallyOverInterval`, `totals_notRequested_promptForbidsInventingThem`, `followUp_inheritsPriorProjectIntervalAndKind`, `prompt_defaultsToGroupedBullets`, `pipeline_usesInjectedScopeResolver` |
+| Weekend fold in Chat: `WeekendPolicy.workWeekday` folds a weekend date back to the preceding Friday (weekday → itself); `ChatWeekendFold.fold(kind:)` picks the direction by source kind (meeting → Friday, email/task → Monday) and `foldWork` always → Friday; the corpus emits weekend-folded weekday dates + sort dates and `ChatView.timeRecords` folds logged time, so the model never sees a Saturday | Chat / weekend fidelity | `gbpDiaryTests/Domain/WeekendPolicyTests.swift`, `gbpDiaryTests/Domain/ChatWeekendFoldTests.swift`, `gbpDiaryTests/Domain/ChatEvalTests.swift` | `workWeekday_resolvesWeekendBackToFriday`, `meetingFoldsWeekendBackToFriday`, `emailAndTaskFoldWeekendForwardToMonday`, `weekdayIsUnchanged`, `foldWork_alwaysBackToFriday`, `corpus_foldsWeekendMeetingDateToWeekday` |
+| Chat lens routing: `ChatLensSelector.select` returns `.timeReport` when `wantsTimeTotals`, else `.activityDigest` for an interval-bounded recap verb, else `.openBox` | Chat / lenses | `gbpDiaryTests/Domain/ChatLensTests.swift` | `timeReport_whenWantsTimeTotals`, `activityDigest_whenIntervalBoundedRecap`, `openBox_otherwise` |
+| Canonical `TimeLedger.compute`: each logged activity counts once to its own project; each standard block contributes net = max(0, capacity − in-block logged) to the block's project (overtime/evening blocks contribute no capacity); `standardTotal` = non-overtime capacity + standalone weekday work (mirrors the diary), `overtime` = evening in-block + weekend, `grandTotal`/`perProjectTotal`; per-project + `distinctWeeks` + per-block net; dedupe by source key; interval filter | Time accounting | `gbpDiaryTests/Domain/TimeLedgerTests.swift` | `inBlockActivity_attributedToOwnProject_reducesBlockNet`, `standaloneActivity_countsToProjectAndStandardTotal`, `overLoggedBlock_netZero_perProjectIsActual`, `overtime_eveningInBlockAndWeekend_notInStandardTotal`, `distinctWeeks_perProject`, `intervalFilter_dropsOutOfWindow`, `multiProjectActivity_attributesToEach_totalCountsOnce`, `dedupeBySourceKey`, `standardTotal_mirrorsDiaryFormula` |
+| `TimeLedgerProjection` maps @Model → ledger inputs (blocks + activities) reusing `FocusBlockAssignment.containingBlock` (in-block vs standalone) + `WeekendPolicy` (weekend work → Friday, overtime): an in-block meeting is attributed to its own project and reduces the block's net; standalone/legacy/weekend items are handled per the diary; task-shaped (`project`) + diary-shaped (`projectDiary`) inputs share one code path | Time accounting | `gbpDiaryTests/Domain/TimeLedgerProjectionTests.swift` | `inBlockMeeting_attributedToOwnProject_reducesBlockNet`, `standaloneTaskEntry_countedOnADayWithNoBlocks`, `legacyCompletedTaskDuration_counted`, `weekendWork_foldsToFridayAndIsOvertime`, `standaloneMeeting_countedInStandardTotal` |
+| Time-report lens: `ChatTimeTotals.from(ledger:projectName:)` filters the canonical `TimeLedger` result to the asked project; `report(...)` renders a deterministic answer (single-project sentence or per-project list + total) with distinct-active-weeks; `emptyReport` explains the scope/window; the pipeline answers time questions from the ledger with no model and never degrades | Chat / time report | `gbpDiaryTests/Domain/ChatTimeTotalsTests.swift`, `gbpDiaryTests/Domain/ChatEvalTests.swift` | `from_filtersToOneProject_caseInsensitive`, `report_singleProjectAndPerProject`, `emptyReport_explainsScopeAndWindow`, `authoritativeBlock_formatsFigures`, `totals_computedDeterministicallyOverInterval`, `timeReport_allTime_perProject_neverDegrades`, `followUp_inheritsPriorProjectIntervalAndKind` |
+| Activity-digest lens: `ChatActivityDigestBuilder.build` keeps only in-window items (sorted); `ChatActivityDigest.render` groups by weekday and never prints a weekend; `sources` dedups; `phrasingPrompt` is a strict rephrase-only instruction; the pipeline answers a "summarise my week" from the app-built digest (folding a Saturday meeting to Friday), phrasing via the model only when available and never degrading | Chat / activity digest | `gbpDiaryTests/Domain/ChatActivityDigestTests.swift`, `gbpDiaryTests/Domain/ChatEvalTests.swift` | `build_keepsOnlyInWindowItemsSortedByDate`, `render_groupsByDayAndNeverShowsWeekend`, `empty_rendersEmptyString`, `sources_dedupById`, `phrasingPrompt_isStrictAndCarriesBlock`, `digest_summariseLastWeek_foldsWeekendAndInventsNothing`, `digest_handsModelAWeekendFreeBlock` |
+| Model-driven intent (Phase 1): `ChatQuerySpecMapping.merge` refines a deterministic heuristic scope with the model's structured spec — `resolveKinds` whitelists kind tokens, `resolveProject` validates against known names (exact/containment, never a hallucination), an LM period overrides else the heuristic interval is kept, and the totals/overview flags are unioned (a heuristic-true flag is never dropped); the **project filter comes only from the heuristic** — the model may never introduce one (guarding the "list of projects" → unrelated-project over-scoping bug); `ChatDatePeriod.window` maps each period token to its interval+label (`.none` → nil). `FoundationModelsScopeResolver` merges the on-device `@Generable ChatQuerySpecDraft` over `HeuristicScopeResolver` and returns the heuristic unchanged when the model is unavailable | Chat / query-scoped retrieval | `gbpDiaryTests/Domain/ChatQuerySpecMappingTests.swift` | `period_windows`, `resolveKinds_whitelistsAndDropsUnknown`, `resolveProject_validatesAgainstKnownNames`, `merge_lmKindsOverrideEmptyHeuristic`, `merge_ignoresModelProject_projectComesFromHeuristicOnly`, `merge_lmPeriodSetsInterval_elseKeepsHeuristic`, `merge_flagsAreUnioned_neverDropHeuristicTrue`, `merge_emptyLM_returnsHeuristicUnchanged` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 

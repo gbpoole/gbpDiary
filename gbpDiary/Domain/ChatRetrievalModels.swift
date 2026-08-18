@@ -75,11 +75,21 @@ nonisolated struct ChatRetrievalDocument: Codable, Equatable, Identifiable, Send
     var source: ChatSourceReference
     var markdown: String
     var summary: String?
+    // Retrieval-scoping metadata (not shown to the user): the record's project names (lowercased) and a
+    // representative date for recency ordering. Copied onto each chunk.
+    var projectNames: [String]
+    var sortDate: Date?
+    // Manual email importance weight (0 = neutral; Medium 0.5, High 1.0). 0 for non-email sources.
+    var importanceWeight: Double
 
-    init(source: ChatSourceReference, markdown: String, summary: String? = nil) {
+    init(source: ChatSourceReference, markdown: String, summary: String? = nil,
+         projectNames: [String] = [], sortDate: Date? = nil, importanceWeight: Double = 0) {
         self.source = source
         self.markdown = markdown
         self.summary = summary
+        self.projectNames = projectNames
+        self.sortDate = sortDate
+        self.importanceWeight = importanceWeight
     }
 }
 
@@ -89,11 +99,18 @@ nonisolated struct ChatRetrievalChunk: Codable, Equatable, Identifiable, Sendabl
     let source: ChatSourceReference
     let index: Int
     let text: String
+    let projectNames: [String]
+    let sortDate: Date?
+    let importanceWeight: Double
 
-    init(source: ChatSourceReference, index: Int, text: String) {
+    init(source: ChatSourceReference, index: Int, text: String,
+         projectNames: [String] = [], sortDate: Date? = nil, importanceWeight: Double = 0) {
         id = "\(source.key.stableValue):\(index)"
         self.source = source
         self.index = index
         self.text = text
+        self.projectNames = projectNames
+        self.sortDate = sortDate
+        self.importanceWeight = importanceWeight
     }
 }

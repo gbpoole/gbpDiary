@@ -13,6 +13,15 @@ actor ChatRetrievalWorker {
         }
     }
 
+    /// The fast query path: search the **already-built** index (only the query is embedded — no
+    /// re-projection, attachment extraction, chunking, or re-embedding of the corpus, and no snapshot).
+    /// `ChatIndexDriver` keeps the index fresh in the background; the caller falls back to a full rebuild
+    /// only when this returns empty (e.g. first launch before the driver has run).
+    func searchOnly(indexURL: URL, query: String, limit: Int) -> ChatRetrievalWorkerResult {
+        ChatRetrievalWorkerResult(chunks: ChatSemanticIndex(fileURL: indexURL).search(query: query, limit: limit),
+                                  error: nil)
+    }
+
     func rebuildAndSearch(snapshot: ChatCorpusSnapshot, indexURL: URL,
                           query: String, limit: Int) -> ChatRetrievalWorkerResult {
         let corpus = ChatCorpusProjection.complete(snapshot: snapshot)

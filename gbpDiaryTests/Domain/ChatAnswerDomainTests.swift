@@ -42,6 +42,61 @@ struct ChatAnswerDomainTests {
         #expect(bundle.requiresCitation)
     }
 
+    @Test func promptBuilder_synthesisInstructionAndOverviewToggleAndTotals() {
+        let bullets = ChatPromptBuilder.build(
+            question: "Summarise emails for NODES",
+            rankedChunks: [ranked(0, text: "an email")],
+            history: []
+        )
+        #expect(bullets.prompt.contains("synthesising them into a real summary"))
+        #expect(bullets.prompt.contains("group your answer by project"))
+        #expect(bullets.prompt.contains("bulleted list"))
+        #expect(!bullets.prompt.contains("prose overview"))
+        // No totals block supplied → the model is told NOT to invent one.
+        #expect(bullets.prompt.contains("Do not report or invent any time totals"))
+        #expect(!bullets.prompt.contains("report those exact figures"))
+        #expect(bullets.prompt.contains("When a source is marked with higher importance, lead with it"))
+
+        let overview = ChatPromptBuilder.build(
+            question: "Give an overview",
+            rankedChunks: [ranked(0, text: "an email")],
+            history: [],
+            wantsOverview: true
+        )
+        #expect(overview.prompt.contains("prose overview"))
+
+        let totals = ChatPromptBuilder.build(
+            question: "Time this week",
+            rankedChunks: [ranked(0, text: "a task")],
+            history: [],
+            computedTotals: "Computed time totals for this week (authoritative — report these exact figures): NODES — 5h; Total — 5h"
+        )
+        #expect(totals.prompt.contains("Computed time totals for this week"))
+        #expect(totals.prompt.contains("Reproduce that block once, verbatim"))
+        #expect(totals.prompt.contains("do NOT compute your own running totals"))
+    }
+
+    @Test func synthesisAnswer_allowsUncitedSummaryAndUsesRankedSourcesAsFallback() throws {
+        // A grouped summary that cites nothing must still be accepted, falling back to the ranked sources.
+        let bundle = ChatPromptBuilder.build(
+            question: "Summarise emails for NODES",
+            rankedChunks: [ranked(0, text: "an email", title: "Alpha")],
+            history: [],
+            requiresCitation: false
+        )
+        #expect(!bundle.requiresCitation)
+        let answer = try ChatAnswerAssembly.make(
+            text: "- The project kicked off and is on track.",
+            prompt: bundle,
+            fallbackCitations: [bundle.sources[0].chunk.source]
+        )
+        #expect(answer.citations == [bundle.sources[0].chunk.source])
+        // A hallucinated label is still rejected even when citations are optional.
+        #expect(throws: ChatAnswerError.invalidCitations(["S9"])) {
+            try ChatAnswerAssembly.make(text: "Fabricated [S9].", prompt: bundle)
+        }
+    }
+
     @Test func followUpTransformation_usesPriorQuestionAndAllowsCitationFreeOutput() throws {
         let history = [
             ChatHistoryMessage(role: .user, text: "What happened to the train service?"),

@@ -50,6 +50,16 @@ import SwiftData
     // On-device model's picked project for triage suggestions (never auto-applied); nil if none/unknown.
     var suggestedProjectID: UUID?
 
+    // Manual importance (H/M/L, default Low). Low is the neutral baseline. Stored as a raw string, read
+    // via the computed accessor — same idiom as Task.priorityRaw/priority.
+    var importanceRaw: String = EmailImportance.low.rawValue
+    var importance: EmailImportance {
+        get { EmailImportance(rawValue: importanceRaw) ?? .low }
+        set { importanceRaw = newValue.rawValue }
+    }
+    /// True for Medium/High only — gates the chip and the Chat ranking boost.
+    var isImportant: Bool { importance != .low }
+
     init(messageId: String, account: String, mailbox: String, direction: EmailDirection,
          fromAddress: String, fromName: String?, subject: String, date: Date, id: UUID = UUID()) {
         self.id = id
