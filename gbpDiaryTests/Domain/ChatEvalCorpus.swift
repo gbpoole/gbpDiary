@@ -28,11 +28,14 @@ enum ChatEvalCorpus {
         let documents: [ChatRetrievalDocument]
         let chunks: [ChatRetrievalChunk]
         let ids: [String: UUID]
-        let timeRecords: [ChatTimeRecord]
+        let activities: [LedgerActivity]
         let activityItems: [ChatActivityItem]
 
         func retrieve(_ query: String, _ limit: Int) -> (chunks: [ChatRankedChunk], error: String?) {
             (ChatHybridRanker().rank(query: query, chunks: chunks, embedder: nil, limit: limit), nil)
+        }
+        func ledger(_ interval: Range<Date>?) -> LedgerResult {
+            TimeLedger.compute(blocks: [], activities: activities, interval: interval, calendar: ChatEvalCorpus.calendar)
         }
         func key(_ name: String, _ kind: ChatSourceKind) -> ChatSourceKey {
             ChatSourceKey(kind: kind, modelID: ids[name]!)
@@ -90,10 +93,17 @@ enum ChatEvalCorpus {
         let documents = result.documents
         let chunks = documents.flatMap { ChatChunker.chunks(document: $0) }
 
-        // Deterministic time data: 1h logged against NODES in May (last month), plus 2h in February (outside).
-        let timeRecords = [
-            ChatTimeRecord(sourceKey: "may-meeting", date: date(2026, 5, 20), hours: 1.0, projectNames: [nodes]),
-            ChatTimeRecord(sourceKey: "feb-meeting", date: date(2026, 2, 10), hours: 2.0, projectNames: [nodes]),
+        // Deterministic time data (standalone activities): 1h NODES in May (last month), 2h NODES in
+        // February (outside), and — for "projects I worked on last week" — 1h NODES + 0.5h Other in the
+        // last-week window (10/11 Jun).
+        func activity(_ key: String, _ d: Date, _ hours: Double, _ project: String) -> LedgerActivity {
+            LedgerActivity(sourceKey: key, date: d, hours: hours, projectNames: [project], blockID: nil, isOvertime: false)
+        }
+        let activities = [
+            activity("may-meeting", date(2026, 5, 20), 1.0, nodes),
+            activity("feb-meeting", date(2026, 2, 10), 2.0, nodes),
+            activity("nodes-lastweek", date(2026, 6, 10), 1.0, nodes),
+            activity("other-lastweek", date(2026, 6, 11), 0.5, other),
         ]
 
         let ids: [String: UUID] = [
@@ -102,7 +112,7 @@ enum ChatEvalCorpus {
             "otherEmailLastWeek": uuid(12), "nodesEmailFebruary": uuid(13),
             "febMeeting": uuid(20), "mayMeeting": uuid(21), "satMeeting": uuid(22),
         ]
-        return Fixture(documents: documents, chunks: chunks, ids: ids, timeRecords: timeRecords,
+        return Fixture(documents: documents, chunks: chunks, ids: ids, activities: activities,
                        activityItems: activityItems)
     }
 

@@ -48,13 +48,22 @@ struct ChatQuerySpecMappingTests {
         #expect(merged.kinds == [.email])
     }
 
-    @Test func merge_lmProjectResolvedAndDropsProjectKind() {
-        var heuristic = ChatQueryScope(); heuristic.kinds = [.project]
-        let merged = ChatQuerySpecMapping.merge(lmKinds: [], lmProjectName: "NODES", lmPeriod: .none,
-            lmWantsTotals: false, lmWantsOverview: false, heuristic: heuristic,
+    @Test func merge_ignoresModelProject_projectComesFromHeuristicOnly() {
+        // The model must NOT introduce a project the user didn't name (the "Chatbot" over-scoping bug):
+        // a "list of projects" question (heuristic found none) stays all-projects even if the LM names one.
+        var listQuestion = ChatQueryScope(); listQuestion.kinds = [.project]
+        let merged = ChatQuerySpecMapping.merge(lmKinds: ["project"], lmProjectName: "NODES", lmPeriod: .lastWeek,
+            lmWantsTotals: true, lmWantsOverview: false, heuristic: listQuestion,
             knownProjectNames: known, now: now, calendar: cal)
-        #expect(merged.projectName == "NODES - 2026B")
-        #expect(!merged.kinds.contains(.project))
+        #expect(merged.projectName == nil)
+
+        // But a project the heuristic found (the user named it) is kept, and drops the .project kind.
+        var named = ChatQueryScope(); named.kinds = [.project]; named.projectName = "NODES - 2026B"
+        let merged2 = ChatQuerySpecMapping.merge(lmKinds: [], lmProjectName: "", lmPeriod: .none,
+            lmWantsTotals: false, lmWantsOverview: false, heuristic: named,
+            knownProjectNames: known, now: now, calendar: cal)
+        #expect(merged2.projectName == "NODES - 2026B")
+        #expect(!merged2.kinds.contains(.project))
     }
 
     @Test func merge_lmPeriodSetsInterval_elseKeepsHeuristic() {

@@ -15,17 +15,25 @@ struct FoundationModelsScopeResolver: ChatScopeResolving {
                  now: Date, calendar: Calendar) async -> ChatQueryScope {
         let heuristic = await fallback.resolve(question: question, history: history,
                                                knownProjectNames: knownProjectNames, now: now, calendar: calendar)
+        // Only a bare follow-up may resolve references from the conversation; a self-contained question is
+        // resolved standalone so it can't inherit the prior turn's project (e.g. "…the weeks I spent on them").
+        let ownScope = ChatQueryScopeParser.parse(question: question, knownProjectNames: knownProjectNames,
+                                                  now: now, calendar: calendar)
+        let isFollowUp = ownScope.isElliptical && ChatQueryScopeParser.isBackReference(question)
         #if canImport(FoundationModels)
         if #available(macOS 26, *), SystemLanguageModel.default.availability == .available {
             let instructions = """
             You extract the search intent of a workspace question into the given fields. Use only project \
-            names from the provided list; if none apply, leave projectName empty. Classify the time period \
-            into exactly one of the allowed options. Set the flags only when clearly asked. Resolve \
-            references like "that" or "as well" using the recent conversation.
+            names from the provided list; if none apply, leave projectName empty. Set projectName ONLY when \
+            THIS question focuses on one named project — leave it empty for a question about multiple \
+            projects, a list of projects, or "each project". Classify the time period into exactly one of \
+            the allowed options. Set the flags only when clearly asked. Resolve references like "that" or \
+            "as well" using the recent conversation.
             """
             let session = LanguageModelSession(instructions: instructions)
             let options = GenerationOptions(temperature: 0.0, maximumResponseTokens: 120)
-            let prompt = Self.prompt(question: question, history: history, knownProjectNames: knownProjectNames)
+            let prompt = Self.prompt(question: question, history: isFollowUp ? history : [],
+                                     knownProjectNames: knownProjectNames)
             if let response = try? await session.respond(to: prompt, generating: ChatQuerySpecDraft.self, options: options) {
                 let draft = response.content
                 let kinds = draft.kinds.split { $0 == "," || $0 == " " }.map(String.init)

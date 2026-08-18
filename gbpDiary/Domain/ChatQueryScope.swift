@@ -15,6 +15,12 @@ nonisolated struct ChatQueryScope: Equatable, Sendable {
         kinds.isEmpty && projectName == nil && interval == nil && !wantsOverview && !wantsTimeTotals
     }
 
+    /// A bare follow-up carries no scope restriction of its own (no kind, project, or interval) — only such
+    /// questions may inherit a prior question's scope. A question that names its own interval or kinds is
+    /// self-contained, so a pronoun in it ("…the weeks I spent on **them**") refers within the sentence,
+    /// not to the previous turn, and must NOT pull in the prior project.
+    var isElliptical: Bool { kinds.isEmpty && projectName == nil && interval == nil }
+
     /// Fill fields the current question left unspecified from a prior question's scope. Used for
     /// back-referencing follow-ups ("give me the time totals for that as well") so the project, interval,
     /// and kind carry over from the question they refer back to.

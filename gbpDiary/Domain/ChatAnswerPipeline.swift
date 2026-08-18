@@ -48,7 +48,7 @@ struct ChatAnswerPipeline {
 
     func run(_ input: Input,
              retrieve: (String, Int) async -> (chunks: [ChatRankedChunk], error: String?),
-             timeRecords: () -> [ChatTimeRecord],
+             timeLedger: (Range<Date>?) -> LedgerResult,
              activityProvider: (Range<Date>) -> ChatActivityDigest = { _ in ChatActivityDigest(items: []) },
              answerer: any ChatAnswering,
              scopeResolver: any ChatScopeResolving = HeuristicScopeResolver()) async -> ChatPipelineResult {
@@ -86,9 +86,16 @@ struct ChatAnswerPipeline {
         // 4a. Time-report lens — the app computes and RENDERS the answer (no model, never degrades, and
         //     no noResults short-circuit). Retrieval is used only for click-through source citations.
         if lens == .timeReport {
-            let totals = ChatTimeTotals.compute(records: timeRecords(), interval: scope.interval,
-                                                projectName: scope.projectName, calendar: input.calendar)
-            let text = totals.report(intervalLabel: scope.intervalLabel, projectName: scope.projectName)
+            let totals = ChatTimeTotals.from(ledger: timeLedger(scope.interval), projectName: scope.projectName)
+            let text: String
+            if totals.isEmpty {
+                let overall = ChatTimeTotals.from(ledger: timeLedger(nil), projectName: scope.projectName).overall
+                text = ChatTimeTotals.emptyReport(interval: scope.interval, intervalLabel: scope.intervalLabel,
+                                                  projectName: scope.projectName, overallHours: overall,
+                                                  calendar: input.calendar)
+            } else {
+                text = totals.report(intervalLabel: scope.intervalLabel, projectName: scope.projectName)
+            }
             return ChatPipelineResult(
                 scope: scope, retrievalError: ranking.error, rankedSources: ranked,
                 computedTotals: totals.authoritativeBlock(intervalLabel: scope.intervalLabel ?? "all time"),

@@ -43,7 +43,7 @@ struct ChatEvalTests {
             knownProjectNames: ChatEvalCorpus.knownProjectNames,
             now: ChatEvalCorpus.now, calendar: ChatEvalCorpus.calendar)
         return await ChatAnswerPipeline().run(input, retrieve: { fx.retrieve($0, $1) },
-                                              timeRecords: { fx.timeRecords },
+                                              timeLedger: { fx.ledger($0) },
                                               activityProvider: { fx.activity($0) },
                                               answerer: answerer, scopeResolver: scopeResolver)
     }
@@ -135,6 +135,23 @@ struct ChatEvalTests {
         // retrieval — even when there's no logged time in the inherited window it reports 0, never degrading.
         guard case .answered(let answer) = r.outcome else { Issue.record("expected answered, got \(r.outcome)"); return }
         #expect(answer.text.contains("last week"))
+    }
+
+    @Test func selfContainedQuestion_withPronoun_doesNotInheritPriorProject() async {
+        // Reported bug: after a NODES question, "…the weeks I spent on THEM" was wrongly scoped to NODES.
+        // "them" refers to "projects" in the sentence — the self-contained question must cover all projects.
+        let fx = ChatEvalCorpus.build()
+        let history = [
+            ChatHistoryMessage(role: .user, text: "what happened with NODES - 2026B last week"),
+            ChatHistoryMessage(role: .assistant, text: "Here's the NODES recap. [S1]"),
+        ]
+        let r = await run(fx, "give me a list of projects I worked on last week and the weeks I spent on them",
+                          history: history)
+        #expect(r.scope.projectName == nil)          // NOT inherited from the prior NODES turn
+        #expect(r.scope.wantsTimeTotals)
+        guard case .answered(let answer) = r.outcome else { Issue.record("expected answered"); return }
+        #expect(answer.text.contains("NODES - 2026B"))
+        #expect(answer.text.contains("Other Project"))   // several projects, not just NODES
     }
 
     // MARK: synthesis prompt shape

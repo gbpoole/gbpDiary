@@ -2,88 +2,57 @@ import Foundation
 import Testing
 @testable import gbpDiary
 
+// ChatTimeTotals is now a thin renderer over the canonical TimeLedger — the aggregation math itself is
+// covered by TimeLedgerTests. These test the Chat-facing filtering + rendering.
 struct ChatTimeTotalsTests {
     private let cal = Calendar(identifier: .gregorian)
-    private func d(_ day: Int) -> Date { cal.date(from: DateComponents(year: 2024, month: 6, day: day, hour: 10))! }
-    private var interval: Range<Date> { d(8)..<d(15) }
 
-    @Test func distinctWeeks_countsDistinctCalendarWeeks() {
-        // d(3) and d(4) are the same week; d(11) is the next week → 2 distinct weeks for the project.
-        let records = [
-            ChatTimeRecord(sourceKey: "a", date: d(3),  hours: 1, projectNames: ["P"]),
-            ChatTimeRecord(sourceKey: "b", date: d(4),  hours: 1, projectNames: ["P"]),
-            ChatTimeRecord(sourceKey: "c", date: d(11), hours: 1, projectNames: ["P"]),
-        ]
-        let totals = ChatTimeTotals.compute(records: records, calendar: cal)   // all time
-        #expect(totals.perProject.first?.distinctWeeks == 2)
-        #expect(totals.perProject.first?.hours == 3)
+    private func ledger(_ project: [LedgerProjectHours], overall: Double = 0) -> LedgerResult {
+        LedgerResult(perProject: project, standardTotal: overall, overtime: 0, blockNet: [:])
     }
 
-    @Test func compute_nilInterval_isAllTime() {
-        let records = [
-            ChatTimeRecord(sourceKey: "a", date: d(1),  hours: 2, projectNames: ["P"]),   // before the usual window
-            ChatTimeRecord(sourceKey: "b", date: d(30), hours: 3, projectNames: ["P"]),   // after
-        ]
-        #expect(ChatTimeTotals.compute(records: records, calendar: cal).overall == 5)
+    @Test func from_filtersToOneProject_caseInsensitive() {
+        let l = ledger([
+            LedgerProjectHours(name: "NODES - 2026B", hours: 4, distinctWeeks: 3),
+            LedgerProjectHours(name: "Other Project", hours: 1, distinctWeeks: 1),
+        ])
+        let all = ChatTimeTotals.from(ledger: l, projectName: nil)
+        #expect(all.overall == 5)
+        let nodes = ChatTimeTotals.from(ledger: l, projectName: "nodes - 2026b")
+        #expect(nodes.overall == 4)
+        #expect(nodes.perProject.map(\.name) == ["NODES - 2026B"])
     }
 
     @Test func report_singleProjectAndPerProject() {
-        let single = ChatTimeTotals(perProject: [ChatProjectHours(name: "NODES", hours: 12.5, distinctWeeks: 3)], overall: 12.5)
+        let single = ChatTimeTotals(perProject: [LedgerProjectHours(name: "NODES", hours: 12.5, distinctWeeks: 3)], overall: 12.5)
         #expect(single.report(intervalLabel: "last month", projectName: "NODES")
             == "You logged 12.5h on NODES over last month — active in 3 weeks.")
         let many = ChatTimeTotals(perProject: [
-            ChatProjectHours(name: "NODES", hours: 12, distinctWeeks: 3),
-            ChatProjectHours(name: "Other", hours: 2, distinctWeeks: 1)], overall: 14)
+            LedgerProjectHours(name: "NODES", hours: 12, distinctWeeks: 3),
+            LedgerProjectHours(name: "Other", hours: 2, distinctWeeks: 1)], overall: 14)
         let text = many.report(intervalLabel: nil, projectName: nil)
         #expect(text.contains("NODES — 12h, active in 3 weeks"))
         #expect(text.contains("Other — 2h, active in 1 week"))
         #expect(text.contains("Total — 14h"))
-        #expect(ChatTimeTotals(perProject: [], overall: 0).report(intervalLabel: "last week", projectName: nil)
-            == "No time is logged over last week.")
     }
 
-    @Test func sumsOnlyInIntervalRecords() {
-        let records = [
-            ChatTimeRecord(sourceKey: "a", date: d(10), hours: 2.0, projectNames: ["NODES - 2026B"]),
-            ChatTimeRecord(sourceKey: "b", date: d(12), hours: 1.5, projectNames: ["NODES - 2026B"]),
-            ChatTimeRecord(sourceKey: "c", date: d(1),  hours: 9.0, projectNames: ["NODES - 2026B"]), // before window
-        ]
-        let totals = ChatTimeTotals.compute(records: records, interval: interval, calendar: cal)
-        #expect(totals.overall == 3.5)
-        #expect(totals.perProject.map { [$0.name: $0.hours] } == [["NODES - 2026B": 3.5]])
-    }
+    @Test func emptyReport_explainsScopeAndWindow() {
+        let noTime = ChatTimeTotals.emptyReport(interval: nil, intervalLabel: "last week", projectName: nil,
+                                                overallHours: 0, calendar: cal)
+        #expect(noTime.contains("on any project for last week"))
+        #expect(noTime.contains("No logged time was found at all"))
 
-    @Test func dedupesBySourceKey() {
-        // The same underlying record projected twice must not double-count.
-        let records = [
-            ChatTimeRecord(sourceKey: "x", date: d(10), hours: 2.0, projectNames: ["P"]),
-            ChatTimeRecord(sourceKey: "x", date: d(10), hours: 2.0, projectNames: ["P"]),
-        ]
-        #expect(ChatTimeTotals.compute(records: records, interval: interval).overall == 2.0)
-    }
-
-    @Test func perProjectDescendingAndProjectFilter() {
-        let records = [
-            ChatTimeRecord(sourceKey: "a", date: d(10), hours: 1.0, projectNames: ["Alpha"]),
-            ChatTimeRecord(sourceKey: "b", date: d(11), hours: 3.0, projectNames: ["Beta"]),
-        ]
-        let all = ChatTimeTotals.compute(records: records, interval: interval, calendar: cal)
-        #expect(all.perProject.map(\.name) == ["Beta", "Alpha"])
-        #expect(all.perProject.map(\.hours) == [3.0, 1.0])
-        let onlyAlpha = ChatTimeTotals.compute(records: records, interval: interval, projectName: "alpha", calendar: cal)
-        #expect(onlyAlpha.overall == 1.0)
-    }
-
-    @Test func empty_whenNoInIntervalRecords() {
-        let records = [ChatTimeRecord(sourceKey: "a", date: d(1), hours: 5.0, projectNames: ["P"])]
-        let totals = ChatTimeTotals.compute(records: records, interval: interval)
-        #expect(totals.isEmpty)
-        #expect(totals.authoritativeBlock(intervalLabel: "this week") == nil)
+        let d = { (day: Int) in self.cal.date(from: DateComponents(year: 2024, month: 6, day: day))! }
+        let hasOther = ChatTimeTotals.emptyReport(interval: d(8)..<d(15), intervalLabel: "last week",
+                                                  projectName: "NODES", overallHours: 5, calendar: cal)
+        #expect(hasOther.contains("on NODES for last week"))
+        #expect(hasOther.contains("5h logged in total"))
     }
 
     @Test func authoritativeBlock_formatsFigures() {
-        let records = [ChatTimeRecord(sourceKey: "a", date: d(10), hours: 12.5, projectNames: ["NODES - 2026B"])]
-        let block = ChatTimeTotals.compute(records: records, interval: interval).authoritativeBlock(intervalLabel: "this week")
-        #expect(block == "Computed time totals for this week (authoritative — report these exact figures): NODES - 2026B — 12.5h; Total — 12.5h")
+        let totals = ChatTimeTotals(perProject: [LedgerProjectHours(name: "NODES - 2026B", hours: 12.5, distinctWeeks: 1)], overall: 12.5)
+        #expect(totals.authoritativeBlock(intervalLabel: "this week")
+            == "Computed time totals for this week (authoritative — report these exact figures): NODES - 2026B — 12.5h; Total — 12.5h")
+        #expect(ChatTimeTotals(perProject: [], overall: 0).authoritativeBlock(intervalLabel: "this week") == nil)
     }
 }

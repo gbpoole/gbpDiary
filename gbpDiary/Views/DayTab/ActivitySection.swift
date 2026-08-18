@@ -221,21 +221,16 @@ struct ActivitySection: View {
 
     // MARK: - Activity header
 
-    // Standard capacity from non-evening blocks + standalone/meeting/completed hours.
-    private var totalHours: Double {
-        let standardBlockHours = blocks.filter { !$0.isOvertime }.reduce(0.0) { $0 + $1.duration.hoursNormalized }
-        let standaloneHours = standaloneEntries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
-        let meetingHours = standaloneMeetings.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
-        let taskHours = weekdayCompletedTasks.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
-        // In-block sent emails count toward their block's net; only standalone ones add to the total.
-        let emailHours = standaloneSentEmails.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
-        return standardBlockHours + standaloneHours + meetingHours + taskHours + emailHours
+    // Total and Overtime come from the canonical TimeLedger (the same module Chat + Timesheet use), so the
+    // three can never disagree. `standardTotal` reproduces the old formula (standard-block capacity +
+    // standalone weekday work); `overtime` is evening in-block + weekend work.
+    private var dayLedger: LedgerResult {
+        TimeLedgerProjection.diaryLedger(focusBlocks: blocks, taskEntries: todayEntries,
+                                         completedTasks: completedTasks, sentEmails: sentEmails,
+                                         meetings: meetings.compactMap(\.minutes))
     }
-    private var overtimeHours: Double {
-        let eveningHours = blocks.filter { $0.isOvertime }.flatMap { entries(for: $0) }
-            .reduce(0.0) { $0 + $1.duration.hoursNormalized }
-        return eveningHours + weekendHours   // weekend work is overtime too
-    }
+    private var totalHours: Double { dayLedger.standardTotal }
+    private var overtimeHours: Double { dayLedger.overtime }
 
     // Weekend-dated work folded onto Friday: one collapsible group, counted in the Overtime total.
     @ViewBuilder private var weekendGroup: some View {

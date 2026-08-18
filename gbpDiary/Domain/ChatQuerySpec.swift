@@ -17,16 +17,14 @@ protocol ChatScopeResolving {
 struct HeuristicScopeResolver: ChatScopeResolving {
     func resolve(question: String, history: [ChatHistoryMessage], knownProjectNames: [String],
                  now: Date, calendar: Calendar) async -> ChatQueryScope {
-        var scope = ChatQueryScopeParser.parse(question: question, knownProjectNames: knownProjectNames,
-                                               now: now, calendar: calendar)
-        if ChatQueryScopeParser.isBackReference(question),
-           let priorQuestion = history.last(where: { $0.role == .user })?.text {
-            let priorScope = ChatQueryScopeParser.parse(question: priorQuestion,
-                                                        knownProjectNames: knownProjectNames,
-                                                        now: now, calendar: calendar)
-            scope = scope.inheriting(from: priorScope)
-        }
-        return scope
+        let own = ChatQueryScopeParser.parse(question: question, knownProjectNames: knownProjectNames,
+                                             now: now, calendar: calendar)
+        // Inherit prior scope ONLY for a bare follow-up — never when the question scoped itself.
+        guard own.isElliptical, ChatQueryScopeParser.isBackReference(question),
+              let priorQuestion = history.last(where: { $0.role == .user })?.text else { return own }
+        let priorScope = ChatQueryScopeParser.parse(question: priorQuestion, knownProjectNames: knownProjectNames,
+                                                    now: now, calendar: calendar)
+        return own.inheriting(from: priorScope)
     }
 }
 
@@ -100,9 +98,11 @@ nonisolated enum ChatQuerySpecMapping {
         var scope = heuristic
         let kinds = resolveKinds(lmKinds)
         if !kinds.isEmpty { scope.kinds = kinds }
-        if let project = resolveProject(lmProjectName, knownProjectNames: knownProjectNames) {
-            scope.projectName = project
-        }
+        // The project filter comes ONLY from the deterministic heuristic — the project name the user
+        // actually wrote, or an inherited follow-up. The model must never INTRODUCE a project (it once
+        // scoped a "list of projects" question to an unrelated "Chatbot" project). `lmProjectName` is
+        // deliberately ignored; `resolveProject` remains for validating a heuristic/inherited name.
+        _ = lmProjectName
         // "for the project X" names a project — don't also treat "project" as a requested kind.
         if scope.projectName != nil { scope.kinds.remove(.project) }
         if let window = lmPeriod.window(now: now, calendar: calendar) {

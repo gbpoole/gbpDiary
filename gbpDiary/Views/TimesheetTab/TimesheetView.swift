@@ -5,6 +5,9 @@ struct TimesheetView: View {
     @Query(sort: \Task.completedAt, order: .reverse) private var allTasks: [Task]
     @Query(sort: \Project.name) private var projects: [Project]
     @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allEntries: [TaskTimeEntry]
+    @Query private var allFocusBlocks: [FocusBlock]
+    @Query private var allEmails: [EmailMessage]
+    @Query private var allMeetings: [Minutes]
 
     @State private var selectedRange: TimesheetRange = .pastWeek
     @State private var customStart: Date = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
@@ -28,21 +31,18 @@ struct TimesheetView: View {
             .filter { $0.timeEntries.isEmpty }
     }
 
-    private var entryHours: Double {
-        TimesheetComputation.totalHours(entries: entriesInRange)
+    // Per-project time now comes from the canonical TimeLedger (same as the diary + Chat) over the range —
+    // it includes focus-block time, meetings, and sent-email time, and splits block capacity by the
+    // in-block activity's project. `TimesheetComputation` remains only for the range→interval mapping.
+    private var rangeLedger: LedgerResult {
+        TimeLedgerProjection.ledger(focusBlocks: allFocusBlocks, tasks: allTasks, emails: allEmails,
+                                    meetings: allMeetings, interval: rangeInterval.start..<rangeInterval.end)
     }
 
-    private var legacyHours: Double {
-        TimesheetComputation.totalHours(tasks: legacyTasksInRange)
-    }
-
-    private var totalHours: Double { entryHours + legacyHours }
-
+    private var totalHours: Double { rangeLedger.perProjectTotal }
     private var totalTaskCount: Int { Set(entriesInRange.compactMap(\.task?.id)).union(Set(legacyTasksInRange.map(\.id))).count }
-
     private func hours(for project: Project) -> Double {
-        TimesheetComputation.hours(for: project, entries: entriesInRange)
-        + TimesheetComputation.hours(for: project, tasks: legacyTasksInRange)
+        rangeLedger.perProject.first { $0.name == project.name }?.hours ?? 0
     }
 
     var body: some View {
@@ -82,13 +82,13 @@ struct TimesheetView: View {
         GroupBox("Total") {
             HStack {
                 VStack(alignment: .leading) {
-                    Text("\(String(format: "%.1f", totalHours)) h")
+                    Text(TimeFormat.hours(totalHours))
                         .font(.largeTitle.bold())
-                    Text("\(String(format: "%.1f", totalHours / 7.6)) d  ·  \(totalTaskCount) tasks")
+                    Text("\(TimeFormat.days(totalHours))  ·  \(totalTaskCount) tasks")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    if legacyHours > 0 {
-                        Text("Includes \(String(format: "%.1f", legacyHours)) h from tasks without time entries")
+                    if rangeLedger.overtime > 0 {
+                        Text("Includes \(TimeFormat.hours(rangeLedger.overtime)) overtime")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -112,9 +112,9 @@ struct TimesheetView: View {
                         HStack {
                             Text(project.name)
                             Spacer()
-                            Text("\(String(format: "%.1f", h)) h")
+                            Text(TimeFormat.hours(h))
                                 .monospacedDigit()
-                            Text("(\(Int(h / totalHours * 100))%)")
+                            Text("(\(totalHours > 0 ? Int(h / totalHours * 100) : 0)%)")
                                 .foregroundStyle(.secondary)
                                 .monospacedDigit()
                         }
