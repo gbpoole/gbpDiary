@@ -65,27 +65,20 @@ struct ChatAnswerPipeline {
         let priorSources = input.priorSources
         let retrievalQuery = ChatFollowUpIntent.retrievalQuery(question: question, history: history)
 
-        // 2. Resolve the retrieval scope. Transformations ("turn this into a joke") reuse the prior
-        //    answer and don't retrieve fresh, so they carry no scope; everything else goes through the
-        //    injected resolver (on-device model in production, heuristic fallback / in tests).
-        let scope = isTransformation
+        // 2. FAST routing scope from the deterministic heuristic only — no model call — so we can pick the
+        //    lens before paying for retrieval or the scope model call. (A back-referencing follow-up still
+        //    inherits the prior turn's project/interval/kind here.)
+        let routingScope = isTransformation
             ? ChatQueryScope()
-            : await scopeResolver.resolve(question: question, history: history,
-                                          knownProjectNames: input.knownProjectNames,
-                                          now: input.now, calendar: input.calendar)
+            : await HeuristicScopeResolver().resolve(question: question, history: history,
+                                                     knownProjectNames: input.knownProjectNames,
+                                                     now: input.now, calendar: input.calendar)
+        let lens = isTransformation ? .openBox : ChatLensSelector.select(scope: routingScope, question: question)
 
-        // 3. Rank a larger candidate set, then hard-restrict to the detected kind/project/interval.
-        let ranking = await retrieve(retrievalQuery, candidateLimit)
-        let scoped = ChatScopedRanking.apply(ranking.chunks, scope: scope)
-        let ranked = Array(scoped.prefix(promptSourceLimit))
-
-        // 4. Route to a lens. Transformations always stay in the open box; otherwise the selector picks
-        //    the deterministic time-report / activity-digest lens or falls through to the open box.
-        let lens = isTransformation ? .openBox : ChatLensSelector.select(scope: scope, question: question)
-
-        // 4a. Time-report lens — the app computes and RENDERS the answer (no model, never degrades, and
-        //     no noResults short-circuit). Retrieval is used only for click-through source citations.
+        // 3a. Time-report lens — the app RENDERS the answer from the canonical ledger. NO model, NO
+        //     retrieval → effectively instant, and it never degrades.
         if lens == .timeReport {
+            let scope = routingScope
             let totals = ChatTimeTotals.from(ledger: timeLedger(scope.interval), projectName: scope.projectName)
             let text: String
             if totals.isEmpty {
@@ -97,20 +90,19 @@ struct ChatAnswerPipeline {
                 text = totals.report(intervalLabel: scope.intervalLabel, projectName: scope.projectName)
             }
             return ChatPipelineResult(
-                scope: scope, retrievalError: ranking.error, rankedSources: ranked,
+                scope: scope, retrievalError: nil, rankedSources: [],
                 computedTotals: totals.authoritativeBlock(intervalLabel: scope.intervalLabel ?? "all time"),
-                prompt: nil,
-                outcome: .answered(ChatAnswer(text: text, citations: Self.unique(ranked.map(\.chunk.source)),
-                                              summaryCandidates: [])))
+                prompt: nil, outcome: .answered(ChatAnswer(text: text, citations: [], summaryCandidates: [])))
         }
 
-        // 4b. Activity-digest lens — the app assembles the window's REAL items (weekend-folded); the model
+        // 3b. Activity-digest lens — the app assembles the window's REAL items (weekend-folded); the model
         //     may only rephrase that block, and if it's unavailable/misbehaves the app's rendering is the
-        //     answer. It can never invent a Saturday or a meeting that didn't happen, and never degrades.
-        if lens == .activityDigest, let interval = scope.interval {
+        //     answer. NO retrieval; it can never invent a day that didn't happen, and never degrades.
+        if lens == .activityDigest, let interval = routingScope.interval {
+            let scope = routingScope
             let digest = activityProvider(interval)
             guard !digest.isEmpty else {
-                return ChatPipelineResult(scope: scope, retrievalError: ranking.error, rankedSources: ranked,
+                return ChatPipelineResult(scope: scope, retrievalError: nil, rankedSources: [],
                     computedTotals: nil, prompt: nil,
                     outcome: .answered(ChatAnswer(
                         text: "You have no recorded activity for \(scope.intervalLabel ?? "that period").",
@@ -122,17 +114,25 @@ struct ChatAnswerPipeline {
                     prompt: ChatActivityDigestBuilder.phrasingPrompt(block: block, intervalLabel: scope.intervalLabel),
                     sources: [], requiresCitation: false)
                 if let answer = try? await answerer.answer(request: ChatAnswerRequest(prompt: bundle, fallbackCitations: digest.sources)) {
-                    return ChatPipelineResult(scope: scope, retrievalError: ranking.error, rankedSources: ranked,
+                    return ChatPipelineResult(scope: scope, retrievalError: nil, rankedSources: [],
                         computedTotals: nil, prompt: bundle,
                         outcome: .answered(ChatAnswer(text: answer.text, citations: digest.sources, summaryCandidates: [])))
                 }
             }
-            return ChatPipelineResult(scope: scope, retrievalError: ranking.error, rankedSources: ranked,
+            return ChatPipelineResult(scope: scope, retrievalError: nil, rankedSources: [],
                 computedTotals: nil, prompt: nil,
                 outcome: .answered(ChatAnswer(text: block, citations: digest.sources, summaryCandidates: [])))
         }
 
-        // 4c. Open box: retrieval synthesis, best effort.
+        // 3c. Open box — the ONLY path that needs the (model-refined) scope AND retrieval.
+        let scope = isTransformation
+            ? ChatQueryScope()
+            : await scopeResolver.resolve(question: question, history: history,
+                                          knownProjectNames: input.knownProjectNames,
+                                          now: input.now, calendar: input.calendar)
+        let ranking = await retrieve(retrievalQuery, candidateLimit)
+        let scoped = ChatScopedRanking.apply(ranking.chunks, scope: scope)
+        let ranked = Array(scoped.prefix(promptSourceLimit))
         guard !ranked.isEmpty || isTransformation else {
             return ChatPipelineResult(scope: scope, retrievalError: ranking.error, rankedSources: [],
                                       computedTotals: nil, prompt: nil, outcome: .noResults)

@@ -34,6 +34,16 @@ struct FoundationModelsChatAnswerer: ChatAnswering {
         return "On-device answers require macOS 26 with Apple Intelligence."
     }
 
+    /// Loads the on-device model into memory ahead of use (fire-and-forget) so the first real answer/scope
+    /// call doesn't pay cold-start latency. Safe to call repeatedly; a no-op when the model is unavailable.
+    func prewarm() {
+        #if canImport(FoundationModels)
+        if #available(macOS 26, *), SystemLanguageModel.default.availability == .available {
+            LanguageModelSession().prewarm()
+        }
+        #endif
+    }
+
     func answer(request: ChatAnswerRequest) async throws -> ChatAnswer {
         #if canImport(FoundationModels)
         if #available(macOS 26, *), SystemLanguageModel.default.availability == .available {

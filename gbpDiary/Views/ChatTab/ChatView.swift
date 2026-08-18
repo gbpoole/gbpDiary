@@ -42,6 +42,7 @@ struct ChatView: View {
             }
         }
         .background(AppTheme.background)
+        .onAppear { answerer.prewarm() }   // load the on-device model ahead of the first question
         .task(id: state.answerRequestToken) {
             let token = state.answerRequestToken
             guard token > 0 else { return }
@@ -458,10 +459,13 @@ struct ChatView: View {
     }
 
     private func rankedSources(for query: String, limit: Int) async -> (chunks: [ChatRankedChunk], error: String?) {
-        let snapshot = corpusSnapshot()
         do {
             let url = try ChatSemanticIndex.defaultURL()
-            let result = await retrievalWorker.rebuildAndSearch(snapshot: snapshot, indexURL: url,
+            // Fast path: search the driver-maintained index (no corpus projection / rebuild).
+            let hits = await retrievalWorker.searchOnly(indexURL: url, query: query, limit: limit)
+            if !hits.chunks.isEmpty { return (hits.chunks, hits.error) }
+            // Empty index (first run before the background driver has built it) — build once, then search.
+            let result = await retrievalWorker.rebuildAndSearch(snapshot: corpusSnapshot(), indexURL: url,
                                                                 query: query, limit: limit)
             return (result.chunks, result.error)
         } catch {
