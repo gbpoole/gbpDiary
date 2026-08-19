@@ -11,6 +11,7 @@ struct TasksView: View {
     @Environment(WorkspaceModel.self) private var workspace
     private var filterState: TasksFilterState { workspace.active.tasksFilter }
     @State private var editingTask: Task? = nil
+    @State private var showingAddTask = false
     @State private var pendingStatusIds: Set<UUID> = []
     @State private var selection: Set<UUID> = []
     // Tasks selected but hidden by the current filter — restored to `selection` if the filter reverts.
@@ -151,8 +152,18 @@ struct TasksView: View {
             }
         }
         .background(AppTheme.background)
+        .toolbar {
+            ToolbarItem {
+                Button { showingAddTask = true } label: {
+                    Image(systemName: "plus")
+                }
+            }
+        }
         .sheet(item: $editingTask) { task in
             TaskEditorSheet(task: task, defaultDate: Date())
+        }
+        .sheet(isPresented: $showingAddTask) {
+            TaskEditorSheet(task: nil, defaultDate: Date())
         }
         .alert("Delete \(selection.count) task\(selection.count == 1 ? "" : "s")?", isPresented: $confirmingBulkDelete) {
             Button("Delete", role: .destructive) { bulkDelete() }
