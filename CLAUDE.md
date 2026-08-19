@@ -626,7 +626,10 @@ Both lenses are **failure-proof — the app owns every fact and renders the answ
 rephrases app-built text, and if it's unavailable or errors the app's rendering IS the answer** (so a lens
 never returns the degraded outcome). The **time-report lens** computes per-project time in-app via
 `ChatTimeTotals.compute` (interval-optional — nil = all time; per-project **distinct active weeks** +
-hours, deduped by source key) and renders the table deterministically (no model). The **activity-digest
+hours, deduped by source key) and renders the table deterministically (no model); it then **appends a
+per-project "what was done" narrative** — the shared `ProjectActivityReport` (see the per-project reports
+paragraph below) rendered as bullets under each project's hours line, still deterministic (no model, no
+retrieval). The **activity-digest
 lens** (`Domain/ChatActivityDigest.swift`) assembles the window's **real** items (meetings + completed
 tasks, projected by `ChatView.activityDigest(for:)`), grouped by weekday, and the model may only rephrase
 that block ("add nothing, infer nothing, never mention a day not listed"). **Weekend fold
@@ -634,6 +637,32 @@ that block ("add nothing, infer nothing, never mention a day not listed"). **Wee
 field text + sort dates (per kind: work→Friday, inbound→Monday) and the time records (work→Friday) — so the
 model never sees a Saturday, plus a faithfulness clause in the open-box prompt forbids inferring
 days-of-week. Chat had been the one place ignoring `WeekendPolicy`.
+
+**Per-project activity reports (time + "what was done"), shared by Timesheet + Chat.** A single pure
+report type pairs each project's canonical **time** with a deterministic **narrative** of what was done.
+`ChatActivityItem` (`Domain/ChatActivityDigest.swift`) carries `projectNames: [String]` + a
+`kind` (`ChatActivityKind`: meeting/completedTask/loggedComment/email) so items group by project.
+`ProjectActivityReport`/`ProjectActivitySection` (`Domain/ProjectActivityReport.swift`, pure) hold, per
+project, `hours`/`distinctWeeks` + ordered `items`, with `headerLine` (`TimeFormat.hours/days` +
+`ChatTimeTotals.weeksText`), `render()` (header + bullets), `narrativeBlock(projectName:)` (bullets only,
+optionally scoped — a **named-but-unmatched project returns empty**, nil = all), `section(matching:)`
+(case-insensitive), and `phrasingPrompt(section:)` (strict rephrase-only). `ProjectActivityProjection`
+(`Domain/ProjectActivityProjection.swift`, `@MainActor`, alongside `TimeLedgerProjection`):
+`report(interval:tasks:emails:meetings:focusBlocks:calendar:maxEmailsPerProject:)` takes hours/weeks
+straight from `TimeLedgerProjection.ledger(...)` and gathers narrative items from **four approved sources**
+— meetings (`Minutes` → each `meeting.projects`), completed tasks (`Task.completed` + `completedAt` →
+`task.project`), logged comments (non-empty `TaskTimeEntry.comment` → `task.project`, and non-empty
+`FocusBlock.comment` → `project ?? task.project`), and emails (`EmailMessage` with projects,
+importance-first + capped per project) — each **weekend-folded** (`ChatWeekendFold.foldWork`),
+interval-filtered, project-tagged, carrying a `ChatSourceReference`; sections are projects with hours **or**
+items (never the `(no project)` bucket), sorted by hours desc. The **Timesheet** (`TimesheetView`) renders
+these as expandable per-project `DisclosureGroup`s: the header keeps the time figures (name · hours · days ·
+weeks · percent), the expanded body shows the grouped bullets (Meetings / Completed / Logged notes / Emails,
+each tappable to its source) plus a **Summarise ✨** button that generates on-demand on-device prose from
+`phrasingPrompt(section:)` via `FoundationModelsChatAnswerer` (rephrase-only, transient, run via a
+per-project `.task(id:)`, gated on `answerer.isAvailable`). The Timesheet stays **time-anchored** (only
+projects with logged hours). Chat's time-report lens reuses the same report via a `projectActivity` closure
+on `ChatAnswerPipeline.run`. **The model never invents — every fact is app-assembled; it only rephrases.**
 
 **Answer orchestration + evaluation harness.** The whole answer sequence (capability check → follow-up
 detection → scope resolve → retrieve → `ChatScopedRanking` → **lens** → deterministic report/digest OR
@@ -987,6 +1016,9 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Time-report lens: `ChatTimeTotals.from(ledger:projectName:)` filters the canonical `TimeLedger` result to the asked project; `report(...)` renders a deterministic answer (single-project sentence or per-project list + total) with distinct-active-weeks; `emptyReport` explains the scope/window; the pipeline answers time questions from the ledger with no model and never degrades | Chat / time report | `gbpDiaryTests/Domain/ChatTimeTotalsTests.swift`, `gbpDiaryTests/Domain/ChatEvalTests.swift` | `from_filtersToOneProject_caseInsensitive`, `report_singleProjectAndPerProject`, `emptyReport_explainsScopeAndWindow`, `authoritativeBlock_formatsFigures`, `totals_computedDeterministicallyOverInterval`, `timeReport_allTime_perProject_neverDegrades`, `followUp_inheritsPriorProjectIntervalAndKind` |
 | Activity-digest lens: `ChatActivityDigestBuilder.build` keeps only in-window items (sorted); `ChatActivityDigest.render` groups by weekday and never prints a weekend; `sources` dedups; `phrasingPrompt` is a strict rephrase-only instruction; the pipeline answers a "summarise my week" from the app-built digest (folding a Saturday meeting to Friday), phrasing via the model only when available and never degrading | Chat / activity digest | `gbpDiaryTests/Domain/ChatActivityDigestTests.swift`, `gbpDiaryTests/Domain/ChatEvalTests.swift` | `build_keepsOnlyInWindowItemsSortedByDate`, `render_groupsByDayAndNeverShowsWeekend`, `empty_rendersEmptyString`, `sources_dedupById`, `phrasingPrompt_isStrictAndCarriesBlock`, `digest_summariseLastWeek_foldsWeekendAndInventsNothing`, `digest_handsModelAWeekendFreeBlock` |
 | Model-driven intent (Phase 1): `ChatQuerySpecMapping.merge` refines a deterministic heuristic scope with the model's structured spec — `resolveKinds` whitelists kind tokens, `resolveProject` validates against known names (exact/containment, never a hallucination), an LM period overrides else the heuristic interval is kept, and the totals/overview flags are unioned (a heuristic-true flag is never dropped); the **project filter comes only from the heuristic** — the model may never introduce one (guarding the "list of projects" → unrelated-project over-scoping bug); `ChatDatePeriod.window` maps each period token to its interval+label (`.none` → nil). `FoundationModelsScopeResolver` merges the on-device `@Generable ChatQuerySpecDraft` over `HeuristicScopeResolver` and returns the heuristic unchanged when the model is unavailable | Chat / query-scoped retrieval | `gbpDiaryTests/Domain/ChatQuerySpecMappingTests.swift` | `period_windows`, `resolveKinds_whitelistsAndDropsUnknown`, `resolveProject_validatesAgainstKnownNames`, `merge_lmKindsOverrideEmptyHeuristic`, `merge_ignoresModelProject_projectComesFromHeuristicOnly`, `merge_lmPeriodSetsInterval_elseKeepsHeuristic`, `merge_flagsAreUnioned_neverDropHeuristicTrue`, `merge_emptyLM_returnsHeuristicUnchanged` |
+| Per-project report (pure): `ProjectActivitySection.headerLine` = "Name — Xh · Yd · N weeks" (`TimeFormat.hours/days` + `ChatTimeTotals.weeksText`); `ProjectActivityReport.render()` = each section's header then `• label` bullets, sections in order (a section with no items shows just its header); `section(matching:)` is case-insensitive; `narrativeBlock(projectName:)` renders bullets grouped under each project name with no time header (nil = all sections, a named-but-unmatched project → ""); `phrasingPrompt(section:)` is strict rephrase-only | Chat + Timesheet / per-project reports | `gbpDiaryTests/Domain/ProjectActivityReportTests.swift` | `headerLine_showsHoursDaysWeeks`, `render_headerThenBullets_sectionsInOrder`, `sectionMatching_isCaseInsensitive`, `narrativeBlock_bulletsGroupedByProject_noTimeHeader_optionallyScoped`, `phrasingPrompt_isStrictRephraseOnly` |
+| Per-project projection (`@MainActor`): `ProjectActivityProjection.report(interval:tasks:emails:meetings:focusBlocks:calendar:maxEmailsPerProject:)` takes hours/distinctWeeks from `TimeLedgerProjection.ledger(...)` and gathers narrative `ChatActivityItem`s from meetings, completed tasks, logged (non-empty) task/focus-block comments, and emails (importance-first, capped) under the right project with the right label/kind; every item is weekend-folded (→ Friday for work) and interval-filtered; a project with items but no logged hours still appears; blank-comment entries are skipped; the `(no project)` hours bucket is never a section | Chat + Timesheet / per-project reports | `gbpDiaryTests/Domain/ProjectActivityProjectionTests.swift` | `meetingsTasksCommentsEmails_landUnderTheRightProjectWithLabels`, `hoursAndWeeks_comeFromTheLedger`, `weekendItem_foldsToFriday`, `intervalFilter_dropsOutOfWindowItems`, `projectWithItemsButNoLoggedHours_stillAppears`, `emptyCommentEntries_areSkipped`, `emails_areImportanceFirstAndCapped`, `noProjectHoursBucket_isNotASection` |
+| Chat time-report narrative: `ChatAnswerPipeline.run` takes a `projectActivity:` closure; the time-report lens appends the shared report's `narrativeBlock(projectName:)` bullets under the hours (deterministic — `prompt == nil`, no model/retrieval) | Chat / time report + narrative | `gbpDiaryTests/Domain/ChatEvalTests.swift` | `timeReport_appendsPerProjectNarrative`, `totals_computedDeterministicallyOverInterval`, `timeReport_allTime_perProject_neverDegrades` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 
