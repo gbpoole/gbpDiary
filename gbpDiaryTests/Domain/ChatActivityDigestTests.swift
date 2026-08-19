@@ -52,5 +52,7 @@ struct ChatActivityDigestTests {
         #expect(prompt.contains("never mention a day that is not listed"))
         #expect(prompt.contains("Fri 5 Jan"))
         #expect(prompt.contains("for last week"))
+        #expect(prompt.contains("second person"))   // the shared app-wide voice
+        #expect(prompt.contains("simple past"))
     }
 }

@@ -116,7 +116,7 @@ struct WorkspaceTabStrip: View {
         case .diary, .chat, .triage, .tasks, .projects, .people, .institutions,
              .meetings, .documents, .content, .images, .tags, .timesheet:
             let cat = tab.category
-            return (cat.rawValue, cat.systemImage)
+            return (cat.title, cat.systemImage)
         case .contentNote(let pid):
             let title = model(pid, as: Note.self)?.title ?? ""
             return (title.isEmpty ? "Note" : title, "note.text")

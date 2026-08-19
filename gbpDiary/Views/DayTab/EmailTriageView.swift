@@ -1,7 +1,7 @@
 import SwiftUI
 import SwiftData
 
-// The central email triage page (sidebar "Triage"). Shows every fetched email across all days —
+// The central email triage page (sidebar "Emails"). Shows every fetched email across all days —
 // segmented by triage bucket (To triage / Accepted / Tasks / Dismissed) with global counts and grouped
 // under day headers — so a multi-day backlog is cleared in one place. Each row has quick
 // accept/dismiss/unclassify icons, opens in Mail, files projects (with tap-to-apply suggestions),

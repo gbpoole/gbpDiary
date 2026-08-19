@@ -24,7 +24,7 @@ struct WorkspaceView: View {
     @State private var hostWindow: NSWindow?
     #endif
 
-    // Emails awaiting triage across all fetched days (the Triage sidebar backlog badge).
+    // Emails awaiting triage across all fetched days (the Emails sidebar backlog badge).
     private var triageBacklogCount: Int {
         allEmails.filter { $0.triageState == .unclassified }.count
     }
@@ -56,11 +56,13 @@ struct WorkspaceView: View {
                 get: { workspace.active.current.category },
                 set: { if let cat = $0 { workspace.navigate(to: cat.tab) } }
             )) {
-                Section("Browse") {
-                    ForEach(WorkspaceCategory.allCases) { cat in
-                        Label(cat.rawValue, systemImage: cat.systemImage)
-                            .badge(badgeCount(for: cat))
-                            .tag(cat)
+                ForEach(WorkspaceCategory.sidebarGroups, id: \.title) { group in
+                    Section(group.title) {
+                        ForEach(group.categories) { cat in
+                            Label(cat.title, systemImage: cat.systemImage)
+                                .badge(badgeCount(for: cat))
+                                .tag(cat)
+                        }
                     }
                 }
             }

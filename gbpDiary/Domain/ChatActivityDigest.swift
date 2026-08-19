@@ -72,9 +72,9 @@ nonisolated enum ChatActivityDigestBuilder {
     static func phrasingPrompt(block: String, intervalLabel: String?) -> String {
         let period = intervalLabel.map { " for \($0)" } ?? ""
         return """
-        Rewrite the following list of the user's activity\(period) into a brief, friendly summary written \
-        to "you". Use ONLY these items — do not add, infer, embellish, or omit anything, and never mention \
-        a day that is not listed. Keep it concise and grouped by day.
+        Summarise the following list of your activity\(period). Use ONLY these items — do not add, infer, \
+        embellish, or omit anything, and never mention a day that is not listed. Keep it concise and grouped \
+        by day. \(AISummaryStyle.inline)
 
         \(block)
         """

@@ -15,6 +15,19 @@ struct EmailSummaryTests {
         #expect(p.contains("Please review."))
     }
 
+    @Test func prompt_stripsQuotedHistoryFromBody() {
+        let body = """
+        Thanks, that works.
+
+        On Mon, 12 Jan 2026 at 10:00, Suzanne <suzanne@x.com> wrote:
+        > secret prior thread text
+        """
+        let p = EmailSummaryPrompt.build(context: ctx(), subject: "Re: meet", body: body)
+        #expect(p.contains("Thanks, that works."))
+        #expect(!p.contains("secret prior thread text"))   // quoted history never reaches the model
+        #expect(!p.contains("wrote:"))
+    }
+
     @Test func prompt_blankSubject_usesPlaceholder() {
         let p = EmailSummaryPrompt.build(context: ctx(), subject: "", body: "hi")
         #expect(p.contains("Subject: (no subject)"))
@@ -53,6 +66,8 @@ struct EmailSummaryTests {
         #expect(i.contains("\"you\""))
         #expect(i.lowercased().contains("title"))
         #expect(i.lowercased().contains("signature"))
+        // The shared voice is folded in: second person + simple past.
+        #expect(i.lowercased().contains("simple past"))
     }
 
     @Test func instructions_prioritizeNewestMessageAndPreserveFigurativeMeaning() {
@@ -64,7 +79,9 @@ struct EmailSummaryTests {
     }
 
     @Test func promptVersion_reflectsPerspectiveAndIdiomRules() {
-        #expect(EmailSummaryPrompt.promptVersion == 2)
+        // Email base (3: strips quoted history) + the shared AISummaryStyle version, so either change
+        // refreshes the backlog.
+        #expect(EmailSummaryPrompt.promptVersion == 3 + AISummaryStyle.version)
     }
 
     @Test func roster_capsAndOrdersPriorityFirst() {
