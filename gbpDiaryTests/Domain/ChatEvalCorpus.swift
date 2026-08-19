@@ -30,12 +30,20 @@ enum ChatEvalCorpus {
         let ids: [String: UUID]
         let activities: [LedgerActivity]
         let activityItems: [ChatActivityItem]
+        let meetings: [Minutes]
+        let emails: [EmailMessage]
 
         func retrieve(_ query: String, _ limit: Int) -> (chunks: [ChatRankedChunk], error: String?) {
             (ChatHybridRanker().rank(query: query, chunks: chunks, embedder: nil, limit: limit), nil)
         }
         func ledger(_ interval: Range<Date>?) -> LedgerResult {
             TimeLedger.compute(blocks: [], activities: activities, interval: interval, calendar: ChatEvalCorpus.calendar)
+        }
+        // The shared per-project narrative report, from the real projection over the seeded @Model meetings
+        // and emails — the same code the Timesheet and Chat use in production.
+        @MainActor func projectActivity(_ interval: Range<Date>?) -> ProjectActivityReport {
+            ProjectActivityProjection.report(interval: interval, tasks: [], emails: emails, meetings: meetings,
+                                             focusBlocks: [], calendar: ChatEvalCorpus.calendar)
         }
         func key(_ name: String, _ kind: ChatSourceKind) -> ChatSourceKey {
             ChatSourceKey(kind: kind, modelID: ids[name]!)
@@ -78,10 +86,11 @@ enum ChatEvalCorpus {
                                  duration: Duration(value: 1, unit: .h))
 
         let meetings = [febMeeting, mayMeeting, satMeeting]
+        let emails = [nodesEmailThisWeek, nodesEmailLastWeek, otherEmailLastWeek, nodesEmailFebruary]
         let result = ChatCorpusBuilder().build(
             projects: [nodesProject, otherProject], tasks: [], people: [], institutions: [],
             meetings: meetings, notes: [], days: [], documents: [],
-            emails: [nodesEmailThisWeek, nodesEmailLastWeek, otherEmailLastWeek, nodesEmailFebruary],
+            emails: emails,
             attachments: [])
         let activityItems = meetings.map { m -> ChatActivityItem in
             let ref = ChatSourceReference(id: m.id, kind: .meeting, title: m.summary ?? "Meeting", detail: nil,
@@ -113,7 +122,7 @@ enum ChatEvalCorpus {
             "febMeeting": uuid(20), "mayMeeting": uuid(21), "satMeeting": uuid(22),
         ]
         return Fixture(documents: documents, chunks: chunks, ids: ids, activities: activities,
-                       activityItems: activityItems)
+                       activityItems: activityItems, meetings: meetings, emails: emails)
     }
 
     private static func email(_ id: UUID, subject: String, summary: String, date: Date,

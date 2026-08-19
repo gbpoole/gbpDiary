@@ -4,15 +4,24 @@ import Foundation
 // inventing a "Saturday meeting". Every item comes from a real SwiftData record with a weekend-folded
 // date; the model (if used) only rephrases this block and is told to add nothing. If the model is
 // unavailable or misbehaves, `render` IS the answer, so the digest lens can never hallucinate or degrade.
+nonisolated enum ChatActivityKind: String, Equatable, Sendable {
+    case meeting, completedTask, loggedComment, email
+}
+
 nonisolated struct ChatActivityItem: Equatable, Sendable {
     let date: Date                       // already weekend-folded to a weekday
     let label: String                    // e.g. "Meeting: NODES review (1h)"
     let source: ChatSourceReference?     // for click-through citations
+    let projectNames: [String]           // for grouping a per-project report (empty = ungrouped digest)
+    let kind: ChatActivityKind?
 
-    init(date: Date, label: String, source: ChatSourceReference? = nil) {
+    init(date: Date, label: String, source: ChatSourceReference? = nil,
+         projectNames: [String] = [], kind: ChatActivityKind? = nil) {
         self.date = date
         self.label = label
         self.source = source
+        self.projectNames = projectNames
+        self.kind = kind
     }
 }
 

@@ -50,6 +50,7 @@ struct ChatAnswerPipeline {
              retrieve: (String, Int) async -> (chunks: [ChatRankedChunk], error: String?),
              timeLedger: (Range<Date>?) -> LedgerResult,
              activityProvider: (Range<Date>) -> ChatActivityDigest = { _ in ChatActivityDigest(items: []) },
+             projectActivity: (Range<Date>?) -> ProjectActivityReport = { ProjectActivityReport(sections: [], interval: $0) },
              answerer: any ChatAnswering,
              scopeResolver: any ChatScopeResolving = HeuristicScopeResolver()) async -> ChatPipelineResult {
         let question = input.question
@@ -89,10 +90,14 @@ struct ChatAnswerPipeline {
             } else {
                 text = totals.report(intervalLabel: scope.intervalLabel, projectName: scope.projectName)
             }
+            // Append the deterministic "what was done" narrative under the hours (same shared report the
+            // Timesheet uses). Still no model, no retrieval — the facts are app-owned.
+            let narrative = projectActivity(scope.interval).narrativeBlock(projectName: scope.projectName)
+            let answerText = narrative.isEmpty ? text : "\(text)\n\nWhat you did:\n\(narrative)"
             return ChatPipelineResult(
                 scope: scope, retrievalError: nil, rankedSources: [],
                 computedTotals: totals.authoritativeBlock(intervalLabel: scope.intervalLabel ?? "all time"),
-                prompt: nil, outcome: .answered(ChatAnswer(text: text, citations: [], summaryCandidates: [])))
+                prompt: nil, outcome: .answered(ChatAnswer(text: answerText, citations: [], summaryCandidates: [])))
         }
 
         // 3b. Activity-digest lens — the app assembles the window's REAL items (weekend-folded); the model

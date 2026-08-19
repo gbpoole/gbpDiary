@@ -45,6 +45,7 @@ struct ChatEvalTests {
         return await ChatAnswerPipeline().run(input, retrieve: { fx.retrieve($0, $1) },
                                               timeLedger: { fx.ledger($0) },
                                               activityProvider: { fx.activity($0) },
+                                              projectActivity: { fx.projectActivity($0) },
                                               answerer: answerer, scopeResolver: scopeResolver)
     }
 
@@ -96,6 +97,17 @@ struct ChatEvalTests {
         #expect(answer.text.contains("1h"))
         #expect(answer.text.contains("last month"))
         #expect(r.prompt == nil)   // deterministic — the model was not consulted
+    }
+
+    @Test func timeReport_appendsPerProjectNarrative() async {
+        // The Timesheet's "what was done" narrative rides the same time report in Chat — deterministically,
+        // with no model or retrieval on the fast path.
+        let fx = ChatEvalCorpus.build()
+        let r = await run(fx, "how much time did I spend on NODES - 2026B last month")
+        guard case .answered(let answer) = r.outcome else { Issue.record("expected answered"); return }
+        #expect(answer.text.contains("What you did:"))
+        #expect(answer.text.contains("Meeting: NODES May planning (1h)"))
+        #expect(r.prompt == nil)   // still deterministic — the model was not consulted
     }
 
     @Test func timeReport_allTime_perProject_neverDegrades() async {
