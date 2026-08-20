@@ -94,6 +94,7 @@ struct WorkspaceView: View {
         .background { TaskRecurrenceDriver() } // spawn recurring tasks + auto-cancel past-until tasks
         .background { EmailFetchDriver() }     // global auto-ingest (last few days, 5-min cadence)
         .background { EmailSummaryDriver() }   // global on-device email summarisation
+        .background { EmailThreadSummaryDriver() } // global on-device whole-thread day summaries
         .background { ChatIndexDriver() }      // rebuildable local semantic index + stale-source removal
         .sheet(isPresented: $showingNewContent) { ContentNoteEditorSheet(note: nil) }
         .onAppear {

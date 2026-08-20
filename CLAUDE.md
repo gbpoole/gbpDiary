@@ -743,20 +743,42 @@ sender/recipient address already belongs to a Person — `EmailPersonMatching.pe
 (`Domain/EmailPersonMatching.swift`, pure; address-only, case-insensitive). Unmatched → `person == nil`,
 shown as a yellow "Unrecognized" chip. The diary Email list groups the day's emails into **threads**
 (same subject ignoring Re:/Fwd: + same other party — `Domain/EmailThreading.swift`,
-`threadKey`/`normalizedSubject`) and renders each as a compact **`DayEmailThreadRow`**: direction icon
+`threadKey`/`normalizedSubject`; grouped by the shared **`EmailThreadBuilder.threads(from:)`**, whose
+`EmailThread` value type — moved to `Domain/EmailThreadBuilder.swift` — carries `sentCount`/`receivedCount`
+and a `synthesizedSummary`) and renders each as a compact **`DayEmailThreadRow`**: direction icon
 + an interactive **person chip** (in place of the sender name — click to reconcile via
 `ResolveAttendeeSheet`, applied to every message in the thread) + an inline **project picker** (files
-the whole thread) + message-count/time on the first line, subject on the second (no "Sent" chip — the
-icon shows direction). **Tapping the thread opens its latest message in Mail.app** —
-`MailScriptService.openMessage(_:)` resolves the real mailbox (`EmailSettingsStore`) + account and opens
-by Mail's integer id via `MailScriptParsing.openMessageScript`; the open action is also on
-`SentEmailActivityRow` and the triage rows, with a friendly alert if the message can't be opened. **Sent** emails
-appear **only** in the day's **Activity** section at their send time, and — to keep the diary uncluttered —
-are **collapsed into a single expandable `SentEmailsGroupRow`** ("N sent email(s) · total logged",
-default collapsed) rather than one row each: one group per focus block (its `sentEmails`, rendered after
-that block's meetings/entries in `FocusBlockRow`) and one group for the standalone (out-of-block) sent
-emails in `ActivitySection` (they are no longer interleaved into `activityItems`). Expanding a group
-reveals a **two-line** `SentEmailActivityRow` per email: line 1 groups all the controls together on the
+the whole thread) + message-count/time on the first line, and on the second the **whole-thread day
+summary**. **Multi-message threads expand** (chevron + count) to a **drill-down** of per-message rows
+(direction + time + that message's own per-email summary + tap-to-open-in-Mail). **Tapping the thread
+opens its latest message in Mail.app** — `MailScriptService.openMessage(_:)` resolves the real mailbox
+(`EmailSettingsStore`) + account and opens by Mail's integer id via `MailScriptParsing.openMessageScript`;
+the open action is also on `SentEmailActivityRow` and the triage rows, with a friendly alert if the message
+can't be opened.
+
+**Whole-thread day summary (synthesized, on-device).** A conversation's day summary is generated on-device
+over the member emails' **existing per-email summaries** (app-owned facts — never raw bodies), so it stays
+cheap and only rephrases. Pure pieces in `Domain/EmailThreadSummaryPrompt.swift`
+(`EmailThreadSummaryPrompt.build`/`instructions` — voice from `AISummaryStyle`; `promptVersion` = base +
+`AISummaryStyle.version`; `EmailThreadSummaryFingerprint.make`; `EmailThreadSummaryPlanning.needsSummary`).
+It is cached in the `@Model EmailThreadSummary` (`Models/`, in the `Schema`) keyed by `threadKey + dayStart`,
+regenerated when membership/inputs change (fingerprint) or the prompt bumps. The global invisible
+**`EmailThreadSummaryDriver`** (placed once in `WorkspaceView`, beside `EmailSummaryDriver`) generates them
+for multi-message threads whose per-email summaries are all `done`, via
+`FoundationModelsSummarizer.summarizeThread(prompt:)`. Views look it up with
+`EmailThreadBuilder.summaryText(for:in:)` and fall back to the latest message's per-email summary while
+pending / for single-message threads.
+
+**Activity section = thread-grouped email digest.** In the **Activity** section, each focus block's emails
+(**sent + received**, placed by timestamp via `FocusBlockAssignment.containingBlock`; plus a standalone
+out-of-block group) render as an **`EmailDigestGroupRow`** — one bullet per conversation
+(`EmailDigestBullet`) showing the whole-thread summary + person/project chips + a `N sent · M recv`
+breakdown. Expanding a bullet reveals its messages: **sent** messages keep the full **`SentEmailActivityRow`**
+(so quick time-logging still feeds `TimeLedger`), **received** messages are informational (open-in-Mail).
+Received mail thus appears in both the reading section and the (time-anchored) digest; weekend-received
+stays only in the reading section (the digest uses weekday-dated received). Sent time still drives
+`FocusBlockRow.netHours` (received carry no `timeEntries`). The weekend overtime group still uses
+`SentEmailsGroupRow`. The expanded `SentEmailActivityRow` is a **two-line** row: line 1 groups all the controls together on the
 left (open-in-Mail, then an **editable recipient chip** → `ResolveAttendeeSheet` (`resolvePerson` mirrors
 the triage row; links/creates a Person and adds the recipient address), an **editable project chip** →
 `FuzzyPickerField` picker, and the time-log actions), with the send time trailing on the right; line 2 is
@@ -1047,6 +1069,9 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Quoted-history stripping: `EmailQuotedHistory.newestMessage` returns the body above the first quoted-history boundary (`On … wrote:` incl. wrapped, `-----Original Message-----`/`Forwarded message` dividers, ≥10-char underscore separators, and `From:` blocks with a nearby `Sent:/Date:` + `To:`); a sentence merely ending "wrote:" and a bare prose "From:" are not cut; no boundary or a body quoted from line 0 returns the body unchanged; `EmailSummaryPrompt.build` applies it (so quoted history never reaches the model) and `emailPromptBase` = 3 to refresh the backlog | On-device email summaries / thread history | `gbpDiaryTests/Domain/EmailQuotedHistoryTests.swift`, `gbpDiaryTests/Domain/EmailSummaryTests.swift` | `gmailAttribution_keepsOnlyNewestMessage`, `wrappedAttribution_backsUpToTheOnLine`, `outlookOriginalMessageDivider_isCut`, `forwardedMessageBanner_isCut`, `outlookUnderscoreSeparator_isCut`, `quotedHeaderBlock_requiresSentAndTo`, `sentenceEndingInWrote_isNotCut`, `noBoundary_returnsBodyUnchanged`, `bodyQuotedFromStart_returnsUnchanged`, `emptyBody_isEmpty`, `prompt_stripsQuotedHistoryFromBody` |
 
 | Calendar access on first grant: `CalendarService.resolve(granted:fallback:)` returns `.authorized` whenever EventKit reports `granted` (authoritative right after approval, when `authorizationStatus` may still read `.notDetermined`), else the fallback status — so the meeting-import list populates immediately after approval | Calendar import / access | `gbpDiaryTests/Domain/CalendarAccessTests.swift` | `resolve_grantedIsAuthoritative`, `resolve_notGranted_usesFallback` |
+
+| Email thread grouping: `EmailThreadBuilder.threads(from:)` groups emails by `EmailThreading.threadKey` (normalized subject + party = resolved Person id else `fromAddress`) so a conversation's sent + received messages unite (Sent stores the recipient), messages sort latest-first, and `EmailThread.sentCount`/`receivedCount` reflect the split; different party/subject split into separate threads | Email threads / diary + activity | `gbpDiaryTests/Domain/EmailThreadBuilderTests.swift` | `conversationUnitesSentAndReceived`, `differentPartyOrSubjectSplits`, `partyMatchesByResolvedPersonAcrossAddresses` |
+| Whole-thread day summary (synthesized): `EmailThreadSummaryPrompt.build` embeds subject/participants + each message as "(sent/received <time>) <summary>" and carries the shared `AISummaryStyle` voice; `promptVersion` = base + `AISummaryStyle.version`; `EmailThreadSummaryFingerprint.make` is order-independent and changes when a member joins/leaves or re-summarises; `EmailThreadSummaryPlanning.needsSummary` is true when missing/stale/changed and false when settled (done/failed) with a matching fingerprint + current version | Email threads / on-device summary | `gbpDiaryTests/Domain/EmailThreadSummaryTests.swift` | `prompt_embedsDirectionsSummariesAndSharedVoice`, `promptVersion_foldsSharedStyleVersion`, `fingerprint_changesOnMemberOrVersionChange`, `needsSummary_trueWhenMissingStaleOrChanged_falseWhenCurrent` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 

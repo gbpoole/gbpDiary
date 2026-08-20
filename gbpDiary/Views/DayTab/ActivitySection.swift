@@ -11,6 +11,7 @@ struct ActivitySection: View {
     var meetings: [DayEntry] = []
     var completedTasks: [Task] = []
     var sentEmails: [EmailMessage] = []
+    var receivedEmails: [EmailMessage] = []   // this day's accepted received mail, shown in the digest
     // Lazily creates the DayRecord for `date` if it does not exist yet.
     var findOrCreateDayRecord: (() -> DayRecord)? = nil
     /// Trigger bindings wired from DayPageContent's action bar.
@@ -53,13 +54,19 @@ struct ActivitySection: View {
         sentEmails.filter { !WeekendPolicy.isWeekend($0.date) }
     }
 
-    // Sent emails bucketed into the focus block covering their send time (like time entries); the rest
-    // render standalone. Their logged time counts toward that block's net (or the day total).
-    private func sentEmails(for block: FocusBlock) -> [EmailMessage] {
-        weekdaySentEmails.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks)?.id == block.id }
+    // Received emails placed by receive time (informational in the digest; no logged time). Weekend-received
+    // mail folds to Monday in the reading section, so the activity digest uses weekday-dated received only.
+    private var weekdayReceivedEmails: [EmailMessage] {
+        receivedEmails.filter { !WeekendPolicy.isWeekend($0.date) }
     }
-    private var standaloneSentEmails: [EmailMessage] {
-        weekdaySentEmails.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks) == nil }
+    // All emails (sent + received) for a block / the standalone set — the digest groups these into threads.
+    private func blockEmails(for block: FocusBlock) -> [EmailMessage] {
+        (weekdaySentEmails + weekdayReceivedEmails)
+            .filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks)?.id == block.id }
+    }
+    private var standaloneEmails: [EmailMessage] {
+        (weekdaySentEmails + weekdayReceivedEmails)
+            .filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks) == nil }
     }
 
     // MARK: - Weekend work (folded onto Friday, shown as one overtime group)
@@ -144,7 +151,8 @@ struct ActivitySection: View {
 
     var body: some View {
         let hasContent = !blocks.isEmpty || !todayEntries.isEmpty
-            || !standaloneMeetings.isEmpty || !completedTasks.isEmpty || !sentEmails.isEmpty || hasWeekendWork
+            || !standaloneMeetings.isEmpty || !completedTasks.isEmpty
+            || !sentEmails.isEmpty || !receivedEmails.isEmpty || hasWeekendWork
 
         activityHeader
 
@@ -154,7 +162,7 @@ struct ActivitySection: View {
                 switch item {
                 case .block(let block):
                     FocusBlockRow(block: block, date: date, entries: entries(for: block),
-                                  meetings: meetings(for: block), sentEmails: sentEmails(for: block))
+                                  meetings: meetings(for: block), emails: blockEmails(for: block))
                 case .entry(let entry):
                     ActivityEntryRow(entry: entry)
                 }
@@ -164,9 +172,9 @@ struct ActivitySection: View {
                 StandaloneMeetingRow(minutes: minutes)
             }
 
-            // Standalone sent emails (outside every focus block), collapsed into one expandable group.
-            if !standaloneSentEmails.isEmpty {
-                SentEmailsGroupRow(emails: standaloneSentEmails)
+            // Standalone emails (outside every focus block) as a thread-grouped digest.
+            if !standaloneEmails.isEmpty {
+                EmailDigestGroupRow(emails: standaloneEmails)
             }
 
             ForEach(weekdayCompletedTasks) { task in

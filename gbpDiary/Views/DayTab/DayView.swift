@@ -45,6 +45,7 @@ struct DayPageContent: View {
 
     @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allTimeEntries: [TaskTimeEntry]
     @Query(sort: \EmailMessage.date, order: .reverse) private var allEmails: [EmailMessage]
+    @Query private var threadSummaries: [EmailThreadSummary]
     @Query private var allPeople: [Person]
     @State private var reconcilingThread: EmailThread?
 
@@ -66,21 +67,30 @@ struct DayPageContent: View {
 
     // Received emails for the day grouped into threads (same normalized subject + other party), latest first.
     private var dayEmailThreads: [EmailThread] {
-        let groups = Dictionary(grouping: dayReceivedEmails) { email in
-            EmailThreading.threadKey(subject: email.subject,
-                                     party: email.person?.id.uuidString ?? email.fromAddress)
-        }
-        return groups.map { key, msgs in
-            EmailThread(key: key, messages: msgs.sorted { $0.date > $1.date })
-        }
-        // More-important threads (High → Medium → Low) lead the day, then latest-first.
-        .sorted { $0.importance.rank != $1.importance.rank ? $0.importance.rank > $1.importance.rank : $0.date > $1.date }
+        EmailThreadBuilder.threads(from: dayReceivedEmails)
+            .map { thread in
+                var t = thread
+                t.synthesizedSummary = EmailThreadBuilder.summaryText(for: thread, in: threadSummaries)
+                return t
+            }
+            // More-important threads (High → Medium → Low) lead the day, then latest-first.
+            .sorted { $0.importance.rank != $1.importance.rank ? $0.importance.rank > $1.importance.rank : $0.date > $1.date }
     }
 
     // Sent emails for the day (shown in the Activity section at their send time) — work → Friday.
     private var daySentEmails: [EmailMessage] {
         allEmails.filter {
             workRange.contains($0.date) && $0.direction == .sent && $0.triageState == .accepted
+        }
+    }
+
+    // Accepted received emails on the viewed weekday — shown (informationally) in the Activity digest,
+    // placed into a block by receive time. Weekend-received mail stays only in the reading section.
+    private var dayActivityReceivedEmails: [EmailMessage] {
+        let cal = Calendar.current
+        return allEmails.filter {
+            $0.direction == .inbox && $0.triageState == .accepted
+                && cal.isDate($0.date, inSameDayAs: date) && !WeekendPolicy.isWeekend($0.date)
         }
     }
 
@@ -184,6 +194,7 @@ struct DayPageContent: View {
                         meetings: dayMeetings,
                         completedTasks: activityCompletedTasks,
                         sentEmails: daySentEmails,
+                        receivedEmails: dayActivityReceivedEmails,
                         findOrCreateDayRecord: findOrCreateDayRecord,
                         logTimeTrigger: $activityLogTimeTrigger,
                         focusBlockTrigger: $activityFocusBlockTrigger,

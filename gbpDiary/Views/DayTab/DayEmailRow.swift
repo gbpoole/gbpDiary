@@ -1,47 +1,6 @@
 import SwiftUI
 import SwiftData
 
-// A thread of the day's emails sharing a subject (ignoring Re:/Fwd:) and the same other party.
-// Rendered as one compact row; person/project edits apply to every message in the thread.
-struct EmailThread: Identifiable {
-    let key: String
-    let messages: [EmailMessage]   // sorted latest-first
-
-    var id: String { key }
-    var latest: EmailMessage { messages[0] }
-    var subject: String { latest.subject.isEmpty ? "(no subject)" : latest.subject }
-    var person: Person? { messages.first(where: { $0.person != nil })?.person }
-    var fromName: String? { latest.fromName }
-    var fromAddress: String { latest.fromAddress }
-    var direction: EmailDirection { latest.direction }
-    var count: Int { messages.count }
-    var date: Date { latest.date }
-
-    /// On-device AI summary (the latest message's) and whether it's still being generated.
-    var summary: String? { latest.summary }
-    var isSummarizing: Bool { latest.isSummarizing }
-
-    /// Thread importance = the highest across its messages (setting it writes them all — see the row).
-    var importance: EmailImportance {
-        messages.map(\.importance).max(by: { $0.rank < $1.rank }) ?? .low
-    }
-
-    /// To-dos made from any message in the thread.
-    var tasks: [Task] { messages.flatMap(\.tasks) }
-    var taskCount: Int { tasks.count }
-    var hasOpenTasks: Bool { tasks.contains(where: \.isOpen) }
-
-    /// Union of projects across the thread's messages (de-duplicated, order preserved).
-    var projects: [Project] {
-        var seen = Set<PersistentIdentifier>()
-        var out: [Project] = []
-        for m in messages {
-            for p in m.projects where seen.insert(p.persistentModelID).inserted { out.append(p) }
-        }
-        return out
-    }
-}
-
 // Compact one-line-forward email row: direction icon + person chip (in place of the name) + project
 // chips + count/time on the first line, subject on the second. The person chip resolves the sender
 // (ResolveAttendeeSheet); the project picker files the whole thread. No "Sent" chip — the icon shows it.
@@ -52,8 +11,38 @@ struct DayEmailThreadRow: View {
     @State private var mailService = MailScriptService()
     @State private var openError: String?
     @State private var openingTask: Task?
+    @State private var expanded = false
 
     var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            mainRow
+            // Drill-down: each message in the thread with its own per-email summary.
+            if expanded && thread.count > 1 {
+                ForEach(thread.messages, id: \.persistentModelID) { message in
+                    messageRow(message)
+                }
+            }
+        }
+        .contextMenu {
+            Button("Open in Mail", systemImage: "envelope.open") { openInMail(thread.latest) }
+            EmailExperimentInChatButton(email: thread.latest)
+            Button("Regenerate summary", systemImage: "sparkles") { regenerateSummary() }
+            Menu("Set importance") {
+                Button("High") { setImportance(.high) }
+                Button("Medium") { setImportance(.medium) }
+                Button("Low") { setImportance(.low) }
+            }
+        }
+        .alert("Couldn't open email", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: { Text(openError ?? "") }
+        .sheet(item: $openingTask) { task in
+            TaskEditorSheet(task: task, defaultDate: task.originEmail?.date ?? Date())
+        }
+    }
+
+    // The thread's headline row: person/project/importance chips + the whole-thread summary line.
+    private var mainRow: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: thread.direction == .sent ? "paperplane" : "envelope")
                 .foregroundStyle(.secondary)
@@ -71,8 +60,18 @@ struct DayEmailThreadRow: View {
                     }
                     EmailImportanceChip(importance: thread.importance)
                     Spacer(minLength: 0)
+                    // Multi-message threads expand to per-message summaries.
                     if thread.count > 1 {
-                        Chip(label: "\(thread.count)", color: .gray)
+                        Button { expanded.toggle() } label: {
+                            HStack(spacing: 3) {
+                                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                                    .font(.system(size: 9, weight: .semibold))
+                                Text("\(thread.count)")
+                            }
+                            .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help(expanded ? "Hide messages" : "Show each message")
                     }
                     Text(thread.date.formatted(date: .omitted, time: .shortened))
                         .font(.caption2).foregroundStyle(.secondary)
@@ -84,23 +83,29 @@ struct DayEmailThreadRow: View {
         .padding(.horizontal)
         .padding(.vertical, 3)
         .contentShape(Rectangle())
-        .onTapGesture { openInMail() }   // tapping the email opens it in Mail (the default action)
-        .contextMenu {
-            Button("Open in Mail", systemImage: "envelope.open") { openInMail() }
-            EmailExperimentInChatButton(email: thread.latest)
-            Button("Regenerate summary", systemImage: "sparkles") { regenerateSummary() }
-            Menu("Set importance") {
-                Button("High") { setImportance(.high) }
-                Button("Medium") { setImportance(.medium) }
-                Button("Low") { setImportance(.low) }
+        .onTapGesture { openInMail(thread.latest) }   // tapping opens the latest message in Mail
+    }
+
+    // A single message inside an expanded thread: direction + time + that message's own summary.
+    private func messageRow(_ message: EmailMessage) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: message.direction == .sent ? "paperplane" : "envelope")
+                .foregroundStyle(.tertiary).font(.system(size: 11)).frame(width: 18)
+            VStack(alignment: .leading, spacing: 1) {
+                HStack(spacing: 6) {
+                    Text(message.direction == .sent ? "Sent" : "Received")
+                        .font(.caption2).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                    Text(message.date.formatted(date: .omitted, time: .shortened))
+                        .font(.caption2).foregroundStyle(.secondary)
+                }
+                EmailContentLine(subject: message.subject, summary: message.summary,
+                                 isSummarizing: message.isSummarizing, font: .caption)
             }
         }
-        .alert("Couldn't open email", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
-            Button("OK", role: .cancel) {}
-        } message: { Text(openError ?? "") }
-        .sheet(item: $openingTask) { task in
-            TaskEditorSheet(task: task, defaultDate: task.originEmail?.date ?? Date())
-        }
+        .padding(.leading, 40).padding(.trailing).padding(.vertical, 1)
+        .contentShape(Rectangle())
+        .onTapGesture { openInMail(message) }
     }
 
     private func regenerateSummary() {
@@ -115,8 +120,8 @@ struct DayEmailThreadRow: View {
         for message in thread.messages { message.importance = importance }
     }
 
-    private func openInMail() {
-        mailService.openMessage(thread.latest) { result in
+    private func openInMail(_ message: EmailMessage) {
+        mailService.openMessage(message) { result in
             if case .failure(let error) = result { openError = error.userMessage }
         }
     }
