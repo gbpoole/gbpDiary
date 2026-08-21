@@ -12,19 +12,27 @@ struct DayEmailThreadRow: View {
     @State private var openError: String?
     @State private var openingTask: Task?
     @State private var expanded = false
+    @State private var showingLogTime = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             mainRow
-            // Drill-down: each message in the thread with its own per-email summary.
+            // Drill-down: each message in the thread — sent messages keep their time-logging row.
             if expanded && thread.count > 1 {
                 ForEach(thread.messages, id: \.persistentModelID) { message in
-                    messageRow(message)
+                    if message.direction == .sent {
+                        SentEmailActivityRow(email: message)
+                    } else {
+                        messageRow(message)
+                    }
                 }
             }
         }
         .contextMenu {
             Button("Open in Mail", systemImage: "envelope.open") { openInMail(thread.latest) }
+            if thread.sentCount > 0 {
+                Button("Log time…", systemImage: "clock") { showingLogTime = true }
+            }
             EmailExperimentInChatButton(email: thread.latest)
             Button("Regenerate summary", systemImage: "sparkles") { regenerateSummary() }
             Menu("Set importance") {
@@ -39,17 +47,37 @@ struct DayEmailThreadRow: View {
         .sheet(item: $openingTask) { task in
             TaskEditorSheet(task: task, defaultDate: task.originEmail?.date ?? Date())
         }
+        .sheet(isPresented: $showingLogTime) {
+            // Log against the latest sent message in the thread (single-sent = that one email).
+            LogTimeSheet(presetEmail: thread.messages.first { $0.direction == .sent } ?? thread.latest)
+        }
     }
 
     // The thread's headline row: person/project/importance chips + the whole-thread summary line.
+    // A single envelope icon for every thread — the sent/received breakdown gives the direction context.
+    private var countText: String {
+        var parts: [String] = []
+        if thread.sentCount > 0 { parts.append("\(thread.sentCount) sent") }
+        if thread.receivedCount > 0 { parts.append("\(thread.receivedCount) recv") }
+        return parts.joined(separator: " · ")
+    }
+    private var loggedHours: Double {
+        thread.messages.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
+    }
+
     private var mainRow: some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: thread.direction == .sent ? "paperplane" : "envelope")
+            Image(systemName: "envelope")
                 .foregroundStyle(.secondary)
                 .font(.system(size: 13))
                 .frame(width: 18)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
+                    // Direction/volume breakdown — leftmost, since the single envelope icon no longer
+                    // conveys direction and this is the key context.
+                    Text(countText)
+                        .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                        .fixedSize()
                     personChip
                     ForEach(thread.projects, id: \.persistentModelID) { project in
                         Chip(label: project.name, color: AppTheme.project)
@@ -60,15 +88,15 @@ struct DayEmailThreadRow: View {
                     }
                     EmailImportanceChip(importance: thread.importance)
                     Spacer(minLength: 0)
-                    // Multi-message threads expand to per-message summaries.
+                    if loggedHours > 0 {
+                        Chip(label: TimeFormat.short(hours: loggedHours), color: AppTheme.duration)
+                    }
+                    // Multi-message threads expand to per-message summaries (single-message threads don't).
                     if thread.count > 1 {
                         Button { expanded.toggle() } label: {
-                            HStack(spacing: 3) {
-                                Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                                    .font(.system(size: 9, weight: .semibold))
-                                Text("\(thread.count)")
-                            }
-                            .foregroundStyle(.secondary)
+                            Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                                .font(.system(size: 9, weight: .semibold))
+                                .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
                         .help(expanded ? "Hide messages" : "Show each message")

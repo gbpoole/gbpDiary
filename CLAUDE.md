@@ -741,20 +741,24 @@ party" — Inbox = sender, Sent = recipient), and `projects: [Project]`↔`Proje
 `dayEmails` list **excludes `dismissed`**. On fetch, `upsertEmails` auto-links `person` when the
 sender/recipient address already belongs to a Person — `EmailPersonMatching.personID(forAddress:in:)`
 (`Domain/EmailPersonMatching.swift`, pure; address-only, case-insensitive). Unmatched → `person == nil`,
-shown as a yellow "Unrecognized" chip. The diary Email list groups the day's emails into **threads**
-(same subject ignoring Re:/Fwd: + same other party — `Domain/EmailThreading.swift`,
-`threadKey`/`normalizedSubject`; grouped by the shared **`EmailThreadBuilder.threads(from:)`**, whose
-`EmailThread` value type — moved to `Domain/EmailThreadBuilder.swift` — carries `sentCount`/`receivedCount`
-and a `synthesizedSummary`) and renders each as a compact **`DayEmailThreadRow`**: direction icon
-+ an interactive **person chip** (in place of the sender name — click to reconcile via
-`ResolveAttendeeSheet`, applied to every message in the thread) + an inline **project picker** (files
-the whole thread) + message-count/time on the first line, and on the second the **whole-thread day
-summary**. **Multi-message threads expand** (chevron + count) to a **drill-down** of per-message rows
-(direction + time + that message's own per-email summary + tap-to-open-in-Mail). **Tapping the thread
-opens its latest message in Mail.app** — `MailScriptService.openMessage(_:)` resolves the real mailbox
-(`EmailSettingsStore`) + account and opens by Mail's integer id via `MailScriptParsing.openMessageScript`;
-the open action is also on `SentEmailActivityRow` and the triage rows, with a friendly alert if the message
-can't be opened.
+shown as a yellow "Unrecognized" chip. **The diary Email section is the single home for the day's mail
+(sent + received)** — sent emails do **not** render in the Activity section (only their logged time counts,
+see below). It groups the day's emails into **threads** (same subject ignoring Re:/Fwd: + same other party
+— `Domain/EmailThreading.swift`, `threadKey`/`normalizedSubject`; grouped by the shared
+**`EmailThreadBuilder.threads(from:)`**, whose `EmailThread` value type — in `Domain/EmailThreadBuilder.swift`
+— carries `sentCount`/`receivedCount` and a `synthesizedSummary`; a conversation's sent + received messages
+unite into one thread). Each renders as a compact **`DayEmailThreadRow`**: a **single envelope icon**, then the **`N sent · M recv`
+breakdown leftmost** (the key direction/volume context, since the icon no longer conveys direction) + an
+interactive **person chip** (click to reconcile via `ResolveAttendeeSheet`, applied to every message) +
+project chips + to-do + importance + an optional trailing **logged-time chip** on the first line, and the
+**whole-thread day summary** on the second. **Multi-message threads expand** (a trailing chevron) to a
+**drill-down**: **sent** messages
+render the full **`SentEmailActivityRow`** (with time-logging), **received** messages a compact
+summary/open-in-Mail row. **Single-message threads do not expand**; a sent single email is time-logged via
+the row's **"Log time…" context menu** (→ `LogTimeSheet(presetEmail:)`). Threads sort importance-first.
+**Tapping the thread opens its latest message in Mail.app** — `MailScriptService.openMessage(_:)` resolves
+the real mailbox (`EmailSettingsStore`) + account and opens by Mail's integer id via
+`MailScriptParsing.openMessageScript`, with a friendly alert if the message can't be opened.
 
 **Whole-thread day summary (synthesized, on-device).** A conversation's day summary is generated on-device
 over the member emails' **existing per-email summaries** (app-owned facts — never raw bodies), so it stays
@@ -769,25 +773,21 @@ for multi-message threads whose per-email summaries are all `done`, via
 `EmailThreadBuilder.summaryText(for:in:)` and fall back to the latest message's per-email summary while
 pending / for single-message threads.
 
-**Activity section = thread-grouped email digest.** In the **Activity** section, each focus block's emails
-(**sent + received**, placed by timestamp via `FocusBlockAssignment.containingBlock`; plus a standalone
-out-of-block group) render as an **`EmailDigestGroupRow`** — one bullet per conversation
-(`EmailDigestBullet`) showing the whole-thread summary + person/project chips + a `N sent · M recv`
-breakdown. Expanding a bullet reveals its messages: **sent** messages keep the full **`SentEmailActivityRow`**
-(so quick time-logging still feeds `TimeLedger`), **received** messages are informational (open-in-Mail).
-Received mail thus appears in both the reading section and the (time-anchored) digest; weekend-received
-stays only in the reading section (the digest uses weekday-dated received). Sent time still drives
-`FocusBlockRow.netHours` (received carry no `timeEntries`). The weekend overtime group still uses
-`SentEmailsGroupRow`. The expanded `SentEmailActivityRow` is a **two-line** row: line 1 groups all the controls together on the
+**Sent-email time still counts, but sent emails don't render in the Activity section.** The Activity section
+shows focus blocks, meetings, and task time — **no email rows**. A block's sent emails are still passed to
+`ActivitySection`/`FocusBlockRow` (as `sentEmails`) **only** so their logged time reduces the block's net
+remaining (`FocusBlockRow.netHours`) and the day Total/Overtime (via the canonical `TimeLedger`), consistent
+with where the emails render (the Email section). The `SentEmailActivityRow` (reused in the Email section's
+thread drill-down) is a **two-line** row: line 1 groups all the controls together on the
 left (open-in-Mail, then an **editable recipient chip** → `ResolveAttendeeSheet` (`resolvePerson` mirrors
 the triage row; links/creates a Person and adds the recipient address), an **editable project chip** →
 `FuzzyPickerField` picker, and the time-log actions), with the send time trailing on the right; line 2 is
 the **on-device AI summary** (or the de-emphasised subject until ready — `EmailMessage.isSummarizing`
 gates the "summarising…" hint) via the shared `EmailContentLine`. **Quick time-logging:** the one-click
 **`1m` / `5m` / `15m`** buttons **accumulate** (each appends an email-linked task-less `TaskTimeEntry` at
-the send time) plus an **`⋯`** that opens `LogTimeSheet(presetEmail:)` for custom values/editing. Email time chips
-and the group total render in minutes via `TimeFormat.short(hours:)` (`Domain/TimeFormat.swift`) rather
-than `Duration.displayString`'s hours. In-block email time reduces that block's **net remaining**
+the send time) plus an **`⋯`** that opens `LogTimeSheet(presetEmail:)` for custom values/editing. Email time
+chips render in minutes via `TimeFormat.short(hours:)` (`Domain/TimeFormat.swift`) rather than
+`Duration.displayString`'s hours. In-block email time reduces that block's **net remaining**
 (`FocusBlockRow.netHours` adds the emails' `timeEntries` hours); standalone email time adds to the day
 total. Email-linked entries are kept out of the plain entry bucketing/rendering (`taskEntries` = `email
 == nil`).

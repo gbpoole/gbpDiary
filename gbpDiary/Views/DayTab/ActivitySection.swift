@@ -10,8 +10,7 @@ struct ActivitySection: View {
     var todayEntries: [TaskTimeEntry]
     var meetings: [DayEntry] = []
     var completedTasks: [Task] = []
-    var sentEmails: [EmailMessage] = []
-    var receivedEmails: [EmailMessage] = []   // this day's accepted received mail, shown in the digest
+    var sentEmails: [EmailMessage] = []   // for the ledger + block-net only; emails render in the Email section
     // Lazily creates the DayRecord for `date` if it does not exist yet.
     var findOrCreateDayRecord: (() -> DayRecord)? = nil
     /// Trigger bindings wired from DayPageContent's action bar.
@@ -54,19 +53,10 @@ struct ActivitySection: View {
         sentEmails.filter { !WeekendPolicy.isWeekend($0.date) }
     }
 
-    // Received emails placed by receive time (informational in the digest; no logged time). Weekend-received
-    // mail folds to Monday in the reading section, so the activity digest uses weekday-dated received only.
-    private var weekdayReceivedEmails: [EmailMessage] {
-        receivedEmails.filter { !WeekendPolicy.isWeekend($0.date) }
-    }
-    // All emails (sent + received) for a block / the standalone set — the digest groups these into threads.
-    private func blockEmails(for block: FocusBlock) -> [EmailMessage] {
-        (weekdaySentEmails + weekdayReceivedEmails)
-            .filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks)?.id == block.id }
-    }
-    private var standaloneEmails: [EmailMessage] {
-        (weekdaySentEmails + weekdayReceivedEmails)
-            .filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks) == nil }
+    // A block's sent emails — NOT rendered here (emails live in the diary Email section), but their logged
+    // time still reduces the block's net remaining, so FocusBlockRow needs them for its net calc.
+    private func sentEmails(for block: FocusBlock) -> [EmailMessage] {
+        weekdaySentEmails.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks)?.id == block.id }
     }
 
     // MARK: - Weekend work (folded onto Friday, shown as one overtime group)
@@ -152,7 +142,7 @@ struct ActivitySection: View {
     var body: some View {
         let hasContent = !blocks.isEmpty || !todayEntries.isEmpty
             || !standaloneMeetings.isEmpty || !completedTasks.isEmpty
-            || !sentEmails.isEmpty || !receivedEmails.isEmpty || hasWeekendWork
+            || !sentEmails.isEmpty || hasWeekendWork
 
         activityHeader
 
@@ -162,7 +152,7 @@ struct ActivitySection: View {
                 switch item {
                 case .block(let block):
                     FocusBlockRow(block: block, date: date, entries: entries(for: block),
-                                  meetings: meetings(for: block), emails: blockEmails(for: block))
+                                  meetings: meetings(for: block), sentEmails: sentEmails(for: block))
                 case .entry(let entry):
                     ActivityEntryRow(entry: entry)
                 }
@@ -170,11 +160,6 @@ struct ActivitySection: View {
 
             ForEach(standaloneMeetings, id: \.id) { minutes in
                 StandaloneMeetingRow(minutes: minutes)
-            }
-
-            // Standalone emails (outside every focus block) as a thread-grouped digest.
-            if !standaloneEmails.isEmpty {
-                EmailDigestGroupRow(emails: standaloneEmails)
             }
 
             ForEach(weekdayCompletedTasks) { task in
@@ -256,7 +241,6 @@ struct ActivitySection: View {
         .buttonStyle(.plain)
         if !weekendCollapsed {
             ForEach(weekendEntries) { entry in ActivityEntryRow(entry: entry) }
-            if !weekendSentEmails.isEmpty { SentEmailsGroupRow(emails: weekendSentEmails) }
             ForEach(weekendCompletedTasks) { task in CompletedTaskActivityRow(task: task) }
         }
     }
@@ -317,61 +301,8 @@ struct ActivitySection: View {
 
 }
 
-// Collapses a set of sent emails into a single expandable summary row ("N sent · total logged"),
-// keeping the diary Activity uncluttered. Used for both a focus block's emails and the standalone ones.
-// Internal so FocusBlockRow can use it too.
-struct SentEmailsGroupRow: View {
-    var emails: [EmailMessage]
-    @State private var expanded = false
-
-    private var totalHours: Double {
-        emails.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            summaryRow
-            if expanded {
-                ForEach(emails, id: \.persistentModelID) { email in
-                    SentEmailActivityRow(email: email)
-                }
-            }
-        }
-    }
-
-    private var summaryRow: some View {
-        HStack(alignment: .center, spacing: 6) {
-            Color.clear.frame(width: 16, height: 1)
-            HStack(alignment: .center, spacing: 6) {
-                Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(AppTheme.mutedText)
-                    .frame(width: 14)
-                Image(systemName: "paperplane")
-                    .font(.system(size: 12)).foregroundStyle(AppTheme.person).frame(width: 18)
-                Text("\(emails.count) sent email\(emails.count == 1 ? "" : "s")")
-                    .font(.subheadline).foregroundStyle(AppTheme.text)
-                Spacer(minLength: 8)
-                if totalHours > 0 {
-                    Chip(label: TimeFormat.short(hours: totalHours), color: AppTheme.duration)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(AppTheme.cardRaised.opacity(0.45))
-            .clipShape(RoundedRectangle(cornerRadius: 5))
-            .contentShape(Rectangle())
-            .onTapGesture { expanded.toggle() }
-            .padding(.trailing)
-        }
-        .padding(.leading)
-        .padding(.vertical, 1)
-    }
-}
-
-// A sent email in the activity timeline (inside its focus block by send time, or standalone), with a
-// button to log time spent sending it (an email-linked TaskTimeEntry counted toward the block/day).
-// Internal so FocusBlockRow can render block-nested sent emails too.
+// A sent email row with time-logging (an email-linked TaskTimeEntry counted toward the block/day). Shown
+// inside an expanded email thread's drill-down in the diary Email section.
 struct SentEmailActivityRow: View {
     var email: EmailMessage
     @Environment(\.modelContext) private var modelContext

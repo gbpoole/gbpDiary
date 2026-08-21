@@ -9,7 +9,9 @@ struct FocusBlockRow: View {
     // Entries whose time falls in this block's range (derived by ActivitySection, not stored).
     var entries: [TaskTimeEntry] = []
     var meetings: [DayEntry] = []
-    var emails: [EmailMessage] = []   // sent + received in this block (received carry no logged time)
+    // The block's sent emails — not rendered here (emails live in the Email section); used only so their
+    // logged time reduces this block's net remaining, consistent with the canonical TimeLedger.
+    var sentEmails: [EmailMessage] = []
 
     private var blockActivities: [TaskTimeEntry] {
         entries.sorted { $0.date < $1.date }
@@ -19,8 +21,7 @@ struct FocusBlockRow: View {
         let taskHours = entries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
         let meetingHours = meetings.compactMap(\.minutes).compactMap(\.duration)
             .reduce(0.0) { $0 + $1.hoursNormalized }
-        // Only sent emails carry logged time; received contribute 0, so summing all is correct.
-        let emailHours = emails.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
+        let emailHours = sentEmails.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
         return FocusBlockMath.netHours(capacity: block.duration.hoursNormalized,
                                        loggedHours: taskHours + meetingHours + emailHours)
     }
@@ -107,7 +108,7 @@ struct FocusBlockRow: View {
     private var durationChips: some View {
         HStack(spacing: 4) {
             Chip(label: block.slot.displayName, color: AppTheme.project)
-            if netHours > 0 && (!blockActivities.isEmpty || !meetings.isEmpty || !emails.isEmpty) {
+            if netHours > 0 && (!blockActivities.isEmpty || !meetings.isEmpty || !sentEmails.isEmpty) {
                 let netDur = Duration(value: netHours, unit: .h)
                 Chip(label: netDur.displayString, color: AppTheme.duration)
             }
@@ -143,9 +144,6 @@ struct FocusBlockRow: View {
             case .entry(let entry):
                 ActivityEntryRow(entry: entry)
             }
-        }
-        if !emails.isEmpty {
-            EmailDigestGroupRow(emails: emails)
         }
     }
 }
