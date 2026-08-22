@@ -92,6 +92,35 @@ struct MailScriptParsingTests {
         #expect(drafts[1].name == nil)
     }
 
+    @Test func parseOutput_parsesReplyChainHeaders() {
+        let rec = record(["in", "42", "Alice <a@x.com>", "Re: Hello",
+                          "2026", "7", "29", "9", "15", "0",
+                          "<msg-2@x>", "<msg-1@x>", "<root@x> <msg-1@x>"])
+        let drafts = MailScriptParsing.parseOutput(rec + RS, calendar: utc)
+        #expect(drafts.count == 1)
+        #expect(drafts[0].rfcMessageId == "msg-2@x")        // bare, brackets stripped
+        #expect(drafts[0].inReplyTo == "msg-1@x")
+        #expect(drafts[0].references == ["root@x", "msg-1@x"])
+    }
+
+    @Test func parseOutput_oldTenFieldRecordStillParses() {
+        // Backward compatible: a record without the header fields yields empty reply info.
+        let rec = record(["in", "7", "a@x.com", "S", "2026", "7", "29", "1", "2", "3"])
+        let drafts = MailScriptParsing.parseOutput(rec + RS, calendar: utc)
+        #expect(drafts.count == 1)
+        #expect(drafts[0].rfcMessageId == "")
+        #expect(drafts[0].inReplyTo == nil)
+        #expect(drafts[0].references.isEmpty)
+    }
+
+    @Test func parseMessageIds_extractsBareTokens() {
+        #expect(MailScriptParsing.parseMessageIds("<a@x> <b@y>") == ["a@x", "b@y"])
+        #expect(MailScriptParsing.parseMessageIds("  <a@x>  ") == ["a@x"])
+        #expect(MailScriptParsing.parseMessageIds("bare@x") == ["bare@x"])   // no-brackets fallback
+        #expect(MailScriptParsing.parseMessageIds("").isEmpty)
+        #expect(MailScriptParsing.normalizeMessageId("  <a@x>  ") == "a@x")
+    }
+
     @Test func parseOutput_skipsMalformedRecords() {
         let good = record(["in", "<a>", "a@x.com", "S", "2026", "7", "29", "1", "2", "3"])
         let bad = "in\(FS)only\(FS)three"

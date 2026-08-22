@@ -514,14 +514,16 @@ AppleScript over `MailScriptParsing.script(rangeStart:rangeEnd:)` with datetime 
 run uses the full 3 days. New drafts are upserted (`EmailIngest.upsert`, deduped by Mail's integer id).
 **Triage is tri-state** (`Domain/EmailTriage.swift`, `EmailTriageState` from two stored bools
 `EmailMessage.dismissed`/`accepted`): **unclassified** (new inbox mail — waits in triage), **accepted**
-(shown on the diary), **dismissed** (hidden). On ingest, **sent** mail is auto-accepted, mail matching a
+(shown on the diary), **dismissed** (hidden). On ingest, mail matching a
 **spam rule** (`Domain/EmailExclude.swift`, `EmailExcludeRule` = a **sender** rule [full address or
 domain `x.com`/`@x.com`] or a **subject** rule [subject *contains* the text, e.g. `[lsc-all]`];
-case-insensitive, future-only, managed in the Email settings "Spam rules" pane) is dismissed, and other
-received mail is unclassified; the "other party" is auto-linked when the address is a known Person. A one-time migration (`migrateTriageOnce`) accepts pre-existing non-dismissed emails so
-they stay on the diary. The diary Email section shows only **accepted, received** threads
-(`DayEmailThreadRow`; **tapping a thread opens it in Mail**) — **sent** emails no longer appear here (they
-live only in the Activity section, see below), removing the old sent/received duplication. The section
+case-insensitive, future-only, managed in the Email settings "Spam rules" pane) is dismissed, and
+everything else — **sent and received** — is **unclassified** (so **sent mail is actively triaged like
+received**: file a project / log time / accept it on the Emails page; it was previously auto-accepted); the
+"other party" is auto-linked when the address is a known Person. A one-time migration (`migrateTriageOnce`)
+accepts pre-existing non-dismissed emails so they stay on the diary. The diary Email section shows
+**accepted** threads (sent + received — `DayEmailThreadRow`), so a newly-sent email appears there only once
+accepted in triage. The section
 also shows a **"N to triage"** hint (this day's unclassified count); both it and the section-header tray
 button open the central **Triage page** (`workspace.focusOrOpen(.triage)`, `EmailTriageView` — described
 below), not a day sheet. We piggyback on Mail (which already holds the OAuth-authenticated Gmail/M365
@@ -743,16 +745,18 @@ sender/recipient address already belongs to a Person — `EmailPersonMatching.pe
 (`Domain/EmailPersonMatching.swift`, pure; address-only, case-insensitive). Unmatched → `person == nil`,
 shown as a yellow "Unrecognized" chip. **The diary Email section is the single home for the day's mail
 (sent + received)** — sent emails do **not** render in the Activity section (only their logged time counts,
-see below). It groups the day's emails into **threads** (same subject ignoring Re:/Fwd: + same other party
-— `Domain/EmailThreading.swift`, `threadKey`/`normalizedSubject`; grouped by the shared
+see below). It groups the day's emails into **threads** by **conversation subject** (Re:/Fwd: stripped —
+`Domain/EmailThreading.swift`, `threadKey`/`normalizedSubject`; standard subject threading, so a multi-party
+exchange stays one thread; grouped by the shared
 **`EmailThreadBuilder.threads(from:)`**, whose `EmailThread` value type — in `Domain/EmailThreadBuilder.swift`
 — carries `sentCount`/`receivedCount` and a `synthesizedSummary`; a conversation's sent + received messages
-unite into one thread). Each renders as a compact **`DayEmailThreadRow`**: a **single envelope icon**, then the **`N sent · M recv`
-breakdown leftmost** (the key direction/volume context, since the icon no longer conveys direction) + an
-interactive **person chip** (click to reconcile via `ResolveAttendeeSheet`, applied to every message) +
-project chips + to-do + importance + an optional trailing **logged-time chip** on the first line, and the
-**whole-thread day summary** on the second. **Multi-message threads expand** (a trailing chevron) to a
-**drill-down**: **sent** messages
+unite into one thread). Each renders as a compact **`DayEmailThreadRow`** whose first line is, left to right: a **leading expand
+control** (the collapse chevron for multi-message threads, or a neutral bullet of the same fixed width for
+single-message ones, so everything to its right aligns across threads) + an interactive **person chip**
+(click to reconcile via `ResolveAttendeeSheet`, applied to every message) + project chips + a **single
+envelope icon** + the **`N sent · M recv` breakdown** (the key direction/volume context, since the envelope
+no longer conveys direction) + to-do + importance + a trailing **logged-time chip**; the second line is the
+**whole-thread day summary**. **Multi-message threads expand** (the leading chevron) to a **drill-down**: **sent** messages
 render the full **`SentEmailActivityRow`** (with time-logging), **received** messages a compact
 summary/open-in-Mail row. **Single-message threads do not expand**; a sent single email is time-logged via
 the row's **"Log time…" context menu** (→ `LogTimeSheet(presetEmail:)`). Threads sort importance-first.
@@ -792,28 +796,34 @@ chips render in minutes via `TimeFormat.short(hours:)` (`Domain/TimeFormat.swift
 total. Email-linked entries are kept out of the plain entry bucketing/rendering (`taskEntries` = `email
 == nil`).
 
-**`EmailTriageView`** (the sidebar **Triage** page; opened from the diary **Email section header's tray
+**`EmailTriageView`** (the sidebar **Emails** page; opened from the diary **Email section header's tray
 button** or the "N to triage" hint via `workspace.focusOrOpen(.triage)`) is the accept/dismiss workspace.
-It shows **all fetched days at once** (grouped into `List` **Sections** by start-of-day, most-recent
-first — so a multi-day backlog is cleared in one place; the store's rolling ~3-day fetch window bounds
+It shows **all fetched days at once** (grouped into `List` **Sections** by start-of-day, **most-recent day
+first**; within a day threads run **earliest → latest**; the store's rolling ~3-day fetch window bounds
 it), **segmented into four mutually-exclusive
 buckets** (`EmailTriageCategory`: **To triage / Accepted / Tasks / Dismissed**, each with a
-store-wide count;
-default To-triage). A to-do'd email is still `accepted` but shows under **Tasks**
-(`EmailTriageCategory.classify(state:hasTasks:)`). There's a **Refresh** button (incremental fetch-now).
-Each row with a to-do shows a **to-do status chip** (open = `AppTheme.action` / done = green) that opens
-the linked task; its **context menu deletes the to-do** (undo make-todo — the email survives and falls
-back to the **Accepted** bucket). There is no multi-select/bulk toolbar — each row (`EmailTriageRow`) groups
-its **person chip · project chip · to-do chip · classification action icons** all together on the **left**
-(next to the info used to decide), with only the send time trailing right. The **quick action
-icons** (Accept ✓ / Dismiss ✕ / move-back-to-triage — only the ones that change the current state
-show), open in Mail, the summary line, an inline project `FuzzyPickerField`, a person chip →
-`ResolveAttendeeSheet` (`resolvePerson` mirrors `MinutesDetailView.resolveAttendee`), a context menu to
-**exclude the sender / domain** (`EmailExcludeStore.add` + dismiss), a **Make todo** action
-(`checklist` icon) that opens `TaskEditorSheet` seeded from the email (summary = subject, notes =
-summary, project = the email's assigned project) and on create links `Task.originEmail = email`
-↔ `EmailMessage.tasks` (deleting the email nullifies the link; the task survives) and marks the email
-**accepted**, and **tap-to-apply project suggestion chips** (never auto-applied):
+store-wide count; default To-triage). **Rows are whole email threads, not individual messages** — a day's
+emails are grouped via `EmailThreadBuilder.threads(from:)` and each thread is bucketed by
+`EmailTriageCategory.classifyThread` (any **unclassified** message keeps the thread in **To triage**; else a
+linked to-do → **Tasks**; else any accepted → **Accepted**; else **Dismissed**). Each `EmailTriageThreadRow`
+reads top-to-bottom in the order you parse it: **line 1** = the thread's **emphasised stripped subject**
+(`EmailThread.displaySubject` — Re:/Fwd: removed, case preserved) + `N sent · M recv` + an **open-in-Mail
+envelope** (opens **every** message of the thread) with the time trailing right; **line 2** = the
+whole-thread **summary** (or "summarising…"); **line 3** = the chips/actions. **Every triage action applies
+to the whole thread at once**: the project chip + inline `FuzzyPickerField` (and tap-to-apply suggestions)
+**file the same project set on all messages**; the importance picker sets it on all (thread importance =
+max); the person chip → `ResolveAttendeeSheet` reconciles the other party for **all** messages; the
+classification icons (Accept ✓ / Dismiss ✕ / move-back-to-triage — only the ones that change some message
+show) sit **after the other icons** and set the state on **every** message. There's
+also **quick time-logging** — **5m / 15m** capsule chips (like the diary) that append an email-linked
+`TaskTimeEntry` to the thread's **latest sent message** (else its latest), plus a running logged-time chip.
+There's a **Refresh** button (incremental fetch-now). The row also has: a **to-do chip** (opens/deletes the
+thread's linked to-dos), a context menu to **exclude the
+sender / domain** (`EmailExcludeStore.add` + dismiss the thread), and a **Make todo** action (`checklist`
+icon) that opens `TaskEditorSheet` seeded from the thread's latest message (summary = subject, notes =
+summary, project = the assigned project) and on create links `Task.originEmail = email`
+↔ `EmailMessage.tasks` (deleting the email nullifies the link; the task survives) and marks the **whole
+thread accepted**. **Tap-to-apply project suggestion chips** (never auto-applied):
 `Domain/EmailProjectSuggestions.swift` (`rank`) combines the sender's Person projects + projects on
 prior same-sender/thread emails + an **on-device AI pick** (`EmailMessage.suggestedProjectID`, set by
 `EmailSummaryDriver` via `FoundationModelsSummarizer.suggestProjectName`). The email↔to-do link is
@@ -1020,12 +1030,13 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Email→Person matching: `EmailPersonMatching.personID(forAddress:in:)` returns the id of the Person whose ordered `emails` contain the address (case-insensitive, whitespace-trimmed); nil for no match or blank address | Email management / auto-resolve person | `gbpDiaryTests/Domain/EmailPersonMatchingTests.swift` | `personID_matchesPrimaryAddress`, `personID_matchesSecondaryAddress`, `personID_isCaseInsensitive`, `personID_nilWhenNoMatch`, `personID_nilForBlankAddress`, `personID_trimsWhitespaceBeforeMatching` |
 | Email ingest classification: `EmailIngestPlanning.candidates(drafts:account:existing:)` marks each fetched draft `.ingested` / `.notChosen` / `.new` by its dedupe key against the existing-email map (key→dismissed); `defaultSelected` is on for new + ingested, off for previously-skipped; `mailbox(for:)` maps direction→INBOX/Sent | Email ingest window | `gbpDiaryTests/Domain/EmailIngestPlanningTests.swift` | `candidates_classifiesNewIngestedAndSkipped`, `defaultSelected_onForNewAndIngested_offForSkipped`, `mailbox_mapsDirection` |
 | Mailing-list loopback exclusion: `EmailSelfMatching.normalizedAddresses` trims/lowercases/dedups/drops blanks; `isInboxFromSelf(direction:fromAddress:myAddresses:)` is true only for a received email whose sender is one of my own addresses (case/space-insensitive), false for sent mail, a blank address, or an empty address set | Email ingest / self-loopback | `gbpDiaryTests/Domain/EmailSelfMatchingTests.swift` | `normalizedAddresses_trimsLowercasesDedupsAndDropsBlanks`, `isInboxFromSelf_trueForInboxSenderMatch_caseAndSpaceInsensitive`, `isInboxFromSelf_falseForSentEvenWhenSenderIsMine`, `isInboxFromSelf_falseWhenSenderNotMine`, `isInboxFromSelf_falseForBlankAddressOrEmptySet` |
-| Email threading: `EmailThreading.normalizedSubject` strips repeated Re:/Fwd:/Fw: prefixes (trim+lowercase); `threadKey(subject:party:)` combines the normalized subject with the lowercased party so replies with the same other party share a key | Diary email threading | `gbpDiaryTests/Domain/EmailThreadingTests.swift` | `normalizedSubject_stripsReplyAndForwardPrefixes`, `threadKey_sameSubjectAndParty_matchAcrossReplies`, `threadKey_differentParty_differs` |
+| Email threading: `EmailThreading.strippedSubject` removes repeated Re:/Fwd:/Fw: prefixes + trims **preserving case** (for display — `EmailThread.displaySubject`); `normalizedSubject` = that lowercased (for keying); `threadKey(subject:party:)` keys by the normalized **subject** only (standard subject threading — no RFC References headers), so a multi-party exchange on one subject stays a single thread; empty/no-subject mail falls back to the party so unrelated blanks don't merge | Diary email threading | `gbpDiaryTests/Domain/EmailThreadingTests.swift`, `gbpDiaryTests/Domain/EmailThreadBuilderTests.swift` | `normalizedSubject_stripsReplyAndForwardPrefixes`, `strippedSubject_stripsPrefixesButPreservesCase`, `threadKey_sameSubjectAcrossReplies_matches`, `threadKey_sameSubjectDifferentParty_matches`, `threadKey_differentSubject_differs`, `threadKey_emptySubject_fallsBackToParty`, `multiPartyExchangeStaysOneThread`, `sameSubjectMerges_differentSubjectSplits` |
 | Email spam rules: `EmailExcludeMatching.isExcluded(fromAddress:subject:rules:)` dismisses mail matching any `EmailExcludeRule` — a **sender** rule (full address or domain `x.com`/`@x.com`) or a **subject** rule (subject *contains* the text, case-insensitive, so `[lsc-all]` catches `Re: [lsc-all] …`); `normalizePattern` lowercases sender / preserves subject case; `suggestions(forAddress:)` offers the address + `@domain`; `EmailExcludeStore` add dedups by id + remove + migrates the legacy sender string list | Email triage / spam rules | `gbpDiaryTests/Domain/EmailExcludeTests.swift` | `isExcluded_senderFullAddress_caseInsensitive`, `isExcluded_senderDomainRule_matchesAnyAddressOnDomain`, `isExcluded_subjectRule_matchesSubstringCaseInsensitively`, `isExcluded_blankOrEmpty_false`, `normalizePattern_sender_lowercases_subject_preservesCase`, `suggestions_forAddress_offersAddressAndDomain`, `store_addRemove_typedRules`, `store_migratesLegacySenderList` |
 | Email project suggestions: `EmailProjectSuggestions.rank` orders AI pick first, then prior sender/thread projects by frequency, then the sender's Person projects; excludes already-assigned; dedups by id; caps | Email triage / suggestions | `gbpDiaryTests/Domain/EmailProjectSuggestionsTests.swift` | `rank_aiFirstThenPriorThenSender`, `rank_priorFrequencyAccumulates`, `rank_excludesAlreadyAssigned`, `rank_capsAndIgnoresUnknownIDs` |
 | Mail range fetch: `MailScriptParsing.script(rangeStart:rangeEnd:)` embeds both datetime bounds (`mkDateTime`) for the auto-ingest window | Email auto-ingest | `gbpDiaryTests/Domain/MailScriptParsingTests.swift` | `scriptRange_embedsBothDayBounds`, `script_containsDayBoundsAccountAndMailboxes` |
 | Email triage state: `EmailTriageState.from(dismissed:accepted:)` — dismissed wins, else accepted→accepted / neither→unclassified | Email triage | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `state_dismissedWins`, `state_acceptedThenUnclassified` |
 | Triage bucket: `EmailTriageCategory.classify(state:hasTasks:)` — dismissed wins; else a linked to-do → Tasks; else accepted → Accepted; else To triage | Email triage / task bucket | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `category_classify_bucketsByStateAndTasks` |
+| Thread triage bucket: `EmailTriageCategory.classifyThread(_:)` buckets a whole thread from its messages' (state, hasTasks) — any unclassified message keeps it in To triage; else any linked to-do → Tasks; else any accepted → Accepted; else Dismissed; empty → To triage. The Emails page groups by thread and every triage action (accept/dismiss, project, importance, person) applies to all messages | Email triage / thread rows | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `classifyThread_bucketsAWholeThread` |
 | `Task.isOpen` is false only when completed/cancelled; `EmailMessage.hasTasks`/`hasOpenTask` reflect linked task presence/openness | Email→task visibility | `gbpDiaryTests/Models/TaskComputedPropertyTests.swift` | `isOpen_trueUntilCompletedOrCancelled`, `email_hasOpenTask_reflectsLinkedTaskStatuses` |
 | `EmailMessage.isSummarizing` is true only while `summaryState` is `pending` (drives the sent-email activity row's summary-vs-subject display) | Activity section / sent-email summaries | `gbpDiaryTests/Models/TaskComputedPropertyTests.swift` | `email_isSummarizing_trueOnlyWhilePending` |
 | Incremental fetch: `EmailIngest.fetchBounds(lastFetchedAt:now:)` — first run = full 3-day window; otherwise from `last − 10-min overlap` (clamped to the window start) to end-of-today | Email auto-ingest | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `fetchBounds_firstRun_usesFullWindow`, `fetchBounds_incremental_startsJustBeforeLastFetch`, `fetchBounds_longGap_clampsToWindowStart` |

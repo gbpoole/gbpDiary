@@ -65,23 +65,44 @@ struct DayEmailThreadRow: View {
         thread.messages.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
     }
 
+    // Expand chevron for multi-message threads; a neutral bullet (same width) for single-message ones so
+    // the content to the right stays aligned across all threads.
+    @ViewBuilder private var expandControl: some View {
+        Group {
+            if thread.count > 1 {
+                Button { expanded.toggle() } label: {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(expanded ? "Hide messages" : "Show each message")
+            } else {
+                Image(systemName: "circle.fill")
+                    .font(.system(size: 4))
+                    .foregroundStyle(.tertiary)
+            }
+        }
+        .frame(width: 12, alignment: .center)
+    }
+
     private var mainRow: some View {
         HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "envelope")
-                .foregroundStyle(.secondary)
-                .font(.system(size: 13))
-                .frame(width: 18)
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
-                    // Direction/volume breakdown — leftmost, since the single envelope icon no longer
-                    // conveys direction and this is the key context.
-                    Text(countText)
-                        .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
-                        .fixedSize()
+                    // Leading control: expand chevron for multi-message threads, else a neutral bullet — a
+                    // fixed-width slot so everything to its right aligns across threads.
+                    expandControl
                     personChip
                     ForEach(thread.projects, id: \.persistentModelID) { project in
                         Chip(label: project.name, color: AppTheme.project)
                     }
+                    // Envelope icon + direction/volume breakdown, after the project chip.
+                    Image(systemName: "envelope")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                    Text(countText)
+                        .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
+                        .fixedSize()
                     if thread.taskCount > 0 {
                         EmailTodoChip(count: thread.taskCount, hasOpen: thread.hasOpenTasks,
                                       onOpen: { openingTask = thread.tasks.first })
@@ -90,16 +111,6 @@ struct DayEmailThreadRow: View {
                     Spacer(minLength: 0)
                     if loggedHours > 0 {
                         Chip(label: TimeFormat.short(hours: loggedHours), color: AppTheme.duration)
-                    }
-                    // Multi-message threads expand to per-message summaries (single-message threads don't).
-                    if thread.count > 1 {
-                        Button { expanded.toggle() } label: {
-                            Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(.secondary)
-                        }
-                        .buttonStyle(.plain)
-                        .help(expanded ? "Hide messages" : "Show each message")
                     }
                     Text(thread.date.formatted(date: .omitted, time: .shortened))
                         .font(.caption2).foregroundStyle(.secondary)

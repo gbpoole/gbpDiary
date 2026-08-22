@@ -29,12 +29,23 @@ struct EmailThreadBuilderTests {
         #expect(threads[0].latest.date == sent.date)   // sorted latest-first
     }
 
-    @Test func differentPartyOrSubjectSplits() {
+    @Test func sameSubjectMerges_differentSubjectSplits() {
         let a = msg("ADACS proposal", .inbox, "x@y.com", 9)
-        let b = msg("ADACS proposal", .inbox, "z@y.com", 10)   // different party
-        let c = msg("Gen3 timing", .inbox, "x@y.com", 11)      // different subject
+        let b = msg("Re: ADACS proposal", .inbox, "z@y.com", 10)   // different party, same subject → merges
+        let c = msg("Gen3 timing", .inbox, "x@y.com", 11)          // different subject → separate
         let threads = EmailThreadBuilder.threads(from: [a, b, c])
-        #expect(threads.count == 3)
+        #expect(threads.count == 2)
+        #expect(threads.first { $0.subject.lowercased().contains("adacs") }?.count == 2)
+    }
+
+    @Test func multiPartyExchangeStaysOneThread() {
+        // The reported bug: an exchange involving two people (Jarrod + Cheryl) split across threads.
+        let m1 = msg("Project plan", .inbox, "jarrod@x.com", 9)
+        let m2 = msg("Re: Project plan", .sent, "cheryl@x.com", 10)
+        let m3 = msg("Re: Project plan", .inbox, "cheryl@x.com", 11)
+        let threads = EmailThreadBuilder.threads(from: [m1, m2, m3])
+        #expect(threads.count == 1)
+        #expect(threads[0].count == 3)
     }
 
     @Test func partyMatchesByResolvedPersonAcrossAddresses() {

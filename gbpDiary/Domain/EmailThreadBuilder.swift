@@ -19,6 +19,11 @@ struct EmailThread: Identifiable {
     var id: String { key }
     var latest: EmailMessage { messages[0] }
     var subject: String { latest.subject.isEmpty ? "(no subject)" : latest.subject }
+    /// The conversation subject with Re:/Fwd: prefixes stripped (case preserved) — for display.
+    var displaySubject: String {
+        let s = EmailThreading.strippedSubject(latest.subject)
+        return s.isEmpty ? "(no subject)" : s
+    }
     var person: Person? { messages.first(where: { $0.person != nil })?.person }
     var fromName: String? { latest.fromName }
     var fromAddress: String { latest.fromAddress }

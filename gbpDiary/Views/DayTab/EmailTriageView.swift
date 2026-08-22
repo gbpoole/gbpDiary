@@ -1,15 +1,17 @@
 import SwiftUI
 import SwiftData
 
-// The central email triage page (sidebar "Emails"). Shows every fetched email across all days —
-// segmented by triage bucket (To triage / Accepted / Tasks / Dismissed) with global counts and grouped
-// under day headers — so a multi-day backlog is cleared in one place. Each row has quick
-// accept/dismiss/unclassify icons, opens in Mail, files projects (with tap-to-apply suggestions),
-// reconciles the person, and can exclude the sender. Refresh fetches new mail since the last fetch.
+// The central email triage page (sidebar "Emails"). Shows every fetched email (sent + received) across all
+// days, **grouped into threads** and segmented by triage bucket (To triage / Accepted / Tasks / Dismissed)
+// with global counts, under day headers — so a multi-day backlog is cleared in one place. Triage acts on a
+// whole thread at once: accept/dismiss, file the project, set importance, reconcile the person — plus
+// quick time-logging (5/10/15 min) and make-todo. Sent mail is unclassified on ingest, so it is triaged
+// here like received. Refresh fetches new mail since the last fetch.
 struct EmailTriageView: View {
     @Environment(\.modelContext) private var modelContext
 
     @Query(sort: \EmailMessage.date, order: .reverse) private var allEmails: [EmailMessage]
+    @Query private var threadSummaries: [EmailThreadSummary]
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Query private var allPeople: [Person]
 
@@ -21,29 +23,44 @@ struct EmailTriageView: View {
     @State private var isFetching = false
     @State private var status: String?
 
-    private func emails(_ category: EmailTriageCategory) -> [EmailMessage] {
-        allEmails.filter { EmailTriageCategory.classify(state: $0.triageState, hasTasks: $0.hasTasks) == category }
-    }
-    private func count(_ category: EmailTriageCategory) -> Int { emails(category).count }
-
-    // The selected bucket's emails grouped by calendar day, most-recent day first (allEmails is
-    // date-descending, so the day order is descending too). Within each day, more-important emails
-    // (High → Medium → Low) float to the top, then latest-first.
-    private var dayGroups: [(day: Date, emails: [EmailMessage])] {
+    // All emails grouped by (day, thread), most-recent day first. Each thread carries its synthesized
+    // whole-thread day summary. `allEmails` is date-descending, so day order is descending too.
+    private var allDayThreadGroups: [(day: Date, threads: [EmailThread])] {
         let cal = Calendar.current
         var order: [Date] = []
-        var map: [Date: [EmailMessage]] = [:]
-        for email in emails(filter) {
+        var byDay: [Date: [EmailMessage]] = [:]
+        for email in allEmails {
             let day = cal.startOfDay(for: email.date)
-            if map[day] == nil { order.append(day); map[day] = [] }
-            map[day]?.append(email)
+            if byDay[day] == nil { order.append(day) }
+            byDay[day, default: []].append(email)
         }
         return order.map { day in
-            let sorted = (map[day] ?? []).sorted { a, b in
-                a.importance.rank != b.importance.rank ? a.importance.rank > b.importance.rank : a.date > b.date
+            let threads = EmailThreadBuilder.threads(from: byDay[day] ?? []).map { thread -> EmailThread in
+                var t = thread
+                t.synthesizedSummary = EmailThreadBuilder.summaryText(for: thread, in: threadSummaries)
+                return t
             }
-            return (day, sorted)
+            return (day, threads)
         }
+    }
+
+    private func category(of thread: EmailThread) -> EmailTriageCategory {
+        EmailTriageCategory.classifyThread(thread.messages.map { ($0.triageState, $0.hasTasks) })
+    }
+
+    // The selected bucket's threads, grouped by day. Days are most-recent first; within a day, threads run
+    // in ascending time (earliest → latest).
+    private var dayGroups: [(day: Date, threads: [EmailThread])] {
+        allDayThreadGroups.compactMap { group in
+            let threads = group.threads
+                .filter { category(of: $0) == filter }
+                .sorted { $0.date < $1.date }
+            return threads.isEmpty ? nil : (group.day, threads)
+        }
+    }
+
+    private func count(_ category: EmailTriageCategory) -> Int {
+        allDayThreadGroups.reduce(0) { $0 + $1.threads.filter { self.category(of: $0) == category }.count }
     }
 
     var body: some View {
@@ -57,17 +74,18 @@ struct EmailTriageView: View {
                 List {
                     ForEach(dayGroups, id: \.day) { group in
                         Section {
-                            ForEach(group.emails, id: \.persistentModelID) { email in
-                                EmailTriageRow(email: email, allProjects: allProjects,
-                                               suggestions: suggestions(for: email),
-                                               makeProject: makeProject,
-                                               onApplySuggestion: { apply($0, to: email) },
-                                               onReconcile: { reconciling = email },
-                                               onExcludeAddress: { excludeSender(email, domain: false) },
-                                               onExcludeDomain: { excludeSender(email, domain: true) },
-                                               onMakeTodo: { makingTodoFor = email },
-                                               onOpenTask: { openingTask = email.tasks.first },
-                                               onDeleteTasks: { deleteTasks(of: email) })
+                            ForEach(group.threads) { thread in
+                                EmailTriageThreadRow(
+                                    thread: thread, allProjects: allProjects,
+                                    suggestions: suggestions(for: thread.latest),
+                                    makeProject: makeProject,
+                                    onApplySuggestion: { apply($0, to: thread) },
+                                    onReconcile: { reconciling = thread.latest },
+                                    onExcludeAddress: { excludeSender(thread, domain: false) },
+                                    onExcludeDomain: { excludeSender(thread, domain: true) },
+                                    onMakeTodo: { makingTodoFor = thread.latest },
+                                    onOpenTask: { openingTask = thread.tasks.first },
+                                    onDeleteTasks: { deleteTasks(of: thread) })
                             }
                         } header: {
                             Text(group.day.formatted(.dateTime.weekday(.wide).day().month(.wide).year()))
@@ -87,7 +105,7 @@ struct EmailTriageView: View {
             TaskEditorSheet(
                 task: nil,
                 defaultDate: email.date,
-                onTaskCreated: { task in task.originEmail = email; email.accept() },
+                onTaskCreated: { task in task.originEmail = email; acceptThread(of: email) },
                 presetProject: email.projects.first,
                 presetSummary: email.subject.isEmpty ? nil : email.subject,
                 presetNotes: email.summary
@@ -107,8 +125,24 @@ struct EmailTriageView: View {
         }
     }
 
-    private func deleteTasks(of email: EmailMessage) {
-        for task in email.tasks { modelContext.delete(task) }
+    // MARK: - Thread membership helpers
+
+    // All emails in the same (day + subject) thread as `email` — so a triage action applies to the whole
+    // conversation even after a re-render rebuilds the EmailThread value.
+    private func threadMessages(of email: EmailMessage) -> [EmailMessage] {
+        let cal = Calendar.current
+        let key = EmailThreadBuilder.threadKey(for: email)
+        return allEmails.filter {
+            cal.isDate($0.date, inSameDayAs: email.date) && EmailThreadBuilder.threadKey(for: $0) == key
+        }
+    }
+
+    private func acceptThread(of email: EmailMessage) {
+        for m in threadMessages(of: email) { m.accept() }
+    }
+
+    private func deleteTasks(of thread: EmailThread) {
+        for task in thread.tasks { modelContext.delete(task) }
     }
 
     // MARK: - Control bar
@@ -143,14 +177,12 @@ struct EmailTriageView: View {
         let projects = allProjects.map { ProjectRef(id: $0.id, name: $0.name) }
         let assigned = email.projects.map(\.id)
         let senderProjects = (email.person.map { $0.devProjects + $0.sciProjects } ?? []).map(\.id)
-        let key = EmailThreading.threadKey(subject: email.subject,
-                                           party: email.person?.id.uuidString ?? email.fromAddress)
+        let key = EmailThreadBuilder.threadKey(for: email)
         var prior: [UUID] = []
         for other in allEmails where other.id != email.id {
             let sameSender = !email.fromAddress.isEmpty
                 && other.fromAddress.caseInsensitiveCompare(email.fromAddress) == .orderedSame
-            let sameThread = EmailThreading.threadKey(subject: other.subject,
-                                                      party: other.person?.id.uuidString ?? other.fromAddress) == key
+            let sameThread = EmailThreadBuilder.threadKey(for: other) == key
             if sameSender || sameThread { prior.append(contentsOf: other.projects.map(\.id)) }
         }
         let input = EmailProjectSuggestions.Input(assignedIDs: assigned, senderProjectIDs: senderProjects,
@@ -158,10 +190,12 @@ struct EmailTriageView: View {
         return EmailProjectSuggestions.rank(input, projects: projects)
     }
 
-    private func apply(_ ref: ProjectRef, to email: EmailMessage) {
-        guard let project = allProjects.first(where: { $0.id == ref.id }),
-              !email.projects.contains(where: { $0.id == project.id }) else { return }
-        email.projects.append(project)
+    // Apply a suggested project to every message in the thread (dedup).
+    private func apply(_ ref: ProjectRef, to thread: EmailThread) {
+        guard let project = allProjects.first(where: { $0.id == ref.id }) else { return }
+        for m in thread.messages where !m.projects.contains(where: { $0.id == project.id }) {
+            m.projects.append(project)
+        }
     }
 
     // MARK: - Refresh / exclude
@@ -188,26 +222,27 @@ struct EmailTriageView: View {
         }
     }
 
-    // Add a sender spam rule (address or domain) — future-only — and dismiss this email now.
-    private func excludeSender(_ email: EmailMessage, domain: Bool) {
-        let opts = EmailExcludeMatching.suggestions(forAddress: email.fromAddress)
+    // Add a sender spam rule (address or domain) — future-only — and dismiss this whole thread now.
+    private func excludeSender(_ thread: EmailThread, domain: Bool) {
+        let opts = EmailExcludeMatching.suggestions(forAddress: thread.latest.fromAddress)
         if let rule = domain ? opts.last : opts.first { EmailExcludeStore.addSender(rule) }
-        email.triageDismiss()
+        for m in thread.messages { m.triageDismiss() }
     }
 
-    // Mirrors MinutesDetailView.resolveAttendee: link → add the address to that Person; create → new Person.
+    // Reconcile the other party once for the whole thread: link → add the address to that Person; create → new.
     private func resolvePerson(_ email: EmailMessage, _ result: AttendeeReconcileResult) {
+        let messages = threadMessages(of: email)
         switch result {
         case .link(let p):
             if !email.fromAddress.isEmpty { p.emails = Person.appendingEmail(email.fromAddress, to: p.emails) }
             p.updatedAt = Date()
-            email.person = p
+            for m in messages { m.person = p }
         case .create(let name, let inst):
             let p = Person(name: name)
             if !email.fromAddress.isEmpty { p.emails = [email.fromAddress] }
             p.institution = inst
             modelContext.insert(p)
-            email.person = p
+            for m in messages { m.person = p }
         }
     }
 
@@ -220,10 +255,11 @@ struct EmailTriageView: View {
     }
 }
 
-// One triage row: quick accept/dismiss/unclassify icons, open-in-Mail, sender/summary/time, a person
-// chip (reconcile), project chips + inline picker, and tap-to-apply project suggestions.
-private struct EmailTriageRow: View {
-    @Bindable var email: EmailMessage
+// One triage row for a whole email thread: quick accept/dismiss/unclassify (applied to every message),
+// open-in-Mail, person chip (reconcile once), project chip + inline picker (files the whole thread),
+// tap-to-apply project suggestions, importance (once), 5/10/15-min time-logging, and make-todo.
+private struct EmailTriageThreadRow: View {
+    let thread: EmailThread
     let allProjects: [Project]
     let suggestions: [ProjectRef]
     let makeProject: (String) -> Project?
@@ -235,80 +271,161 @@ private struct EmailTriageRow: View {
     let onOpenTask: () -> Void
     let onDeleteTasks: () -> Void
 
+    @Environment(\.modelContext) private var modelContext
     @State private var mailService = MailScriptService()
     @State private var openError: String?
     @State private var editingProject = false
     @State private var confirmingDeleteTasks = false
 
+    private var countText: String {
+        var parts: [String] = []
+        if thread.sentCount > 0 { parts.append("\(thread.sentCount) sent") }
+        if thread.receivedCount > 0 { parts.append("\(thread.receivedCount) recv") }
+        return parts.joined(separator: " · ")
+    }
+    private var loggedHours: Double {
+        thread.messages.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
+    }
+
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Button { openInMail() } label: {
-                Image(systemName: email.direction == .sent ? "paperplane" : "envelope")
-                    .foregroundStyle(.secondary).font(.system(size: 13)).frame(width: 18)
-            }
-            .buttonStyle(.plain).help("Open in Mail")
-            VStack(alignment: .leading, spacing: 1) {
-                // Person/project info and all the classification actions are grouped together on the
-                // left (close to the info used to decide); only the send time trails on the right.
-                HStack(spacing: 6) {
-                    personChip
-                    projectChip
-                    todoChip
-                    triageActions
-                    EmailImportancePicker(importance: email.importance) { email.importance = $0 }
-                    Spacer(minLength: 8)
-                    Text(email.date.formatted(date: .omitted, time: .shortened))
-                        .font(.caption2).foregroundStyle(.secondary)
-                }
-                EmailContentLine(subject: email.subject, summary: email.summary,
-                                 isSummarizing: email.summaryState == EmailSummaryState.pending.rawValue)
-            }
+        // Reads top-to-bottom the way you parse it: subject → summary → the chips/actions you choose from.
+        VStack(alignment: .leading, spacing: 2) {
+            subjectLine
+            summaryLine
+            actionRow
         }
-        .padding(.vertical, 1)
+        .padding(.vertical, 2)
         .contextMenu {
-            EmailExperimentInChatButton(email: email)
-            Button("Exclude sender (\(email.fromAddress))") { onExcludeAddress() }
+            EmailExperimentInChatButton(email: thread.latest)
+            Button("Exclude sender (\(thread.latest.fromAddress))") { onExcludeAddress() }
             Button("Exclude domain") { onExcludeDomain() }
         }
         .alert("Couldn't open email", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
             Button("OK", role: .cancel) {}
         } message: { Text(openError ?? "") }
-        .alert("Delete \(email.tasks.count == 1 ? "to-do" : "to-dos")?", isPresented: $confirmingDeleteTasks) {
+        .alert("Delete \(thread.taskCount == 1 ? "to-do" : "to-dos")?", isPresented: $confirmingDeleteTasks) {
             Button("Delete", role: .destructive) { onDeleteTasks() }
             Button("Cancel", role: .cancel) {}
-        } message: { Text("This deletes the to-do\(email.tasks.count == 1 ? "" : "s") made from this email. The email is kept.") }
+        } message: { Text("This deletes the to-do\(thread.taskCount == 1 ? "" : "s") made from this thread. The emails are kept.") }
     }
 
-    // The email's linked-to-do status: opens the to-do (tap); context menu deletes it (undo make-todo).
+    // Line 1: subject · N sent · M recv · open-all-in-Mail envelope, with the send time trailing right.
+    private var subjectLine: some View {
+        HStack(spacing: 6) {
+            Text(thread.displaySubject)
+                .font(.headline)
+                .lineLimit(1)
+            Text(countText).font(.caption2.weight(.medium)).foregroundStyle(.secondary).fixedSize()
+            Button { openInMail() } label: {
+                Image(systemName: "envelope").font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain).help("Open every message in this thread in Mail")
+            Spacer(minLength: 8)
+            Text(thread.date.formatted(date: .omitted, time: .shortened))
+                .font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+
+    // Line 2: the whole-thread summary (or a "summarising…" hint until ready) — the subject is on line 1.
+    @ViewBuilder private var summaryLine: some View {
+        if let summary = thread.summary, !summary.isEmpty {
+            Text(summary).font(.callout).lineLimit(2)
+        } else if thread.isSummarizing {
+            Text("summarising…").font(.caption2).italic().foregroundStyle(.tertiary)
+        }
+    }
+
+    // Line 3: the chips + actions, read after the subject/summary. Info/logging on the left, the triage
+    // classification (the last thing you do) pushed to the far right.
+    private var actionRow: some View {
+        HStack(spacing: 6) {
+            personChip
+            projectChip
+            todoChip
+            EmailImportancePicker(importance: thread.importance) { imp in
+                for m in thread.messages { m.importance = imp }
+            }
+            timeChips
+            triageActions
+            Spacer(minLength: 8)
+        }
+    }
+
+    // MARK: - Thread-level triage state
+
+    private var canAccept: Bool { thread.messages.contains { $0.triageState != .accepted } }
+    private var canDismiss: Bool { thread.messages.contains { $0.triageState != .dismissed } }
+    private var canUnclassify: Bool { thread.messages.contains { $0.triageState != .unclassified } }
+
+    // Move-to-state actions (applied to every message) + "make todo".
+    @ViewBuilder private var triageActions: some View {
+        HStack(spacing: 8) {
+            if canAccept {
+                iconButton("checkmark.circle.fill", AppTheme.completed, "Accept thread") {
+                    for m in thread.messages { m.accept() }
+                }
+            }
+            if canDismiss {
+                iconButton("xmark.circle.fill", AppTheme.mutedText, "Dismiss thread") {
+                    for m in thread.messages { m.triageDismiss() }
+                }
+            }
+            if canUnclassify {
+                iconButton("tray.full", AppTheme.accent, "Move thread back to triage") {
+                    for m in thread.messages { m.unclassify() }
+                }
+            }
+            iconButton(thread.taskCount == 0 ? "checklist" : "checklist.checked", AppTheme.action,
+                       thread.taskCount == 0 ? "Make a todo from this thread" : "Make another todo (\(thread.taskCount) linked)",
+                       onMakeTodo)
+        }
+    }
+
+    // MARK: - Time-logging (logs against the latest sent message, else the latest message)
+
+    private var timeTarget: EmailMessage { thread.messages.first { $0.direction == .sent } ?? thread.latest }
+
+    private func logTime(_ minutes: Int) {
+        let target = timeTarget
+        let nextOrder = (target.timeEntries.map(\.sortOrder).max() ?? -1) + 1
+        let entry = TaskTimeEntry(date: target.date,
+                                  duration: Duration(value: Double(minutes) / 60.0, unit: .h),
+                                  comment: nil, sortOrder: nextOrder)
+        entry.email = target
+        modelContext.insert(entry)
+    }
+
+    @ViewBuilder private var timeChips: some View {
+        HStack(spacing: 4) {
+            if loggedHours > 0 {
+                Chip(label: TimeFormat.short(hours: loggedHours), color: AppTheme.duration)
+            }
+            ForEach([5, 15], id: \.self) { minutes in
+                Button { logTime(minutes) } label: {
+                    Text("\(minutes)m")
+                        .font(.caption2.weight(.medium))
+                        .padding(.horizontal, 5).padding(.vertical, 2)
+                        .background(AppTheme.action.opacity(0.14), in: Capsule())
+                        .foregroundStyle(AppTheme.action)
+                }
+                .buttonStyle(.plain)
+                .help("Log \(minutes)m on this thread")
+            }
+        }
+    }
+
+    // MARK: - To-do chip
+
     @ViewBuilder private var todoChip: some View {
-        if email.hasTasks {
-            let n = email.tasks.count
-            EmailTodoChip(count: n, hasOpen: email.hasOpenTask, onOpen: onOpenTask)
+        if thread.taskCount > 0 {
+            let n = thread.taskCount
+            EmailTodoChip(count: n, hasOpen: thread.hasOpenTasks, onOpen: onOpenTask)
                 .contextMenu {
                     Button("Open to-do") { onOpenTask() }
                     Button(n == 1 ? "Delete to-do" : "Delete to-dos (\(n))", role: .destructive) {
                         confirmingDeleteTasks = true
                     }
                 }
-        }
-    }
-
-    // Move-to-state actions + "make todo", trailing the first line: only the actions that change the
-    // current state show, plus a create-todo action available in any state.
-    @ViewBuilder private var triageActions: some View {
-        HStack(spacing: 8) {
-            if email.triageState != .accepted {
-                iconButton("checkmark.circle.fill", AppTheme.completed, "Accept") { email.accept() }
-            }
-            if email.triageState != .dismissed {
-                iconButton("xmark.circle.fill", AppTheme.mutedText, "Dismiss") { email.triageDismiss() }
-            }
-            if email.triageState != .unclassified {
-                iconButton("tray.full", AppTheme.accent, "Move back to triage") { email.unclassify() }
-            }
-            iconButton(email.tasks.isEmpty ? "checklist" : "checklist.checked", AppTheme.action,
-                       email.tasks.isEmpty ? "Make a todo from this email" : "Make another todo (\(email.tasks.count) linked)",
-                       onMakeTodo)
         }
     }
 
@@ -319,32 +436,34 @@ private struct EmailTriageRow: View {
         .buttonStyle(.plain).help(help)
     }
 
+    // Open every message in the thread in Mail (surface the first failure).
     private func openInMail() {
-        mailService.openMessage(email) { result in
-            if case .failure(let error) = result { openError = error.userMessage }
+        for message in thread.messages {
+            mailService.openMessage(message) { result in
+                if case .failure(let error) = result, openError == nil { openError = error.userMessage }
+            }
         }
     }
 
     @ViewBuilder private var personChip: some View {
         Button(action: onReconcile) {
-            if let person = email.person {
+            if let person = thread.person {
                 Chip(label: person.name, color: AppTheme.person)
             } else {
-                let label = email.fromName?.isEmpty == false ? email.fromName!
-                    : (email.fromAddress.isEmpty ? "Unrecognized" : email.fromAddress)
+                let label = thread.fromName?.isEmpty == false ? thread.fromName!
+                    : (thread.fromAddress.isEmpty ? "Unrecognized" : thread.fromAddress)
                 Chip(label: label, color: AppTheme.warning)
             }
         }
         .buttonStyle(.plain)
-        .help(email.person == nil ? "Unrecognized — click to link/create a person" : "Linked person — click to change")
+        .help(thread.person == nil ? "Unrecognized — click to link/create a person (whole thread)" : "Linked person — click to change")
     }
 
-    // A single project chip. Assigned → the project (tap to edit). Not assigned but recommended →
-    // "+ <Project>" (tap applies the recommendation; tap again to edit). Otherwise a neutral
-    // "No Project" (tap to choose). Editing opens the standard project picker anchored to the chip.
+    // Files the whole thread's project. Assigned → the project (tap to edit). Not assigned but recommended →
+    // "+ <Project>" (tap applies to all messages). Otherwise "No Project" (tap to choose).
     @ViewBuilder private var projectChip: some View {
         Button { projectTap() } label: {
-            if let project = email.projects.first {
+            if let project = thread.projects.first {
                 Chip(label: project.name, color: AppTheme.project)
             } else if let rec = suggestions.first {
                 Chip(label: "+ \(rec.name)", color: AppTheme.project)
@@ -355,10 +474,11 @@ private struct EmailTriageRow: View {
         .buttonStyle(.plain)
         .help(projectHelp)
         .overlay(alignment: .bottomLeading) {
-            // Invisible anchor hosting the picker popover (driven by editingProject).
+            // Invisible anchor hosting the picker popover; selecting sets the SAME project set on every message.
             FuzzyPickerField(
                 allItems: allProjects,
-                selected: Binding(get: { email.projects }, set: { email.projects = $0 }),
+                selected: Binding(get: { thread.projects },
+                                  set: { newProjects in for m in thread.messages { m.projects = newProjects } }),
                 label: \.name,
                 chipColor: AppTheme.project,
                 onCreateItem: makeProject,
@@ -371,16 +491,16 @@ private struct EmailTriageRow: View {
     }
 
     private var projectHelp: String {
-        if !email.projects.isEmpty { return "Project — click to change" }
-        if suggestions.first != nil { return "Suggested project — click to apply (click again to change)" }
-        return "No project — click to choose"
+        if !thread.projects.isEmpty { return "Project — click to change (whole thread)" }
+        if suggestions.first != nil { return "Suggested project — click to apply to the thread (click again to change)" }
+        return "No project — click to choose (whole thread)"
     }
 
     private func projectTap() {
-        if email.projects.isEmpty, let rec = suggestions.first {
-            onApplySuggestion(rec)      // first tap accepts the recommendation
+        if thread.projects.isEmpty, let rec = suggestions.first {
+            onApplySuggestion(rec)
         } else {
-            editingProject = true       // choose / change / remove
+            editingProject = true
         }
     }
 }

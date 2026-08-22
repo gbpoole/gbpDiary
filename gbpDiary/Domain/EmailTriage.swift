@@ -50,4 +50,15 @@ enum EmailTriageCategory: String, CaseIterable {
         case .unclassified: return hasTasks ? .tasks : .toTriage
         }
     }
+
+    /// Bucket a whole thread from its messages' (state, hasTasks). Any unclassified message keeps the thread
+    /// in **To triage** (so a conversation isn't cleared until every message is handled); else a linked
+    /// to-do → **Tasks**; else any accepted → **Accepted**; else **Dismissed** (all dismissed).
+    static func classifyThread(_ messages: [(state: EmailTriageState, hasTasks: Bool)]) -> EmailTriageCategory {
+        if messages.isEmpty { return .toTriage }
+        if messages.contains(where: { $0.state == .unclassified }) { return .toTriage }
+        if messages.contains(where: { $0.hasTasks }) { return .tasks }
+        if messages.contains(where: { $0.state == .accepted }) { return .accepted }
+        return .dismissed
+    }
 }
