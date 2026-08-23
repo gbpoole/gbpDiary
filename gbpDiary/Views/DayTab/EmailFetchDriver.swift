@@ -54,6 +54,7 @@ enum EmailIngest {
         }
 
         var added = 0
+        var inserted: [EmailMessage] = []
         for d in drafts {
             let mailbox = EmailIngestPlanning.mailbox(for: d.direction)
             let key = MailScriptParsing.dedupeKey(messageId: d.messageId, account: account, mailbox: mailbox,
@@ -64,6 +65,9 @@ enum EmailIngest {
             let msg = EmailMessage(messageId: d.messageId, account: account, mailbox: mailbox,
                                    direction: d.direction, fromAddress: d.address, fromName: d.name,
                                    subject: d.subject, date: d.date)
+            msg.rfcMessageId = d.rfcMessageId    // reply-chain headers → threading
+            msg.inReplyTo = d.inReplyTo
+            msg.references = d.references
             // Matches a spam rule → dismissed; everything else (sent + received) → unclassified, so sent
             // mail is actively triaged (file project / log time / accept) on the Emails page like received.
             if EmailExcludeMatching.isExcluded(fromAddress: d.address, subject: d.subject, rules: rules) {
@@ -74,7 +78,12 @@ enum EmailIngest {
                let p = people.first(where: { $0.id == pid }) {
                 msg.person = p
             }
+            inserted.append(msg)
             added += 1
+        }
+        // Attach new mail to its conversation (reply-graph threaded), creating/merging as needed.
+        if !inserted.isEmpty {
+            EmailConversationReconciler.reconcile(emails: existing + inserted, context: context)
         }
         return added
     }

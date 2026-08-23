@@ -26,7 +26,16 @@ import SwiftData
     func accept() { accepted = true; dismissed = false }
     func triageDismiss() { dismissed = true }
     func unclassify() { accepted = false; dismissed = false }
-    // The resolved "other party" (Inbox = sender, Sent = recipient); nil until matched/reconciled.
+    // Reply-chain headers (bare, no angle brackets) — the basis for threading via EmailThreadGraph.
+    var rfcMessageId: String = ""
+    var inReplyTo: String?
+    var references: [String] = []
+    // The conversation this message belongs to (EmailConversation declares the inverse). Nil until assigned.
+    var conversation: EmailConversation?
+
+    // LEGACY (superseded by EmailThread once assigned): the message's own triage/project/person/importance/
+    // time. Retained so the one-time thread migration can fold them in and as a safety net; not written for
+    // new mail. The resolved "other party" (Inbox = sender, Sent = recipient); nil until matched/reconciled.
     var person: Person?
     // Projects this email is filed under.
     @Relationship(inverse: \Project.emails) var projects: [Project] = []

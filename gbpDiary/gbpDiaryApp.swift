@@ -30,6 +30,7 @@ struct gbpDiaryApp: App {
             FocusBlock.self,
             EmailMessage.self,
             EmailThreadSummary.self,
+            EmailConversation.self,
         ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: isUITesting)
         do {

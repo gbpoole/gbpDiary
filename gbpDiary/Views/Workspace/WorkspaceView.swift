@@ -103,6 +103,7 @@ struct WorkspaceView: View {
                 hasRestored = true
             }
             migratePersonEmails()
+            migrateEmailConversationsOnce()
         }
         // Persist the session when the app deactivates/backgrounds (covers ⌘Q and app switches).
         .onChange(of: scenePhase) { _, phase in
@@ -138,6 +139,20 @@ struct WorkspaceView: View {
             }
         }
         if changed { try? modelContext.save() }
+    }
+
+    // One-time: build `EmailConversation` entities for all existing emails (reply-graph where headers are
+    // present, subject fallback otherwise), folding each email's legacy triage/project/person/importance/
+    // time onto its conversation. Guarded by a flag; ongoing ingest keeps conversations current after this.
+    private func migrateEmailConversationsOnce() {
+        let key = "email.conversationsMigrated.v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        let emails = (try? modelContext.fetch(FetchDescriptor<EmailMessage>())) ?? []
+        if !emails.isEmpty {
+            EmailConversationReconciler.reconcile(emails: emails, context: modelContext)
+            try? modelContext.save()
+        }
+        UserDefaults.standard.set(true, forKey: key)
     }
 
     @ViewBuilder
