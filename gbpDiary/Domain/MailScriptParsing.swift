@@ -17,6 +17,7 @@ struct MailMessageDraft: Equatable {
     var rfcMessageId: String = ""    // RFC Message-ID (bare)
     var inReplyTo: String? = nil     // parent's Message-ID (bare)
     var references: [String] = []    // ancestor Message-IDs (bare, in order)
+    var isJunk: Bool = false         // Mail flags this Inbox message as junk
 }
 
 enum MailScriptParsing {
@@ -96,6 +97,16 @@ enum MailScriptParsing {
             return dt
         end mkDateTime
 
+        on isJunk(m)
+            tell application "Mail"
+                set j to false
+                try
+                    set j to (junk mail status of m)
+                end try
+                return j
+            end tell
+        end isJunk
+
         on senderIsMine(m, myAddrs)
             set snd to ""
             tell application "Mail"
@@ -135,6 +146,11 @@ enum MailScriptParsing {
                 try
                     set refs to (content of (first header of m whose name is "References")) as string
                 end try
+                -- Junk flag (Inbox only): lets ingest drop new junk + dismiss stored mail Mail now flags.
+                set jnk to "0"
+                if dir is "in" then
+                    if my isJunk(m) then set jnk to "1"
+                end if
                 if dir is "in" then
                     set party to ""
                     try
@@ -164,7 +180,7 @@ enum MailScriptParsing {
                 set hh to (hours of theDate) as string
                 set mm to (minutes of theDate) as string
                 set ss to (seconds of theDate) as string
-                return dir & FS & mid & FS & party & FS & subj & FS & y & FS & mo & FS & dd & FS & hh & FS & mm & FS & ss & FS & rfcId & FS & irt & FS & refs
+                return dir & FS & mid & FS & party & FS & subj & FS & y & FS & mo & FS & dd & FS & hh & FS & mm & FS & ss & FS & rfcId & FS & irt & FS & refs & FS & jnk
             end tell
         end rec
         """
@@ -248,10 +264,12 @@ enum MailScriptParsing {
             let rfcId = f.count > 10 ? normalizeMessageId(f[10]) : ""
             let inReplyTo = f.count > 11 ? parseMessageIds(f[11]).first : nil
             let references = f.count > 12 ? parseMessageIds(f[12]) : []
+            let isJunk = f.count > 13 && f[13].trimmingCharacters(in: .whitespacesAndNewlines) == "1"
             return MailMessageDraft(messageId: f[1].trimmingCharacters(in: .whitespacesAndNewlines),
                                     address: address, name: name,
                                     subject: f[3], date: date, direction: direction,
-                                    rfcMessageId: rfcId, inReplyTo: inReplyTo, references: references)
+                                    rfcMessageId: rfcId, inReplyTo: inReplyTo, references: references,
+                                    isJunk: isJunk)
         }
     }
 

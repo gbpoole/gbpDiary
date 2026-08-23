@@ -31,6 +31,9 @@ struct MailScriptParsingTests {
         // Self-sent inbox copies (looped back via a mailing list) are skipped.
         #expect(s.contains("email addresses of acc"))
         #expect(s.contains("senderIsMine"))
+        // Junk-flagged Inbox mail is skipped.
+        #expect(s.contains("junk mail status"))
+        #expect(s.contains("isJunk"))
     }
 
     @Test func openMessageScript_embedsAccountMailboxIdAndOpens() {
@@ -101,6 +104,17 @@ struct MailScriptParsingTests {
         #expect(drafts[0].rfcMessageId == "msg-2@x")        // bare, brackets stripped
         #expect(drafts[0].inReplyTo == "msg-1@x")
         #expect(drafts[0].references == ["root@x", "msg-1@x"])
+    }
+
+    @Test func parseOutput_parsesJunkFlag() {
+        let junk = record(["in", "1", "s@x.com", "Buy now", "2026", "7", "29", "9", "0", "0",
+                           "<m@x>", "", "", "1"])
+        let clean = record(["in", "2", "a@x.com", "Hi", "2026", "7", "29", "9", "0", "0",
+                            "<n@x>", "", "", "0"])
+        let drafts = MailScriptParsing.parseOutput(junk + RS + clean + RS, calendar: utc)
+        #expect(drafts.count == 2)
+        #expect(drafts[0].isJunk == true)
+        #expect(drafts[1].isJunk == false)
     }
 
     @Test func parseOutput_oldTenFieldRecordStillParses() {

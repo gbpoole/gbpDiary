@@ -53,12 +53,25 @@ enum EmailIngest {
             }
         }
 
+        // Map existing messages by dedupe key so junk that arrived earlier (before Mail flagged it) can be
+        // dismissed retroactively (self-heal, like the mailing-list loopback sweep above).
+        var existingByKey: [String: EmailMessage] = [:]
+        for e in existing {
+            existingByKey[MailScriptParsing.dedupeKey(messageId: e.messageId, account: e.account,
+                mailbox: e.mailbox, date: e.date, fromAddress: e.fromAddress, subject: e.subject)] = e
+        }
+
         var added = 0
         var inserted: [EmailMessage] = []
         for d in drafts {
             let mailbox = EmailIngestPlanning.mailbox(for: d.direction)
             let key = MailScriptParsing.dedupeKey(messageId: d.messageId, account: account, mailbox: mailbox,
                                                   date: d.date, fromAddress: d.address, subject: d.subject)
+            // Junk-flagged Inbox mail: dismiss the stored copy if present, and never bring new junk in.
+            if d.isJunk {
+                if let e = existingByKey[key], !e.dismissed { e.triageDismiss() }
+                continue
+            }
             guard keys.insert(key).inserted else { continue }
             if EmailSelfMatching.isInboxFromSelf(direction: d.direction, fromAddress: d.address,
                                                  myAddresses: myAddresses) { continue }

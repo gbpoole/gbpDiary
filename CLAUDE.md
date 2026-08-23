@@ -520,7 +520,11 @@ domain `x.com`/`@x.com`] or a **subject** rule [subject *contains* the text, e.g
 case-insensitive, future-only, managed in the Email settings "Spam rules" pane) is dismissed, and
 everything else — **sent and received** — is **unclassified** (so **sent mail is actively triaged like
 received**: file a project / log time / accept it on the Emails page; it was previously auto-accepted); the
-"other party" is auto-linked when the address is a known Person. A one-time migration (`migrateTriageOnce`)
+"other party" is auto-linked when the address is a known Person. **Junk-flagged Inbox mail is excluded**:
+the fetch emits Mail's per-message `junk mail status` (`MailScriptParsing` → `MailMessageDraft.isJunk`), and
+`EmailIngest.upsert` drops new junk and **dismisses any already-stored copy Mail now flags** (a self-heal,
+like the mailing-list loopback sweep) — so spam that slipped in before Mail classified it clears itself on
+the next fetch. A one-time migration (`migrateTriageOnce`)
 accepts pre-existing non-dismissed emails so they stay on the diary. The diary Email section shows
 **accepted** threads (sent + received — `DayEmailThreadRow`), so a newly-sent email appears there only once
 accepted in triage. The section
@@ -1087,6 +1091,7 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Reply-graph threading: `EmailThreadGraph.assign` groups messages by the reply graph (union-find over Message-ID/In-Reply-To/References) with a stable min-id `threadKey` per component, subject fallback for headerless messages; reply chains + subject-changes + multi-party unite, recurring subjects with their own ids stay separate, and assignment is order-independent | Email threading / reply-chain | `gbpDiaryTests/Domain/EmailThreadGraphTests.swift` | `replyChainUnites`, `subjectChangeMidThreadStaysOneThread`, `multiPartyExchangeUnites`, `recurringSubjectWithoutLinksStaysSeparate`, `headerlessFallsBackToSubject`, `assignmentIsDeterministicRegardlessOfOrder` |
 | Conversation state fold: `EmailThreadFold.fold` rolls member `(accepted, dismissed, importance)` up to the conversation — any unclassified member → to-triage; else any accepted → accepted; else all-dismissed → dismissed; importance = max; empty → unclassified/low | Email conversations / migration | `gbpDiaryTests/Domain/EmailThreadFoldTests.swift` | `anyUnclassifiedKeepsConversationToTriage`, `anyAcceptedWhenNoneUnclassified`, `allDismissed`, `importanceIsMaxAcrossMembers`, `emptyIsUnclassifiedLow` |
 | Conversation reconcile (`@MainActor`, ingest + one-time migration): `EmailConversationReconciler.reconcile` groups emails by `EmailThreadGraph`, ensures one `EmailConversation` per group (sticky — an email keeps its conversation so user state survives), links new mail to an existing conversation without overwriting its state, merges conversations bridged by a later reply, and folds legacy per-message state (projects/person/importance/triage/time) onto newly-created conversations | Email conversations / entity | `gbpDiaryTests/Domain/EmailConversationReconcilerTests.swift` | `replyGraphGroupsIntoOneConversation_otherSubjectSeparate`, `foldsLegacyStateOntoConversation`, `anyUnclassifiedMemberKeepsConversationToTriage`, `newReplyJoinsExistingConversationWithoutOverwritingState`, `bridgingReplyMergesTwoConversations` |
+| Junk mail excluded: the fetch carries Mail's `junk mail status` per Inbox message (`MailScriptParsing` → `MailMessageDraft.isJunk`, parsed from the record's 14th field); `EmailIngest.upsert` skips new junk (never ingested) and **dismisses an already-stored copy** whose draft is now junk-flagged (self-heal) | Email ingest / junk | `gbpDiaryTests/Domain/MailScriptParsingTests.swift`, `gbpDiaryTests/Domain/EmailIngestJunkTests.swift` | `parseOutput_parsesJunkFlag`, `script_containsDayBoundsAccountAndMailboxes` (asserts `junk mail status`/`isJunk`), `junkDraftDismissesTheStoredCopy`, `newJunkIsNotIngested`, `nonJunkStillIngests` |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 
