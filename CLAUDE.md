@@ -800,9 +800,12 @@ the block's net remaining (`FocusBlockRow.netHours`) and the day Total/Overtime 
 `TimeLedger`), consistent with where the emails render (the Email section). The `SentEmailActivityRow` (a
 per-message row in the Email section's conversation drill-down) is a **two-line** row: line 1 groups all the
 controls together on the
-left (open-in-Mail, then an **editable recipient chip** → `ResolveAttendeeSheet` (`resolvePerson` mirrors
-the triage row; links/creates a Person and adds the recipient address), an **editable project chip** →
-`FuzzyPickerField` picker, and the time-log actions), with the send time trailing on the right; line 2 is
+left (open-in-Mail, then an **editable recipient chip** → `ResolveAttendeeSheet` (`resolvePerson` links/creates
+a Person and adds the recipient address — **per message**, since a sent message's recipient is specific to it),
+an **editable project chip** → `FuzzyPickerField` picker, and the time-log actions), with the send time
+trailing on the right. The **project chip and the time-log actions read/write the owning `EmailConversation`**
+(the owner of email projects/time), falling back to the message only when unthreaded, so filing here reaches
+the conversation-owned report/ledger; **`person` stays per-message**. Line 2 is
 the **on-device AI summary** (or the de-emphasised subject until ready — `EmailMessage.isSummarizing`
 gates the "summarising…" hint) via the shared `EmailContentLine`. **Quick time-logging:** the one-click
 **`1m` / `5m` / `15m`** buttons **accumulate** (each appends a **conversation-linked** task-less `TaskTimeEntry`

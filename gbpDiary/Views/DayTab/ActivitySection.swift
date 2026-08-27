@@ -429,7 +429,12 @@ struct SentEmailActivityRow: View {
         }
     }
 
-    // Editable recipient chip → reconcile (link/create a Person), mirroring the triage row.
+    // Projects are owned by the conversation; display and edit those (falling back to the message when
+    // unthreaded), so filing here reaches the conversation-owned report/ledger like the diary/triage rows.
+    // Person stays per-message — a sent message's recipient is specific to that message.
+    private var displayedProjects: [Project] { conversation?.projects ?? email.projects }
+
+    // Editable recipient chip → reconcile (link/create a Person) for this message.
     @ViewBuilder private var personChip: some View {
         Button { reconciling = true } label: {
             if let person = email.person {
@@ -449,18 +454,22 @@ struct SentEmailActivityRow: View {
     // Editable project chip → picker (set / change / remove), mirroring the triage row.
     @ViewBuilder private var projectChip: some View {
         Button { editingProject = true } label: {
-            if let project = email.projects.first {
+            if let project = displayedProjects.first {
                 Chip(label: project.name, color: AppTheme.project)
             } else {
                 Chip(label: "No Project", color: AppTheme.mutedText)
             }
         }
         .buttonStyle(.plain)
-        .help(email.projects.isEmpty ? "No project — click to choose" : "Project — click to change")
+        .help(displayedProjects.isEmpty ? "No project — click to choose" : "Project — click to change")
         .overlay(alignment: .bottomLeading) {
             FuzzyPickerField(
                 allItems: allProjects,
-                selected: Binding(get: { email.projects }, set: { email.projects = $0 }),
+                selected: Binding(
+                    get: { displayedProjects },
+                    set: { newValue in
+                        if let convo = conversation { convo.projects = newValue } else { email.projects = newValue }
+                    }),
                 label: \.name,
                 chipColor: AppTheme.project,
                 onCreateItem: makeProject,
@@ -480,7 +489,8 @@ struct SentEmailActivityRow: View {
         return project
     }
 
-    // Mirrors the triage row: link → add the recipient address to that Person; create → new Person.
+    // Per-message reconcile: link → add the recipient address to that Person; create → new Person. The
+    // recipient is specific to this sent message, so `person` is set on the message only (not the conversation).
     private func resolvePerson(_ result: AttendeeReconcileResult) {
         switch result {
         case .link(let p):
