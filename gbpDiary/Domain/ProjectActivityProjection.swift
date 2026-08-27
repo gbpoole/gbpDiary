@@ -6,11 +6,11 @@ import Foundation
 // the narrative always agree. Shared by the Timesheet and Chat.
 @MainActor
 enum ProjectActivityProjection {
-    static func report(interval: Range<Date>?, tasks: [Task], emails: [EmailMessage], meetings: [Minutes],
-                       focusBlocks: [FocusBlock], calendar: Calendar = .current,
+    static func report(interval: Range<Date>?, tasks: [Task], conversations: [EmailConversation],
+                       meetings: [Minutes], focusBlocks: [FocusBlock], calendar: Calendar = .current,
                        maxEmailsPerProject: Int = 6) -> ProjectActivityReport {
         // Hours / distinct weeks per project — straight from the canonical ledger.
-        let ledger = TimeLedgerProjection.ledger(focusBlocks: focusBlocks, tasks: tasks, emails: emails,
+        let ledger = TimeLedgerProjection.ledger(focusBlocks: focusBlocks, tasks: tasks, conversations: conversations,
                                                  meetings: meetings, interval: interval, calendar: calendar)
         var hoursByProject: [String: (hours: Double, weeks: Int)] = [:]
         for p in ledger.perProject { hoursByProject[p.name] = (p.hours, p.distinctWeeks) }
@@ -59,13 +59,13 @@ enum ProjectActivityProjection {
                                            source: ref, projectNames: [name], kind: .loggedComment))
             }
         }
-        // Logged-time comments on standalone email time.
-        for email in emails {
-            for e in email.timeEntries where e.task == nil {
+        // Logged-time comments on conversation time (the conversation owns its time).
+        for convo in conversations {
+            for e in convo.timeEntries {
                 guard let comment = trimmed(e.comment) else { continue }
                 let date = fold(e.date)
                 guard inWindow(date) else { continue }
-                for n in email.projects.map(\.name) {
+                for n in convo.projects.map(\.name) {
                     add(n, ChatActivityItem(date: date, label: "\(comment) (\(e.duration.displayString))",
                                             projectNames: [n], kind: .loggedComment))
                 }
@@ -80,22 +80,23 @@ enum ProjectActivityProjection {
             add(name, ChatActivityItem(date: date, label: "\(comment) (\(b.duration.displayString))",
                                        projectNames: [name], kind: .loggedComment))
         }
-        // Emails — importance-first, capped per project.
-        var emailsByProject: [String: [(rank: Int, date: Date, item: ChatActivityItem)]] = [:]
-        for email in emails {
-            let date = fold(email.date)
-            guard inWindow(date), !email.projects.isEmpty else { continue }
-            let subject = trimmed(email.summary) ?? (trimmed(email.subject) ?? "(no subject)")
-            let importance = email.importance == .low ? "" : " [\(email.importance.short)]"
-            let ref = ChatSourceReference(id: email.id, kind: .email, title: email.subject, detail: nil,
-                                          navigationKind: .email, navigationID: email.id)
-            for n in email.projects.map(\.name) {
+        // Email conversations — one item per conversation, importance-first, capped per project.
+        var convoByProject: [String: [(rank: Int, date: Date, item: ChatActivityItem)]] = [:]
+        for convo in conversations {
+            guard let latest = convo.latest else { continue }
+            let date = fold(convo.date)
+            guard inWindow(date), !convo.projects.isEmpty else { continue }
+            let subject = trimmed(convo.latestMessageSummary) ?? (trimmed(convo.subject) ?? "(no subject)")
+            let importance = convo.importance == .low ? "" : " [\(convo.importance.short)]"
+            let ref = ChatSourceReference(id: latest.id, kind: .email, title: convo.subject, detail: nil,
+                                          navigationKind: .email, navigationID: latest.id)
+            for n in convo.projects.map(\.name) {
                 let item = ChatActivityItem(date: date, label: "Email: \(subject)\(importance)", source: ref,
                                             projectNames: [n], kind: .email)
-                emailsByProject[n, default: []].append((email.importance.rank, date, item))
+                convoByProject[n, default: []].append((convo.importance.rank, date, item))
             }
         }
-        for (name, list) in emailsByProject {
+        for (name, list) in convoByProject {
             let kept = list.sorted { $0.rank != $1.rank ? $0.rank > $1.rank : $0.date > $1.date }
                 .prefix(maxEmailsPerProject)
             for e in kept { add(name, e.item) }

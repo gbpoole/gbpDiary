@@ -81,7 +81,10 @@ activities, and it equals the diary's `standardTotal` + `overtime` except when a
 `perProject` (+ `distinctWeeks`), `standardTotal` (the diary "Total"), `overtime`, `grandTotal`, and
 per-block `blockNet`. `Domain/TimeLedgerProjection.swift` (`@MainActor`) maps `@Model`s → ledger inputs
 using `FocusBlockAssignment.containingBlock` (membership) + `WeekendPolicy` (fold), with a task-shaped
-`project(tasks:…)` (Chat/Timesheet) and a diary-shaped `projectDiary(taskEntries:…)` sharing one code path.
+`project(tasks:conversations:…)` (Chat/Timesheet) and a diary-shaped `projectDiary(taskEntries:…)` sharing one
+code path. **Email time is owned by the `EmailConversation` entity** (the `conversations:` input, not
+per-message `EmailMessage`s), attributed to each conversation's project(s) at each entry's date; in the diary
+path a day time entry attributes to its `conversation` → else legacy `email` → else its task.
 **RULE: never re-implement time aggregation — extend `TimeLedger`/`TimeLedgerProjection` and add a
 `TimeLedgerTests` case.** (`FocusBlockRow.netHours` still uses the shared `FocusBlockMath.netHours` primitive
 — consistent with the ledger's `blockNet`.)
@@ -193,7 +196,8 @@ TaskTimeEntry                (a single logged time entry; used in Activity secti
   comment   : String?
   sortOrder : Int
   task     → Task?           (no @Relationship — Task side declares the inverse)
-  email    → EmailMessage?   (set when logging time spent sending a sent email; EmailMessage declares the inverse)
+  email    → EmailMessage?   (LEGACY; per-message email time — EmailMessage declares the inverse. New email time is conversation-owned)
+  conversation → EmailConversation?  (set when logging time against an email conversation; EmailConversation declares the inverse + cascade)
   NOTE: no focusBlock relationship — block membership is derived from `date` at the view layer via FocusBlockAssignment.containingBlock, never stored.
 
 FocusBlock                   (a primary work block for a day; shown in Activity section)
@@ -526,9 +530,9 @@ the fetch emits Mail's per-message `junk mail status` (`MailScriptParsing` → `
 like the mailing-list loopback sweep) — so spam that slipped in before Mail classified it clears itself on
 the next fetch. A one-time migration (`migrateTriageOnce`)
 accepts pre-existing non-dismissed emails so they stay on the diary. The diary Email section shows
-**accepted** threads (sent + received — `DayEmailThreadRow`), so a newly-sent email appears there only once
-accepted in triage. The section
-also shows a **"N to triage"** hint (this day's unclassified count); both it and the section-header tray
+**accepted conversations** with a message on the day (sent + received — `DayEmailThreadRow`), so a
+newly-sent email appears there only once its conversation is accepted in triage. The section
+also shows a **"N to triage"** hint (this day's unclassified-conversation count); both it and the section-header tray
 button open the central **Triage page** (`workspace.focusOrOpen(.triage)`, `EmailTriageView` — described
 below), not a day sheet. We piggyback on Mail (which already holds the OAuth-authenticated Gmail/M365
 accounts) rather than doing OAuth ourselves — no credentials, no network. The account + Inbox/Sent
@@ -677,12 +681,14 @@ project, `hours`/`distinctWeeks` + ordered `items`, with `headerLine` (`TimeForm
 optionally scoped — a **named-but-unmatched project returns empty**, nil = all), `section(matching:)`
 (case-insensitive), and `phrasingPrompt(section:)` (strict rephrase-only). `ProjectActivityProjection`
 (`Domain/ProjectActivityProjection.swift`, `@MainActor`, alongside `TimeLedgerProjection`):
-`report(interval:tasks:emails:meetings:focusBlocks:calendar:maxEmailsPerProject:)` takes hours/weeks
+`report(interval:tasks:conversations:meetings:focusBlocks:calendar:maxEmailsPerProject:)` takes hours/weeks
 straight from `TimeLedgerProjection.ledger(...)` and gathers narrative items from **four approved sources**
 — meetings (`Minutes` → each `meeting.projects`), completed tasks (`Task.completed` + `completedAt` →
-`task.project`), logged comments (non-empty `TaskTimeEntry.comment` → `task.project`, and non-empty
-`FocusBlock.comment` → `project ?? task.project`), and emails (`EmailMessage` with projects,
-importance-first + capped per project) — each **weekend-folded** (`ChatWeekendFold.foldWork`),
+`task.project`), logged comments (non-empty `TaskTimeEntry.comment` → `task.project`, non-empty
+`FocusBlock.comment` → `project ?? task.project`, and non-empty comments on a conversation's own
+`timeEntries` → the conversation's project(s)), and **email conversations** (`EmailConversation` with
+projects — one item per conversation, importance-first + capped per project) — each **weekend-folded**
+(`ChatWeekendFold.foldWork`),
 interval-filtered, project-tagged, carrying a `ChatSourceReference`; sections are projects with hours **or**
 items (never the `(no project)` bucket), sorted by hours desc. The **Timesheet** (`TimesheetView`) renders
 these as expandable per-project `DisclosureGroup`s: the header keeps the time figures (name · hours · days ·
@@ -730,41 +736,45 @@ away/back in that tab preserves it, while session restoration restores only the 
 with fresh Database state. **Experiment in Chat** on diary thread, sent-activity, and triage email rows
 always creates a new Chat tab in Email Explorer mode for that email; it never reuses another Chat tab.
 
-**Email importance (surface the most important things).** `EmailMessage` carries a **manual** importance
-(`importanceRaw`/computed `importance: EmailImportance` — H/M/L, **default Low**; `isImportant` = not Low),
-mirroring `Task.priorityRaw`/`priority`. **Low is the neutral baseline**: no chip, no ranking boost — only
-Medium/High carry signal, so unrated email stays clean. It's set with a one-click **`EmailImportancePicker`**
-(M/H toggle cloned from `TaskTriageRow.priorityPicker`; tapping the active level clears to Low) shown in
-`EmailTriageRow`, and via a **"Set importance"** context menu on `DayEmailThreadRow` (writes every message
-in the thread; the thread's importance is the **max** across its messages). A read-only **`EmailImportanceChip`**
+**Email importance (surface the most important things).** The **`EmailConversation`** entity carries a
+**manual** importance (`importanceRaw`/computed `importance: EmailImportance` — H/M/L, **default Low**;
+`isImportant` = not Low), mirroring `Task.priorityRaw`/`priority` (per-message `EmailMessage.importance`
+still exists but the conversation is authoritative). **Low is the neutral baseline**: no chip, no ranking
+boost — only Medium/High carry signal, so unrated mail stays clean. It's set with a one-click
+**`EmailImportancePicker`** (M/H toggle cloned from `TaskTriageRow.priorityPicker`; tapping the active level
+clears to Low) shown in the triage row, and via a **"Set importance"** context menu on `DayEmailThreadRow`
+— both are a **single write on the conversation** (no per-message loop). A read-only **`EmailImportanceChip`**
 (Medium/High only; `Views/DayTab/EmailImportanceControls.swift`) shows on the diary thread row. Both the diary
 Email section and each Triage day-section **sort importance-first, then by time**. Importance also feeds Chat
 (ranking boost + prompt nudge — see the Chat query-scoped retrieval paragraph).
 
-**Managing the day's email (clean / file / connect).** `EmailMessage` carries three management fields
-(all defaulted for lightweight migration): `dismissed: Bool`, `person: Person?` (the resolved "other
-party" — Inbox = sender, Sent = recipient), and `projects: [Project]`↔`Project.emails`. The diary
-`dayEmails` list **excludes `dismissed`**. On fetch, `upsertEmails` auto-links `person` when the
-sender/recipient address already belongs to a Person — `EmailPersonMatching.personID(forAddress:in:)`
-(`Domain/EmailPersonMatching.swift`, pure; address-only, case-insensitive). Unmatched → `person == nil`,
-shown as a yellow "Unrecognized" chip. **The diary Email section is the single home for the day's mail
-(sent + received)** — sent emails do **not** render in the Activity section (only their logged time counts,
-see below). It groups the day's emails into **threads** by **conversation subject** (Re:/Fwd: stripped —
-`Domain/EmailThreading.swift`, `threadKey`/`normalizedSubject`; standard subject threading, so a multi-party
-exchange stays one thread; grouped by the shared
-**`EmailThreadBuilder.threads(from:)`**, whose `EmailThread` value type — in `Domain/EmailThreadBuilder.swift`
-— carries `sentCount`/`receivedCount` and a `synthesizedSummary`; a conversation's sent + received messages
-unite into one thread). Each renders as a compact **`DayEmailThreadRow`** whose first line is, left to right: a **leading expand
-control** (the collapse chevron for multi-message threads, or a neutral bullet of the same fixed width for
-single-message ones, so everything to its right aligns across threads) + an interactive **person chip**
-(click to reconcile via `ResolveAttendeeSheet`, applied to every message) + project chips + a **single
-envelope icon** + the **`N sent · M recv` breakdown** (the key direction/volume context, since the envelope
-no longer conveys direction) + to-do + importance + a trailing **logged-time chip**; the second line is the
-**whole-thread day summary**. **Multi-message threads expand** (the leading chevron) to a **drill-down**: **sent** messages
-render the full **`SentEmailActivityRow`** (with time-logging), **received** messages a compact
-summary/open-in-Mail row. **Single-message threads do not expand**; a sent single email is time-logged via
-the row's **"Log time…" context menu** (→ `LogTimeSheet(presetEmail:)`). Threads sort importance-first.
-**Tapping the thread opens its latest message in Mail.app** — `MailScriptService.openMessage(_:)` resolves
+**Managing the day's email (clean / file / connect).** The **cross-cutting management state is owned by the
+persistent `EmailConversation` entity** (`Models/EmailConversation.swift`; threaded across days by the reply
+graph — see `EmailThreadGraph`/`EmailConversationReconciler`), **not** by individual messages: `dismissed`/
+`accepted` (tri-state triage, via `EmailTriageState`), `person: Person?` (the resolved "other party"),
+`projects: [Project]`↔`Project.conversations`, `importance`, and its own `timeEntries` (logged time). It's set
+**once for the whole conversation** and new mail joins it consistently. `EmailConversation` also exposes the
+display helpers that replaced the ephemeral `struct EmailThread` in the views (`latest`, `displaySubject`,
+`sentCount`/`receivedCount`, `loggedHours`, `taskCount`/`hasOpenTasks`, `fromName`/`fromAddress`,
+`messages(on:)`). Each `EmailMessage` still carries per-message fields (summary, its own `dismissed`/`accepted`
+used only for legacy migration, `suggestedProjectID`) and links to its conversation via `EmailMessage.conversation`.
+On ingest the reconciler auto-links the conversation's `person` when the sender/recipient address already
+belongs to a Person — `EmailPersonMatching.personID(forAddress:in:)` (pure; address-only, case-insensitive);
+unmatched → `person == nil`, shown as a yellow "Unrecognized" chip. **The diary Email section is the single
+home for the day's mail (sent + received)** — sent emails do **not** render in the Activity section (only their
+logged time counts, see below). `DayPageContent` builds a **`DayConversation`** per **accepted** conversation
+that has a message on the shown day (the entity + this day's weekend-windowed message slice [received → Monday,
+sent → Friday] + this day's logged conversation hours), sorted **importance-first, then latest-first**. Each
+renders as a compact **`DayEmailThreadRow`** whose first line is, left to right: a **leading expand control**
+(the collapse chevron when the day slice has multiple messages, else a neutral bullet of the same fixed width,
+so everything to its right aligns across rows) + an interactive **person chip** (click to reconcile via
+`ResolveAttendeeSheet` — sets the conversation's `person` and every message's) + the conversation's project
+chips + a **single envelope icon** + the **`N sent · M recv` breakdown** (that day's slice) + to-do +
+importance + a trailing **logged-time chip**; the second line is the summary. **Multi-message days expand** to
+a **drill-down**: **sent** messages render the full **`SentEmailActivityRow`**, **received** messages a compact
+summary/open-in-Mail row. Time is logged against the **conversation** via the row's **"Log time…" context
+menu** (→ `LogTimeSheet(presetConversation:)`). Rows sort importance-first.
+**Tapping the row opens the day's latest message in Mail.app** — `MailScriptService.openMessage(_:)` resolves
 the real mailbox (`EmailSettingsStore`) + account and opens by Mail's integer id via
 `MailScriptParsing.openMessageScript`, with a friendly alert if the message can't be opened.
 
@@ -782,63 +792,69 @@ for multi-message threads whose per-email summaries are all `done`, via
 pending / for single-message threads.
 
 **Sent-email time still counts, but sent emails don't render in the Activity section.** The Activity section
-shows focus blocks, meetings, and task time — **no email rows**. A block's sent emails are still passed to
-`ActivitySection`/`FocusBlockRow` (as `sentEmails`) **only** so their logged time reduces the block's net
-remaining (`FocusBlockRow.netHours`) and the day Total/Overtime (via the canonical `TimeLedger`), consistent
-with where the emails render (the Email section). The `SentEmailActivityRow` (reused in the Email section's
-thread drill-down) is a **two-line** row: line 1 groups all the controls together on the
+shows focus blocks, meetings, and task time — **no email rows**. `ActivitySection` receives the day's
+`todayEntries` (task-, email-, and conversation-linked `TaskTimeEntry`s); its plain-entry bucketing keeps
+only `email == nil && conversation == nil` entries, while a block's **email/conversation-linked** time is
+summed into `emailHours(for:)` and passed to `FocusBlockRow` (as `emailHours: Double`) **only** so it reduces
+the block's net remaining (`FocusBlockRow.netHours`) and the day Total/Overtime (via the canonical
+`TimeLedger`), consistent with where the emails render (the Email section). The `SentEmailActivityRow` (a
+per-message row in the Email section's conversation drill-down) is a **two-line** row: line 1 groups all the
+controls together on the
 left (open-in-Mail, then an **editable recipient chip** → `ResolveAttendeeSheet` (`resolvePerson` mirrors
 the triage row; links/creates a Person and adds the recipient address), an **editable project chip** →
 `FuzzyPickerField` picker, and the time-log actions), with the send time trailing on the right; line 2 is
 the **on-device AI summary** (or the de-emphasised subject until ready — `EmailMessage.isSummarizing`
 gates the "summarising…" hint) via the shared `EmailContentLine`. **Quick time-logging:** the one-click
-**`1m` / `5m` / `15m`** buttons **accumulate** (each appends an email-linked task-less `TaskTimeEntry` at
-the send time) plus an **`⋯`** that opens `LogTimeSheet(presetEmail:)` for custom values/editing. Email time
+**`1m` / `5m` / `15m`** buttons **accumulate** (each appends a **conversation-linked** task-less `TaskTimeEntry`
+at the send time, so the time reaches the canonical ledger / Timesheet / Chat; falls back to a message-linked
+entry only if the message is unthreaded) plus an **`⋯`** that opens `LogTimeSheet(presetConversation:)` for
+custom values/editing. Email time
 chips render in minutes via `TimeFormat.short(hours:)` (`Domain/TimeFormat.swift`) rather than
-`Duration.displayString`'s hours. In-block email time reduces that block's **net remaining**
-(`FocusBlockRow.netHours` adds the emails' `timeEntries` hours); standalone email time adds to the day
-total. Email-linked entries are kept out of the plain entry bucketing/rendering (`taskEntries` = `email
-== nil`).
+`Duration.displayString`'s hours. In-block email/conversation time reduces that block's **net remaining**
+(`FocusBlockRow.netHours` adds `emailHours`); standalone email time adds to the day total. Email- and
+conversation-linked entries are kept out of the plain entry bucketing/rendering (`taskEntries` =
+`email == nil && conversation == nil`).
 
 **`EmailTriageView`** (the sidebar **Emails** page; opened from the diary **Email section header's tray
 button** or the "N to triage" hint via `workspace.focusOrOpen(.triage)`) is the accept/dismiss workspace.
-It shows **all fetched days at once** (grouped into `List` **Sections** by start-of-day, **most-recent day
-first**; within a day threads run **earliest → latest**; the store's rolling ~3-day fetch window bounds
-it), **segmented into four mutually-exclusive
+It shows **every fetched conversation once** (each `EmailConversation` grouped under its latest-message day
+into `List` **Sections**, **most-recent day first**; within a day conversations run **earliest → latest**; the
+store's rolling ~3-day fetch window bounds it), **segmented into four mutually-exclusive
 buckets** (`EmailTriageCategory`: **To triage / Accepted / Tasks / Dismissed**, each with a
-store-wide count; default To-triage). **Rows are whole email threads, not individual messages** — a day's
-emails are grouped via `EmailThreadBuilder.threads(from:)` and each thread is bucketed by
-`EmailTriageCategory.classifyThread` (any **unclassified** message keeps the thread in **To triage**; else a
-linked to-do → **Tasks**; else any accepted → **Accepted**; else **Dismissed**). Each `EmailTriageThreadRow`
-reads top-to-bottom in the order you parse it: **line 1** = the thread's **emphasised stripped subject**
-(`EmailThread.displaySubject` — Re:/Fwd: removed, case preserved) + `N sent · M recv` + an **open-in-Mail
-envelope** (opens **every** message of the thread) with the time trailing right; **line 2** = the
-whole-thread **summary** (or "summarising…"); **line 3** = the chips/actions. **Every triage action applies
-to the whole thread at once**: the project chip + inline `FuzzyPickerField` (and tap-to-apply suggestions)
-**file the same project set on all messages**; the importance picker sets it on all (thread importance =
-max); the person chip → `ResolveAttendeeSheet` reconciles the other party for **all** messages; the
-classification icons (Accept ✓ / Dismiss ✕ / move-back-to-triage — only the ones that change some message
-show) sit **after the other icons** and set the state on **every** message. There's
-also **quick time-logging** — **5m / 15m** capsule chips (like the diary) that append an email-linked
-`TaskTimeEntry` to the thread's **latest sent message** (else its latest), plus a running logged-time chip.
+store-wide count; default To-triage). **Rows are whole conversations, not individual messages** — each is
+bucketed by `EmailTriageCategory.classify(state:hasTasks:)` over the conversation's own `triageState` +
+`taskCount` (**unclassified** → **To triage**; else a linked to-do → **Tasks**; else accepted → **Accepted**;
+else **Dismissed**). Each `EmailTriageConversationRow`
+reads top-to-bottom in the order you parse it: **line 1** = the conversation's **emphasised stripped subject**
+(`EmailConversation.displaySubject` — Re:/Fwd: removed, case preserved) + `N sent · M recv` + an **open-in-Mail
+envelope** (opens **every** message of the conversation) with the time trailing right; **line 2** = the
+**summary** (or "summarising…"); **line 3** = the chips/actions. **Every triage action is a single write on
+the conversation** (which owns the state — no per-message loop): the project chip + inline `FuzzyPickerField`
+(and tap-to-apply suggestions) set `conversation.projects`; the importance picker sets `conversation.importance`;
+the person chip → `ResolveAttendeeSheet` reconciles the other party (sets `conversation.person` + each message's);
+the classification icons (Accept ✓ / Dismiss ✕ / move-back-to-triage — only the ones that change the current
+state show) sit **after the other icons** and call `conversation.accept()`/`triageDismiss()`/`unclassify()`.
+There's also **quick time-logging** — **5m / 15m** capsule chips (like the diary) that append a
+conversation-linked `TaskTimeEntry` (`entry.conversation = conversation`), plus a running logged-time chip.
 There's a **Refresh** button (incremental fetch-now). The row also has: a **to-do chip** (opens/deletes the
-thread's linked to-dos), a context menu to **exclude the
-sender / domain** (`EmailExcludeStore.add` + dismiss the thread), and a **Make todo** action (`checklist`
-icon) that opens `TaskEditorSheet` seeded from the thread's latest message (summary = subject, notes =
-summary, project = the assigned project) and on create links `Task.originEmail = email`
-↔ `EmailMessage.tasks` (deleting the email nullifies the link; the task survives) and marks the **whole
-thread accepted**. **Tap-to-apply project suggestion chips** (never auto-applied):
-`Domain/EmailProjectSuggestions.swift` (`rank`) combines the sender's Person projects + projects on
-prior same-sender/thread emails + an **on-device AI pick** (`EmailMessage.suggestedProjectID`, set by
-`EmailSummaryDriver` via `FoundationModelsSummarizer.suggestProjectName`). The email↔to-do link is
+conversation's linked to-dos — `conversation.tasks`), a context menu to **exclude the
+sender / domain** (`EmailExcludeStore.add` + `conversation.triageDismiss()`), and a **Make todo** action
+(`checklist` icon) that opens `TaskEditorSheet` seeded from the conversation (summary = `displaySubject`,
+notes = `latestMessageSummary`, project = the conversation's first) and on create links
+`Task.originEmail = conversation.latest` ↔ `EmailMessage.tasks` (deleting the email nullifies the link; the
+task survives) and marks the **conversation accepted** (`conversation.accept()`). **Tap-to-apply project
+suggestion chips** (never auto-applied): `Domain/EmailProjectSuggestions.swift` (`rank`) combines the other
+party's Person projects + projects on **prior same-party conversations** + an **on-device AI pick**
+(`conversation.latest.suggestedProjectID`, set by `EmailSummaryDriver` via
+`FoundationModelsSummarizer.suggestProjectName`). The email↔to-do link is
 **visible both ways**: `TaskEditorSheet` shows a **"From email"** section (sender + subject + Open in
 Mail via `MailScriptService.openMessage`), `TaskRowView` shows an **envelope glyph** when
 `task.originEmail != nil`, and the diary `DayEmailThreadRow` shows a **to-do marker**
-(`checklist`/`checklist.checked` + count, `EmailThread.taskCount`/`hasOpenTasks`). Incomplete email
+(`checklist`/`checklist.checked` + count, `EmailConversation.taskCount`/`hasOpenTasks`). Incomplete email
 to-dos are found via the Tasks page **Source → "From email"** filter combined with the Status filters
 (`Task.isOpen` = not completed/cancelled; `EmailMessage.hasTasks`/`hasOpenTask`). Deleting a Person
-nullifies `EmailMessage.person`; deleting a Project removes it from `EmailMessage.projects` (the email
-survives).
+nullifies both `EmailMessage.person` and `EmailConversation.person`; deleting a Project removes it from a
+conversation's `projects` (the conversation + messages survive).
 
 ### Shared UI components
 
@@ -856,7 +872,7 @@ survives).
 - `LogTimeSheet` — logs a `TaskTimeEntry`; pre-selects the slot-matching block (12:30 split; evening if present). Blocks without a task/project show just their slot name.
 - `FocusBlockRow` — collapsible row for one `FocusBlock`. Shows source icon (folder for project-backed, checkmark for task-backed), slot/duration chip, net remaining time label, "+" to open `LogTimeSheet`, pencil to edit. Context menu includes delete with alert when activities exist.
 - `FocusBlockEditorSheet` — sheet for creating or editing a `FocusBlock`. Segmented picker: Task or Project source. Duration text field with `Duration.parse(_:)` validation.
-- `LogTimeSheet` — lightweight sheet for adding a `TaskTimeEntry`. Pre-fillable with `presetTask`, `presetFocusBlock`, `presetDate`. Task picker shown when no preset task.
+- `LogTimeSheet` — lightweight sheet for adding a `TaskTimeEntry`. Pre-fillable with `presetTask`, `presetFocusBlock`, `presetDate`, `presetEmail` (legacy per-message), or `presetConversation` (logs against the `EmailConversation`, which owns its time). Task picker shown when no preset task/email/conversation; a preset email/conversation shows a read-only context section instead.
 - `DayTaskSidebar` — collapsible sidebar with Scheduled and Inbox sections for a given day. (Legacy; superseded by `DayTaskPanel`.)
 - `DayTaskPanel` (`Views/DayTab/DayTaskPanel.swift`) — the diary's always-visible right-hand **"My Active Tasks"** panel, **scoped to tasks assigned to the "Me" person** (`AppSettingsStore.myPersonID`; falls back to all tasks when Me isn't configured). A lean **`ListToolbar`** (search + **Filters ▾** popover + active-filter row; no presets — the panel only shows open tasks and all are Me) filters through `FilterEngine`/`FuzzyMatch` over a focused `panelFilters` set (Project / Priority / Tag / From-email) before bucketing. Then a **quick-add** capture field (creates a `Task` **assigned to Me** → lands in the Inbox) plus collapsible buckets **Overdue · Due today · In-progress · Scheduled · To Do · Inbox** (partitioned by `DayTaskBuckets`; **To Do** is the catch-all so every open, triaged, top-level task is visible even when undated, ordered by `TaskUrgency.score`). Action buckets use a compact **two-line `DayTaskPanelRow`** (email-list style: status icon + metadata chips [project/priority/due/scheduled/flags] on line 1 with a trailing **time quick-add `Menu`** [15m/30m/1h/1.5h/2h/Custom… → logs a `TaskTimeEntry` at the current time-of-day on the shown diary day, so it slots into the Activity timeline chronologically], summary on line 2; **no edit button — double-click opens the editor**, status/log-time/delete in the context menu); the Inbox uses `TaskTriageRow`, whose priority is a **one-click L/M/H toggle** (tap to set, tap the active one to clear). **Reviewed is disabled until the task has a project** (UI gate — `TaskTriageRow.canReview = task.project != nil`; `markReviewed()` itself is unguarded). Placed beside the day/week content by `DiaryView` in a macOS `HSplitView` (toggle in the diary bar, persisted via `AppSettingsStore.taskPanelShown`).
 - `DaySectionHeader` — reusable section header with title and optional "+" button.
@@ -1040,7 +1056,7 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Mail range fetch: `MailScriptParsing.script(rangeStart:rangeEnd:)` embeds both datetime bounds (`mkDateTime`) for the auto-ingest window | Email auto-ingest | `gbpDiaryTests/Domain/MailScriptParsingTests.swift` | `scriptRange_embedsBothDayBounds`, `script_containsDayBoundsAccountAndMailboxes` |
 | Email triage state: `EmailTriageState.from(dismissed:accepted:)` — dismissed wins, else accepted→accepted / neither→unclassified | Email triage | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `state_dismissedWins`, `state_acceptedThenUnclassified` |
 | Triage bucket: `EmailTriageCategory.classify(state:hasTasks:)` — dismissed wins; else a linked to-do → Tasks; else accepted → Accepted; else To triage | Email triage / task bucket | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `category_classify_bucketsByStateAndTasks` |
-| Thread triage bucket: `EmailTriageCategory.classifyThread(_:)` buckets a whole thread from its messages' (state, hasTasks) — any unclassified message keeps it in To triage; else any linked to-do → Tasks; else any accepted → Accepted; else Dismissed; empty → To triage. The Emails page groups by thread and every triage action (accept/dismiss, project, importance, person) applies to all messages | Email triage / thread rows | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `classifyThread_bucketsAWholeThread` |
+| Thread triage bucket: `EmailTriageCategory.classifyThread(_:)` buckets a whole thread from its messages' (state, hasTasks) — any unclassified message keeps it in To triage; else any linked to-do → Tasks; else any accepted → Accepted; else Dismissed; empty → To triage. (The Emails page now shows one row per `EmailConversation` entity, bucketed by `classify(state:hasTasks:)` over the conversation's own state, and every triage action — accept/dismiss, project, importance, person, time — is a single write on the conversation) | Email triage / thread rows | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `classifyThread_bucketsAWholeThread` |
 | `Task.isOpen` is false only when completed/cancelled; `EmailMessage.hasTasks`/`hasOpenTask` reflect linked task presence/openness | Email→task visibility | `gbpDiaryTests/Models/TaskComputedPropertyTests.swift` | `isOpen_trueUntilCompletedOrCancelled`, `email_hasOpenTask_reflectsLinkedTaskStatuses` |
 | `EmailMessage.isSummarizing` is true only while `summaryState` is `pending` (drives the sent-email activity row's summary-vs-subject display) | Activity section / sent-email summaries | `gbpDiaryTests/Models/TaskComputedPropertyTests.swift` | `email_isSummarizing_trueOnlyWhilePending` |
 | Incremental fetch: `EmailIngest.fetchBounds(lastFetchedAt:now:)` — first run = full 3-day window; otherwise from `last − 10-min overlap` (clamped to the window start) to end-of-today | Email auto-ingest | `gbpDiaryTests/Domain/EmailTriageTests.swift` | `fetchBounds_firstRun_usesFullWindow`, `fetchBounds_incremental_startsJustBeforeLastFetch`, `fetchBounds_longGap_clampsToWindowStart` |
@@ -1072,12 +1088,13 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Weekend fold in Chat: `WeekendPolicy.workWeekday` folds a weekend date back to the preceding Friday (weekday → itself); `ChatWeekendFold.fold(kind:)` picks the direction by source kind (meeting → Friday, email/task → Monday) and `foldWork` always → Friday; the corpus emits weekend-folded weekday dates + sort dates and `ChatView.timeRecords` folds logged time, so the model never sees a Saturday | Chat / weekend fidelity | `gbpDiaryTests/Domain/WeekendPolicyTests.swift`, `gbpDiaryTests/Domain/ChatWeekendFoldTests.swift`, `gbpDiaryTests/Domain/ChatEvalTests.swift` | `workWeekday_resolvesWeekendBackToFriday`, `meetingFoldsWeekendBackToFriday`, `emailAndTaskFoldWeekendForwardToMonday`, `weekdayIsUnchanged`, `foldWork_alwaysBackToFriday`, `corpus_foldsWeekendMeetingDateToWeekday` |
 | Chat lens routing: `ChatLensSelector.select` returns `.timeReport` when `wantsTimeTotals`, else `.activityDigest` for an interval-bounded recap verb, else `.openBox` | Chat / lenses | `gbpDiaryTests/Domain/ChatLensTests.swift` | `timeReport_whenWantsTimeTotals`, `activityDigest_whenIntervalBoundedRecap`, `openBox_otherwise` |
 | Canonical `TimeLedger.compute`: each logged activity counts once to its own project; each standard block contributes net = max(0, capacity − in-block logged) to the block's project (overtime/evening blocks contribute no capacity); `standardTotal` = non-overtime capacity + standalone weekday work (mirrors the diary), `overtime` = evening in-block + weekend, `grandTotal`/`perProjectTotal`; per-project + `distinctWeeks` + per-block net; dedupe by source key; interval filter | Time accounting | `gbpDiaryTests/Domain/TimeLedgerTests.swift` | `inBlockActivity_attributedToOwnProject_reducesBlockNet`, `standaloneActivity_countsToProjectAndStandardTotal`, `overLoggedBlock_netZero_perProjectIsActual`, `overtime_eveningInBlockAndWeekend_notInStandardTotal`, `distinctWeeks_perProject`, `intervalFilter_dropsOutOfWindow`, `multiProjectActivity_attributesToEach_totalCountsOnce`, `dedupeBySourceKey`, `standardTotal_mirrorsDiaryFormula` |
-| `TimeLedgerProjection` maps @Model → ledger inputs (blocks + activities) reusing `FocusBlockAssignment.containingBlock` (in-block vs standalone) + `WeekendPolicy` (weekend work → Friday, overtime): an in-block meeting is attributed to its own project and reduces the block's net; standalone/legacy/weekend items are handled per the diary; task-shaped (`project`) + diary-shaped (`projectDiary`) inputs share one code path | Time accounting | `gbpDiaryTests/Domain/TimeLedgerProjectionTests.swift` | `inBlockMeeting_attributedToOwnProject_reducesBlockNet`, `standaloneTaskEntry_countedOnADayWithNoBlocks`, `legacyCompletedTaskDuration_counted`, `weekendWork_foldsToFridayAndIsOvertime`, `standaloneMeeting_countedInStandardTotal` |
+| `TimeLedgerProjection` maps @Model → ledger inputs (blocks + activities) reusing `FocusBlockAssignment.containingBlock` (in-block vs standalone) + `WeekendPolicy` (weekend work → Friday, overtime): an in-block meeting is attributed to its own project and reduces the block's net; **an `EmailConversation` owns its logged time, attributed to the conversation's project(s)** (in-block conversation time reduces the block's net; standalone conversation time counts to its project + standard total); standalone/legacy/weekend items are handled per the diary; task-shaped (`project(conversations:)`) + diary-shaped (`projectDiary`) inputs share one code path | Time accounting | `gbpDiaryTests/Domain/TimeLedgerProjectionTests.swift` | `inBlockMeeting_attributedToOwnProject_reducesBlockNet`, `inBlockConversationTime_attributedToOwnProject_reducesBlockNet`, `standaloneConversationTime_countedToProjectAndStandardTotal`, `standaloneTaskEntry_countedOnADayWithNoBlocks`, `legacyCompletedTaskDuration_counted`, `weekendWork_foldsToFridayAndIsOvertime`, `standaloneMeeting_countedInStandardTotal` |
+| Sent-email time reaches the ledger only via the conversation: `SentEmailActivityRow` logs a **conversation-linked** `TaskTimeEntry` (the conversation owns email time), so it counts in the Chat/Timesheet per-project ledger; a stray per-message email-only entry does not | Email time-logging / ledger | `gbpDiaryTests/Domain/TimeLedgerProjectionTests.swift` | `sentEmailTime_countsViaConversation_notViaPerMessageEmail` |
 | Time-report lens: `ChatTimeTotals.from(ledger:projectName:)` filters the canonical `TimeLedger` result to the asked project; `report(...)` renders a deterministic answer (single-project sentence or per-project list + total) with distinct-active-weeks; `emptyReport` explains the scope/window; the pipeline answers time questions from the ledger with no model and never degrades | Chat / time report | `gbpDiaryTests/Domain/ChatTimeTotalsTests.swift`, `gbpDiaryTests/Domain/ChatEvalTests.swift` | `from_filtersToOneProject_caseInsensitive`, `report_singleProjectAndPerProject`, `emptyReport_explainsScopeAndWindow`, `authoritativeBlock_formatsFigures`, `totals_computedDeterministicallyOverInterval`, `timeReport_allTime_perProject_neverDegrades`, `followUp_inheritsPriorProjectIntervalAndKind` |
 | Activity-digest lens: `ChatActivityDigestBuilder.build` keeps only in-window items (sorted); `ChatActivityDigest.render` groups by weekday and never prints a weekend; `sources` dedups; `phrasingPrompt` is a strict rephrase-only instruction; the pipeline answers a "summarise my week" from the app-built digest (folding a Saturday meeting to Friday), phrasing via the model only when available and never degrading | Chat / activity digest | `gbpDiaryTests/Domain/ChatActivityDigestTests.swift`, `gbpDiaryTests/Domain/ChatEvalTests.swift` | `build_keepsOnlyInWindowItemsSortedByDate`, `render_groupsByDayAndNeverShowsWeekend`, `empty_rendersEmptyString`, `sources_dedupById`, `phrasingPrompt_isStrictAndCarriesBlock`, `digest_summariseLastWeek_foldsWeekendAndInventsNothing`, `digest_handsModelAWeekendFreeBlock` |
 | Model-driven intent (Phase 1): `ChatQuerySpecMapping.merge` refines a deterministic heuristic scope with the model's structured spec — `resolveKinds` whitelists kind tokens, `resolveProject` validates against known names (exact/containment, never a hallucination), an LM period overrides else the heuristic interval is kept, and the totals/overview flags are unioned (a heuristic-true flag is never dropped); the **project filter comes only from the heuristic** — the model may never introduce one (guarding the "list of projects" → unrelated-project over-scoping bug); `ChatDatePeriod.window` maps each period token to its interval+label (`.none` → nil). `FoundationModelsScopeResolver` merges the on-device `@Generable ChatQuerySpecDraft` over `HeuristicScopeResolver` and returns the heuristic unchanged when the model is unavailable | Chat / query-scoped retrieval | `gbpDiaryTests/Domain/ChatQuerySpecMappingTests.swift` | `period_windows`, `resolveKinds_whitelistsAndDropsUnknown`, `resolveProject_validatesAgainstKnownNames`, `merge_lmKindsOverrideEmptyHeuristic`, `merge_ignoresModelProject_projectComesFromHeuristicOnly`, `merge_lmPeriodSetsInterval_elseKeepsHeuristic`, `merge_flagsAreUnioned_neverDropHeuristicTrue`, `merge_emptyLM_returnsHeuristicUnchanged` |
 | Per-project report (pure): `ProjectActivitySection.headerLine` = "Name — Xh · Yd · N weeks" (`TimeFormat.hours/days` + `ChatTimeTotals.weeksText`); `ProjectActivityReport.render()` = each section's header then `• label` bullets, sections in order (a section with no items shows just its header); `section(matching:)` is case-insensitive; `narrativeBlock(projectName:)` renders bullets grouped under each project name with no time header (nil = all sections, a named-but-unmatched project → ""); `phrasingPrompt(section:)` is strict rephrase-only | Chat + Timesheet / per-project reports | `gbpDiaryTests/Domain/ProjectActivityReportTests.swift` | `headerLine_showsHoursDaysWeeks`, `render_headerThenBullets_sectionsInOrder`, `sectionMatching_isCaseInsensitive`, `narrativeBlock_bulletsGroupedByProject_noTimeHeader_optionallyScoped`, `phrasingPrompt_isStrictRephraseOnly` |
-| Per-project projection (`@MainActor`): `ProjectActivityProjection.report(interval:tasks:emails:meetings:focusBlocks:calendar:maxEmailsPerProject:)` takes hours/distinctWeeks from `TimeLedgerProjection.ledger(...)` and gathers narrative `ChatActivityItem`s from meetings, completed tasks, logged (non-empty) task/focus-block comments, and emails (importance-first, capped) under the right project with the right label/kind; every item is weekend-folded (→ Friday for work) and interval-filtered; a project with items but no logged hours still appears; blank-comment entries are skipped; the `(no project)` hours bucket is never a section | Chat + Timesheet / per-project reports | `gbpDiaryTests/Domain/ProjectActivityProjectionTests.swift` | `meetingsTasksCommentsEmails_landUnderTheRightProjectWithLabels`, `hoursAndWeeks_comeFromTheLedger`, `weekendItem_foldsToFriday`, `intervalFilter_dropsOutOfWindowItems`, `projectWithItemsButNoLoggedHours_stillAppears`, `emptyCommentEntries_areSkipped`, `emails_areImportanceFirstAndCapped`, `noProjectHoursBucket_isNotASection` |
+| Per-project projection (`@MainActor`): `ProjectActivityProjection.report(interval:tasks:conversations:meetings:focusBlocks:calendar:maxEmailsPerProject:)` takes hours/distinctWeeks from `TimeLedgerProjection.ledger(...)` and gathers narrative `ChatActivityItem`s from meetings, completed tasks, logged (non-empty) task/focus-block comments, **non-empty comments on a conversation's own time entries**, and **email conversations** (`EmailConversation`, one item per conversation, importance-first, capped) under the right project with the right label/kind; every item is weekend-folded (→ Friday for work) and interval-filtered; a project with items but no logged hours still appears; blank-comment entries are skipped; the `(no project)` hours bucket is never a section | Chat + Timesheet / per-project reports | `gbpDiaryTests/Domain/ProjectActivityProjectionTests.swift` | `meetingsTasksCommentsEmails_landUnderTheRightProjectWithLabels`, `conversationTime_landsUnderConversationProjectWithComment`, `hoursAndWeeks_comeFromTheLedger`, `weekendItem_foldsToFriday`, `intervalFilter_dropsOutOfWindowItems`, `projectWithItemsButNoLoggedHours_stillAppears`, `emptyCommentEntries_areSkipped`, `emails_areImportanceFirstAndCapped`, `noProjectHoursBucket_isNotASection` |
 | Chat time-report narrative: `ChatAnswerPipeline.run` takes a `projectActivity:` closure; the time-report lens appends the shared report's `narrativeBlock(projectName:)` bullets under the hours (deterministic — `prompt == nil`, no model/retrieval) | Chat / time report + narrative | `gbpDiaryTests/Domain/ChatEvalTests.swift` | `timeReport_appendsPerProjectNarrative`, `totals_computedDeterministicallyOverInterval`, `timeReport_allTime_perProject_neverDegrades` |
 | Shared AI-summary voice: `AISummaryStyle.directive` encodes second person ("you") + simple past + neutral tone + no-markdown as a `• …` block (one line per `rules` entry); `inline` is a one-line second-person/simple-past/professional form; `version` ≥ 1. Every summary prompt composes from it — `EmailSummaryPrompt.instructions` (voice folded in; `promptVersion` = email base + `AISummaryStyle.version`), `ProjectActivityReport.phrasingPrompt`, and `ChatActivityDigestBuilder.phrasingPrompt` all carry the second-person/simple-past voice | AI summaries / shared voice | `gbpDiaryTests/Domain/AISummaryStyleTests.swift`, `gbpDiaryTests/Domain/EmailSummaryTests.swift`, `gbpDiaryTests/Domain/ProjectActivityReportTests.swift`, `gbpDiaryTests/Domain/ChatActivityDigestTests.swift`, `gbpDiaryTests/Domain/ChatEvalTests.swift` | `directive_encodesSecondPersonSimplePastNeutralNoMarkdown`, `inline_isOneLineSecondPersonSimplePast`, `version_isPositive`, `instructions_containKeyRules`, `promptVersion_reflectsPerspectiveAndIdiomRules`, `phrasingPrompt_isStrictRephraseOnly`, `phrasingPrompt_isStrictAndCarriesBlock`, `digest_handsModelAWeekendFreeBlock` |
 
@@ -1085,7 +1102,7 @@ Maintain this table and keep it current whenever this file changes behavior rule
 
 | Calendar access on first grant: `CalendarService.resolve(granted:fallback:)` returns `.authorized` whenever EventKit reports `granted` (authoritative right after approval, when `authorizationStatus` may still read `.notDetermined`), else the fallback status — so the meeting-import list populates immediately after approval | Calendar import / access | `gbpDiaryTests/Domain/CalendarAccessTests.swift` | `resolve_grantedIsAuthoritative`, `resolve_notGranted_usesFallback` |
 
-| Email thread grouping: `EmailThreadBuilder.threads(from:)` groups emails by `EmailThreading.threadKey` (normalized subject + party = resolved Person id else `fromAddress`) so a conversation's sent + received messages unite (Sent stores the recipient), messages sort latest-first, and `EmailThread.sentCount`/`receivedCount` reflect the split; different party/subject split into separate threads | Email threads / diary + activity | `gbpDiaryTests/Domain/EmailThreadBuilderTests.swift` | `conversationUnitesSentAndReceived`, `differentPartyOrSubjectSplits`, `partyMatchesByResolvedPersonAcrossAddresses` |
+| Email thread grouping: `EmailThreadBuilder.threads(from:)` groups emails by `EmailThreading.threadKey` (normalized subject + party = resolved Person id else `fromAddress`) so a conversation's sent + received messages unite (Sent stores the recipient), messages sort latest-first, and `EmailThread.sentCount`/`receivedCount` reflect the split; different party/subject split into separate threads. (Superseded in the views by the persistent `EmailConversation` entity; the pure helper + tests remain) | Email threads / helper | `gbpDiaryTests/Domain/EmailThreadBuilderTests.swift` | `conversationUnitesSentAndReceived`, `differentPartyOrSubjectSplits`, `partyMatchesByResolvedPersonAcrossAddresses` |
 | Whole-thread day summary (synthesized): `EmailThreadSummaryPrompt.build` embeds subject/participants + each message as "(sent/received <time>) <summary>" and carries the shared `AISummaryStyle` voice; `promptVersion` = base + `AISummaryStyle.version`; `EmailThreadSummaryFingerprint.make` is order-independent and changes when a member joins/leaves or re-summarises; `EmailThreadSummaryPlanning.needsSummary` is true when missing/stale/changed and false when settled (done/failed) with a matching fingerprint + current version | Email threads / on-device summary | `gbpDiaryTests/Domain/EmailThreadSummaryTests.swift` | `prompt_embedsDirectionsSummariesAndSharedVoice`, `promptVersion_foldsSharedStyleVersion`, `fingerprint_changesOnMemberOrVersionChange`, `needsSummary_trueWhenMissingStaleOrChanged_falseWhenCurrent` |
 | Reply-chain header import: `MailScriptParsing` reads the RFC `message id` + `In-Reply-To` + `References` per message (Mail `header whose name is …`), extends `MailMessageDraft` (`rfcMessageId`/`inReplyTo`/`references`, bare), and `parseOutput` parses the 13-field record (backward-compatible with 10-field); `parseMessageIds` extracts `<…>` tokens bare, `normalizeMessageId` strips brackets | Email threading / reply-chain | `gbpDiaryTests/Domain/MailScriptParsingTests.swift` | `parseOutput_parsesReplyChainHeaders`, `parseOutput_oldTenFieldRecordStillParses`, `parseMessageIds_extractsBareTokens` |
 | Reply-graph threading: `EmailThreadGraph.assign` groups messages by the reply graph (union-find over Message-ID/In-Reply-To/References) with a stable min-id `threadKey` per component, subject fallback for headerless messages; reply chains + subject-changes + multi-party unite, recurring subjects with their own ids stay separate, and assignment is order-independent | Email threading / reply-chain | `gbpDiaryTests/Domain/EmailThreadGraphTests.swift` | `replyChainUnites`, `subjectChangeMidThreadStaysOneThread`, `multiPartyExchangeUnites`, `recurringSubjectWithoutLinksStaysSeparate`, `headerlessFallsBackToSubject`, `assignmentIsDeterministicRegardlessOfOrder` |

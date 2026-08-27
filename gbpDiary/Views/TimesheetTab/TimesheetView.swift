@@ -6,7 +6,8 @@ struct TimesheetView: View {
     @Query(sort: \Project.name) private var projects: [Project]
     @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allEntries: [TaskTimeEntry]
     @Query private var allFocusBlocks: [FocusBlock]
-    @Query private var allEmails: [EmailMessage]
+    @Query private var allConversations: [EmailConversation]
+    @Query private var allEmails: [EmailMessage]   // for source navigation (open a message in Mail)
     @Query private var allMeetings: [Minutes]
 
     @Environment(WorkspaceModel.self) private var workspace
@@ -41,7 +42,7 @@ struct TimesheetView: View {
     // the narrative pairs each project's meetings, completed tasks, logged comments, and emails.
     private var rangeReport: ProjectActivityReport {
         ProjectActivityProjection.report(interval: rangeInterval.start..<rangeInterval.end,
-                                         tasks: allTasks, emails: allEmails, meetings: allMeetings,
+                                         tasks: allTasks, conversations: allConversations, meetings: allMeetings,
                                          focusBlocks: allFocusBlocks)
     }
 
@@ -53,7 +54,7 @@ struct TimesheetView: View {
         Set(entriesInRange.compactMap(\.task?.id)).union(Set(legacyTasksInRange.map(\.id))).count
     }
     private var overtime: Double {
-        TimeLedgerProjection.ledger(focusBlocks: allFocusBlocks, tasks: allTasks, emails: allEmails,
+        TimeLedgerProjection.ledger(focusBlocks: allFocusBlocks, tasks: allTasks, conversations: allConversations,
                                     meetings: allMeetings, interval: rangeInterval.start..<rangeInterval.end).overtime
     }
 

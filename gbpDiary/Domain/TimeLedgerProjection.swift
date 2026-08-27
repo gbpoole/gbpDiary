@@ -10,7 +10,8 @@ enum TimeLedgerProjection {
 
     // MARK: Chat / Timesheet (task-shaped input)
 
-    static func project(focusBlocks: [FocusBlock], tasks: [Task], emails: [EmailMessage], meetings: [Minutes],
+    static func project(focusBlocks: [FocusBlock], tasks: [Task], conversations: [EmailConversation],
+                        meetings: [Minutes],
                         calendar: Calendar = .current) -> (blocks: [LedgerBlock], activities: [LedgerActivity]) {
         let ctx = Context(focusBlocks: focusBlocks, calendar: calendar)
         var activities: [LedgerActivity] = []
@@ -21,19 +22,20 @@ enum TimeLedgerProjection {
                     activities.append(ctx.legacyTask(id: task.id.uuidString, completedAt: c, hours: d.hoursNormalized, projects: names))
                 }
             } else {
-                for e in task.timeEntries where e.email == nil {
+                for e in task.timeEntries where e.email == nil && e.conversation == nil {
                     activities.append(ctx.entry(id: e.id.uuidString, date: e.date, hours: e.duration.hoursNormalized, projects: names))
                 }
             }
         }
-        activities += emailActivities(emails, ctx)
+        activities += conversationActivities(conversations, ctx)
         activities += meetingActivities(meetings, ctx)
         return (ctx.blocks, activities)
     }
 
-    static func ledger(focusBlocks: [FocusBlock], tasks: [Task], emails: [EmailMessage], meetings: [Minutes],
+    static func ledger(focusBlocks: [FocusBlock], tasks: [Task], conversations: [EmailConversation],
+                       meetings: [Minutes],
                        interval: Range<Date>? = nil, calendar: Calendar = .current) -> LedgerResult {
-        let (blocks, activities) = project(focusBlocks: focusBlocks, tasks: tasks, emails: emails,
+        let (blocks, activities) = project(focusBlocks: focusBlocks, tasks: tasks, conversations: conversations,
                                            meetings: meetings, calendar: calendar)
         return TimeLedger.compute(blocks: blocks, activities: activities, interval: interval, calendar: calendar)
     }
@@ -41,12 +43,17 @@ enum TimeLedgerProjection {
     // MARK: Diary (already-flattened day input)
 
     static func projectDiary(focusBlocks: [FocusBlock], taskEntries: [TaskTimeEntry], completedTasks: [Task],
-                             sentEmails: [EmailMessage], meetings: [Minutes],
+                             meetings: [Minutes],
                              calendar: Calendar = .current) -> (blocks: [LedgerBlock], activities: [LedgerActivity]) {
         let ctx = Context(focusBlocks: focusBlocks, calendar: calendar)
         var activities: [LedgerActivity] = []
-        for e in taskEntries where e.email == nil {
-            let names = [e.task?.project?.name].compactMap { $0 }
+        // The day's time entries are already day-filtered by the caller; attribute each to its owner's
+        // project — a conversation (conversation-owned email time), else a legacy email, else its task.
+        for e in taskEntries {
+            let names: [String]
+            if let convo = e.conversation { names = convo.projects.map(\.name) }
+            else if let email = e.email { names = email.projects.map(\.name) }
+            else { names = [e.task?.project?.name].compactMap { $0 } }
             activities.append(ctx.entry(id: e.id.uuidString, date: e.date, hours: e.duration.hoursNormalized, projects: names))
         }
         for task in completedTasks where task.timeEntries.isEmpty {
@@ -55,25 +62,24 @@ enum TimeLedgerProjection {
                                                  projects: [task.project?.name].compactMap { $0 }))
             }
         }
-        activities += emailActivities(sentEmails, ctx)
         activities += meetingActivities(meetings, ctx)
         return (ctx.blocks, activities)
     }
 
     static func diaryLedger(focusBlocks: [FocusBlock], taskEntries: [TaskTimeEntry], completedTasks: [Task],
-                            sentEmails: [EmailMessage], meetings: [Minutes], calendar: Calendar = .current) -> LedgerResult {
+                            meetings: [Minutes], calendar: Calendar = .current) -> LedgerResult {
         let (blocks, activities) = projectDiary(focusBlocks: focusBlocks, taskEntries: taskEntries,
-                                                completedTasks: completedTasks, sentEmails: sentEmails,
-                                                meetings: meetings, calendar: calendar)
+                                                completedTasks: completedTasks, meetings: meetings, calendar: calendar)
         return TimeLedger.compute(blocks: blocks, activities: activities, calendar: calendar)
     }
 
     // MARK: Shared
 
-    private static func emailActivities(_ emails: [EmailMessage], _ ctx: Context) -> [LedgerActivity] {
-        emails.flatMap { email -> [LedgerActivity] in
-            let names = email.projects.map(\.name)
-            return email.timeEntries.filter { $0.task == nil }.map {
+    // A conversation OWNS its logged time, attributed to the conversation's project(s) at each entry's date.
+    private static func conversationActivities(_ conversations: [EmailConversation], _ ctx: Context) -> [LedgerActivity] {
+        conversations.flatMap { convo -> [LedgerActivity] in
+            let names = convo.projects.map(\.name)
+            return convo.timeEntries.map {
                 ctx.entry(id: $0.id.uuidString, date: $0.date, hours: $0.duration.hoursNormalized, projects: names)
             }
         }

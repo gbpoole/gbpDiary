@@ -1,11 +1,17 @@
 import SwiftUI
 import SwiftData
 
-// Compact one-line-forward email row: direction icon + person chip (in place of the name) + project
-// chips + count/time on the first line, subject on the second. The person chip resolves the sender
-// (ResolveAttendeeSheet); the project picker files the whole thread. No "Sent" chip — the icon shows it.
+// Compact one-line-forward email row for the diary Email section. The persistent `EmailConversation` owns
+// the cross-cutting state (person / project(s) / importance / triage / time), set once for the whole
+// conversation; the row renders that day's message slice (passed in, respecting the weekend windows).
+// The person chip resolves the sender (ResolveAttendeeSheet); the project picker files the conversation;
+// time logs against the conversation. No "Sent" chip — the icon shows direction.
 struct DayEmailThreadRow: View {
-    let thread: EmailThread
+    let conversation: EmailConversation
+    // This day's messages in the conversation (latest-first), already scoped to the weekend windows.
+    let dayMessages: [EmailMessage]
+    // This day's logged conversation time (hours).
+    let dayLoggedHours: Double
     let onReconcile: () -> Void
 
     @State private var mailService = MailScriptService()
@@ -14,12 +20,15 @@ struct DayEmailThreadRow: View {
     @State private var expanded = false
     @State private var showingLogTime = false
 
+    private var latestDayMessage: EmailMessage? { dayMessages.first }
+    private var dayCount: Int { dayMessages.count }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             mainRow
-            // Drill-down: each message in the thread — sent messages keep their time-logging row.
-            if expanded && thread.count > 1 {
-                ForEach(thread.messages, id: \.persistentModelID) { message in
+            // Drill-down: each message in this day's slice — sent messages keep their time-logging row.
+            if expanded && dayCount > 1 {
+                ForEach(dayMessages, id: \.persistentModelID) { message in
                     if message.direction == .sent {
                         SentEmailActivityRow(email: message)
                     } else {
@@ -29,11 +38,11 @@ struct DayEmailThreadRow: View {
             }
         }
         .contextMenu {
-            Button("Open in Mail", systemImage: "envelope.open") { openInMail(thread.latest) }
-            if thread.sentCount > 0 {
-                Button("Log time…", systemImage: "clock") { showingLogTime = true }
+            if let latest = latestDayMessage {
+                Button("Open in Mail", systemImage: "envelope.open") { openInMail(latest) }
+                EmailExperimentInChatButton(email: latest)
             }
-            EmailExperimentInChatButton(email: thread.latest)
+            Button("Log time…", systemImage: "clock") { showingLogTime = true }
             Button("Regenerate summary", systemImage: "sparkles") { regenerateSummary() }
             Menu("Set importance") {
                 Button("High") { setImportance(.high) }
@@ -48,28 +57,26 @@ struct DayEmailThreadRow: View {
             TaskEditorSheet(task: task, defaultDate: task.originEmail?.date ?? Date())
         }
         .sheet(isPresented: $showingLogTime) {
-            // Log against the latest sent message in the thread (single-sent = that one email).
-            LogTimeSheet(presetEmail: thread.messages.first { $0.direction == .sent } ?? thread.latest)
+            LogTimeSheet(presetDate: latestDayMessage?.date ?? Date(), presetConversation: conversation)
         }
     }
 
-    // The thread's headline row: person/project/importance chips + the whole-thread summary line.
-    // A single envelope icon for every thread — the sent/received breakdown gives the direction context.
+    // The conversation's headline row: person/project/importance chips + the day's summary line.
+    // A single envelope icon for every conversation — the sent/received breakdown gives direction context.
     private var countText: String {
+        let sent = dayMessages.filter { $0.direction == .sent }.count
+        let recv = dayMessages.filter { $0.direction == .inbox }.count
         var parts: [String] = []
-        if thread.sentCount > 0 { parts.append("\(thread.sentCount) sent") }
-        if thread.receivedCount > 0 { parts.append("\(thread.receivedCount) recv") }
+        if sent > 0 { parts.append("\(sent) sent") }
+        if recv > 0 { parts.append("\(recv) recv") }
         return parts.joined(separator: " · ")
     }
-    private var loggedHours: Double {
-        thread.messages.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
-    }
 
-    // Expand chevron for multi-message threads; a neutral bullet (same width) for single-message ones so
-    // the content to the right stays aligned across all threads.
+    // Expand chevron for multi-message days; a neutral bullet (same width) for single-message ones so
+    // the content to the right stays aligned across all rows.
     @ViewBuilder private var expandControl: some View {
         Group {
-            if thread.count > 1 {
+            if dayCount > 1 {
                 Button { expanded.toggle() } label: {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
                         .font(.system(size: 9, weight: .semibold))
@@ -90,11 +97,11 @@ struct DayEmailThreadRow: View {
         HStack(alignment: .top, spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
                 HStack(spacing: 6) {
-                    // Leading control: expand chevron for multi-message threads, else a neutral bullet — a
-                    // fixed-width slot so everything to its right aligns across threads.
+                    // Leading control: expand chevron for multi-message days, else a neutral bullet — a
+                    // fixed-width slot so everything to its right aligns across rows.
                     expandControl
                     personChip
-                    ForEach(thread.projects, id: \.persistentModelID) { project in
+                    ForEach(conversation.projects, id: \.persistentModelID) { project in
                         Chip(label: project.name, color: AppTheme.project)
                     }
                     // Envelope icon + direction/volume breakdown, after the project chip.
@@ -103,29 +110,32 @@ struct DayEmailThreadRow: View {
                     Text(countText)
                         .font(.caption2.weight(.medium)).foregroundStyle(.secondary)
                         .fixedSize()
-                    if thread.taskCount > 0 {
-                        EmailTodoChip(count: thread.taskCount, hasOpen: thread.hasOpenTasks,
-                                      onOpen: { openingTask = thread.tasks.first })
+                    if conversation.taskCount > 0 {
+                        EmailTodoChip(count: conversation.taskCount, hasOpen: conversation.hasOpenTasks,
+                                      onOpen: { openingTask = conversation.tasks.first })
                     }
-                    EmailImportanceChip(importance: thread.importance)
+                    EmailImportanceChip(importance: conversation.importance)
                     Spacer(minLength: 0)
-                    if loggedHours > 0 {
-                        Chip(label: TimeFormat.short(hours: loggedHours), color: AppTheme.duration)
+                    if dayLoggedHours > 0 {
+                        Chip(label: TimeFormat.short(hours: dayLoggedHours), color: AppTheme.duration)
                     }
-                    Text(thread.date.formatted(date: .omitted, time: .shortened))
-                        .font(.caption2).foregroundStyle(.secondary)
+                    if let latest = latestDayMessage {
+                        Text(latest.date.formatted(date: .omitted, time: .shortened))
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
-                EmailContentLine(subject: thread.subject, summary: thread.summary,
-                                 isSummarizing: thread.isSummarizing)
+                EmailContentLine(subject: latestDayMessage?.subject ?? conversation.subject,
+                                 summary: latestDayMessage?.summary,
+                                 isSummarizing: latestDayMessage?.isSummarizing ?? false)
             }
         }
         .padding(.horizontal)
         .padding(.vertical, 3)
         .contentShape(Rectangle())
-        .onTapGesture { openInMail(thread.latest) }   // tapping opens the latest message in Mail
+        .onTapGesture { if let latest = latestDayMessage { openInMail(latest) } }
     }
 
-    // A single message inside an expanded thread: direction + time + that message's own summary.
+    // A single message inside an expanded day: direction + time + that message's own summary.
     private func messageRow(_ message: EmailMessage) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: message.direction == .sent ? "paperplane" : "envelope")
@@ -148,15 +158,15 @@ struct DayEmailThreadRow: View {
     }
 
     private func regenerateSummary() {
-        for message in thread.messages {
+        for message in dayMessages {
             message.summary = nil
             message.summaryState = EmailSummaryState.pending.rawValue
         }
     }
 
-    // Thread importance writes every message so the thread's max stays consistent.
+    // Importance is a single write on the conversation (it owns the cross-cutting state).
     private func setImportance(_ importance: EmailImportance) {
-        for message in thread.messages { message.importance = importance }
+        conversation.importance = importance
     }
 
     private func openInMail(_ message: EmailMessage) {
@@ -167,16 +177,16 @@ struct DayEmailThreadRow: View {
 
     @ViewBuilder private var personChip: some View {
         Button(action: onReconcile) {
-            if let person = thread.person {
+            if let person = conversation.person {
                 Chip(label: person.name, color: AppTheme.person)
             } else {
-                let label = thread.fromName?.isEmpty == false ? thread.fromName!
-                    : (thread.fromAddress.isEmpty ? "Unrecognized" : thread.fromAddress)
+                let label = conversation.fromName?.isEmpty == false ? conversation.fromName!
+                    : (conversation.fromAddress.isEmpty ? "Unrecognized" : conversation.fromAddress)
                 Chip(label: label, color: AppTheme.warning)
             }
         }
         .buttonStyle(.plain)
-        .help(thread.person == nil
+        .help(conversation.person == nil
               ? "Unrecognized — click to link an existing person or create a new one"
               : "Linked person — click to change")
     }

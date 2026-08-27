@@ -9,18 +9,26 @@ struct ProjectActivityProjectionTests {
     private func at(_ day: Int, _ hour: Int = 10) -> Date {
         cal.date(from: DateComponents(year: 2024, month: 1, day: day, hour: hour))!
     }
-    private func report(interval: Range<Date>? = nil, tasks: [Task] = [], emails: [EmailMessage] = [],
+    private func report(interval: Range<Date>? = nil, tasks: [Task] = [], conversations: [EmailConversation] = [],
                         meetings: [Minutes] = [], focusBlocks: [FocusBlock] = []) -> ProjectActivityReport {
-        ProjectActivityProjection.report(interval: interval, tasks: tasks, emails: emails, meetings: meetings,
-                                         focusBlocks: focusBlocks, calendar: cal)
+        ProjectActivityProjection.report(interval: interval, tasks: tasks, conversations: conversations,
+                                         meetings: meetings, focusBlocks: focusBlocks, calendar: cal)
     }
-    private func email(_ subject: String, _ day: Int, importance: EmailImportance = .low,
-                       projects: [Project] = []) -> EmailMessage {
+    // A single-message conversation filed under `projects`, carrying `importance` and any logged time.
+    private func convo(_ subject: String, _ day: Int, importance: EmailImportance = .low,
+                       projects: [Project] = [], loggedComment: String? = nil,
+                       loggedHours: Double? = nil) -> EmailConversation {
+        let c = EmailConversation(threadKey: subject)
         let e = EmailMessage(messageId: subject, account: "a", mailbox: "INBOX", direction: .inbox,
                              fromAddress: "x@y.com", fromName: nil, subject: subject, date: at(day))
-        e.importance = importance
-        e.projects = projects
-        return e
+        c.messages = [e]
+        c.importance = importance
+        c.projects = projects
+        if let loggedHours {
+            c.timeEntries = [TaskTimeEntry(date: at(day), duration: Duration(value: loggedHours, unit: .h),
+                                           comment: loggedComment)]
+        }
+        return c
     }
 
     @Test func meetingsTasksCommentsEmails_landUnderTheRightProjectWithLabels() {
@@ -32,9 +40,9 @@ struct ProjectActivityProjectionTests {
         let logged = Task(summary: "analysis"); logged.project = nodes
         logged.timeEntries = [TaskTimeEntry(date: at(3, 15), duration: Duration(value: 2, unit: .h),
                                             comment: "reduced the cube")]
-        let mail = email("grant reply", 3, importance: .high, projects: [nodes])
+        let mail = convo("grant reply", 3, importance: .high, projects: [nodes])
 
-        let r = report(tasks: [done, logged], emails: [mail], meetings: [m])
+        let r = report(tasks: [done, logged], conversations: [mail], meetings: [m])
         let s = r.section(matching: "NODES")
         #expect(s != nil)
         let labels = s!.items.map(\.label)
@@ -79,8 +87,8 @@ struct ProjectActivityProjectionTests {
 
     @Test func projectWithItemsButNoLoggedHours_stillAppears() {
         let p = Project(name: "Zeta")
-        let mail = email("fyi", 3, projects: [p])
-        let r = report(emails: [mail])
+        let mail = convo("fyi", 3, projects: [p])
+        let r = report(conversations: [mail])
         let s = r.section(matching: "Zeta")
         #expect(s != nil)
         #expect(s?.hours == 0)
@@ -103,14 +111,24 @@ struct ProjectActivityProjectionTests {
 
     @Test func emails_areImportanceFirstAndCapped() {
         let p = Project(name: "Theta")
-        var mails: [EmailMessage] = []
-        for i in 1...8 { mails.append(email("low\(i)", 3, importance: .low, projects: [p])) }
-        mails.append(email("hi", 4, importance: .high, projects: [p]))
-        let r = ProjectActivityProjection.report(interval: nil, tasks: [], emails: mails, meetings: [],
+        var convos: [EmailConversation] = []
+        for i in 1...8 { convos.append(convo("low\(i)", 3, importance: .low, projects: [p])) }
+        convos.append(convo("hi", 4, importance: .high, projects: [p]))
+        let r = ProjectActivityProjection.report(interval: nil, tasks: [], conversations: convos, meetings: [],
                                                  focusBlocks: [], calendar: cal, maxEmailsPerProject: 3)
         let emailItems = r.section(matching: "Theta")?.items.filter { $0.kind == .email } ?? []
         #expect(emailItems.count == 3)
         #expect(emailItems.contains { $0.label == "Email: hi [H]" })   // high survives the cap
+    }
+
+    // A conversation OWNS its logged time + comments — attributed to the conversation's project.
+    @Test func conversationTime_landsUnderConversationProjectWithComment() {
+        let p = Project(name: "Iota")
+        let c = convo("re: budget", 3, projects: [p], loggedComment: "reviewed the budget", loggedHours: 0.5)
+        let r = report(conversations: [c])
+        let s = r.section(matching: "Iota")
+        #expect(s?.hours == 0.5)
+        #expect(s?.items.contains { $0.label == "reviewed the budget (0.5h)" && $0.kind == .loggedComment } == true)
     }
 
     @Test func noProjectHoursBucket_isNotASection() {

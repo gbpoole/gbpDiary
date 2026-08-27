@@ -45,9 +45,9 @@ struct DayPageContent: View {
 
     @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allTimeEntries: [TaskTimeEntry]
     @Query(sort: \EmailMessage.date, order: .reverse) private var allEmails: [EmailMessage]
-    @Query private var threadSummaries: [EmailThreadSummary]
+    @Query private var allConversations: [EmailConversation]
     @Query private var allPeople: [Person]
-    @State private var reconcilingThread: EmailThread?
+    @State private var reconcilingConversation: EmailConversation?
 
     // Weekend folding: inbound content (received mail) folds forward into Monday; work (time entries,
     // sent mail, completed-task activity) folds back into Friday. See WeekendPolicy.
@@ -58,40 +58,53 @@ struct DayPageContent: View {
         allTimeEntries.filter { workRange.contains($0.date) }
     }
 
-    // Received emails accepted onto the diary (sent emails live only in the Activity section now).
-    private var dayReceivedEmails: [EmailMessage] {
-        allEmails.filter {
-            forwardRange.contains($0.date) && $0.direction == .inbox && $0.triageState == .accepted
+    // This day's messages in a conversation, weekend-window scoped (received → Monday, sent → Friday).
+    private func dayMessages(for convo: EmailConversation) -> [EmailMessage] {
+        convo.messages.filter { m in
+            (m.direction == .inbox && forwardRange.contains(m.date))
+                || (m.direction == .sent && workRange.contains(m.date))
+        }.sorted { $0.date > $1.date }
+    }
+
+    // A conversation surfaced on this day: the persistent entity (owning triage/project/person/importance/
+    // time) plus this day's message slice and logged time. The conversation owns the cross-cutting state.
+    struct DayConversation: Identifiable {
+        let conversation: EmailConversation
+        let dayMessages: [EmailMessage]
+        let dayLoggedHours: Double
+        var id: PersistentIdentifier { conversation.persistentModelID }
+    }
+
+    // Accepted conversations with a message on this day — the single home for the day's mail. More-important
+    // conversations (High → Medium → Low) lead, then latest-first.
+    private var dayConversations: [DayConversation] {
+        allConversations.compactMap { convo -> DayConversation? in
+            guard convo.triageState == .accepted else { return nil }
+            let msgs = dayMessages(for: convo)
+            guard !msgs.isEmpty else { return nil }
+            let hours = convo.timeEntries
+                .filter { forwardRange.contains($0.date) || workRange.contains($0.date) }
+                .reduce(0.0) { $0 + $1.duration.hoursNormalized }
+            return DayConversation(conversation: convo, dayMessages: msgs, dayLoggedHours: hours)
+        }
+        .sorted {
+            let l = $0.conversation.importance.rank, r = $1.conversation.importance.rank
+            if l != r { return l > r }
+            return ($0.dayMessages.first?.date ?? .distantPast) > ($1.dayMessages.first?.date ?? .distantPast)
         }
     }
 
-    // The day's emails (received + sent) grouped into threads (same normalized subject + other party). A
-    // conversation's sent and received messages unite into one thread; the Email section is the single home
-    // for the day's mail (sent emails no longer render in the Activity section).
-    private var dayEmailThreads: [EmailThread] {
-        EmailThreadBuilder.threads(from: dayReceivedEmails + daySentEmails)
-            .map { thread in
-                var t = thread
-                t.synthesizedSummary = EmailThreadBuilder.summaryText(for: thread, in: threadSummaries)
-                return t
-            }
-            // More-important threads (High → Medium → Low) lead the day, then latest-first.
-            .sorted { $0.importance.rank != $1.importance.rank ? $0.importance.rank > $1.importance.rank : $0.date > $1.date }
+    // Received messages shown on the diary today (drives the summary-unavailable hint).
+    private var dayReceivedMessages: [EmailMessage] {
+        dayConversations.flatMap { $0.dayMessages.filter { $0.direction == .inbox } }
     }
 
-    // Sent emails for the day (shown in the Activity section at their send time) — work → Friday.
-    private var daySentEmails: [EmailMessage] {
-        allEmails.filter {
-            workRange.contains($0.date) && $0.direction == .sent && $0.triageState == .accepted
-        }
+    // Triage hint counts follow the conversation's triage state, for conversations with a message today.
+    private func dayConversationCount(_ state: EmailTriageState) -> Int {
+        allConversations.filter { $0.triageState == state && !dayMessages(for: $0).isEmpty }.count
     }
-
-    // Triage hint counts follow the inbound (Monday) window.
-    private func dayEmailCount(_ state: EmailTriageState) -> Int {
-        allEmails.filter { forwardRange.contains($0.date) && $0.triageState == state }.count
-    }
-    private var dayUnclassifiedCount: Int { dayEmailCount(.unclassified) }
-    private var dayDismissedCount: Int { dayEmailCount(.dismissed) }
+    private var dayUnclassifiedCount: Int { dayConversationCount(.unclassified) }
+    private var dayDismissedCount: Int { dayConversationCount(.dismissed) }
 
     // A "N to triage · M dismissed" summary of this day's hidden (non-accepted) emails, or nil if none.
     private var hiddenEmailSummary: String? {
@@ -185,7 +198,6 @@ struct DayPageContent: View {
                         todayEntries: todayTimeEntries,
                         meetings: dayMeetings,
                         completedTasks: activityCompletedTasks,
-                        sentEmails: daySentEmails,
                         findOrCreateDayRecord: findOrCreateDayRecord,
                         logTimeTrigger: $activityLogTimeTrigger,
                         focusBlockTrigger: $activityFocusBlockTrigger,
@@ -219,10 +231,10 @@ struct DayPageContent: View {
         .sheet(item: $addNoteRecord) { record in
             ContentNoteEditorSheet(dayRecord: record, onCreated: { newlyAddedNoteId = $0.id })
         }
-        .sheet(item: $reconcilingThread) { thread in
+        .sheet(item: $reconcilingConversation) { convo in
             ResolveAttendeeSheet(
-                attendee: CalendarAttendee(name: thread.fromName ?? "", email: thread.fromAddress),
-                onResolve: { resolveEmailPerson(thread, $0) }
+                attendee: CalendarAttendee(name: convo.fromName ?? "", email: convo.fromAddress),
+                onResolve: { resolveEmailPerson(convo, $0) }
             )
         }
         .onAppear {
@@ -245,7 +257,7 @@ struct DayPageContent: View {
             .padding(.horizontal).padding(.vertical, 4)
         }
         // If summaries can't run (Apple Intelligence off / model downloading), tell the user why.
-        if !dayReceivedEmails.isEmpty, dayReceivedEmails.contains(where: { $0.summaryState == EmailSummaryState.pending.rawValue }),
+        if dayReceivedMessages.contains(where: { $0.summaryState == EmailSummaryState.pending.rawValue }),
            let reason = FoundationModelsSummarizer().unavailableReason {
             Label(reason, systemImage: "sparkles")
                 .font(.caption)
@@ -253,35 +265,40 @@ struct DayPageContent: View {
                 .padding(.horizontal)
                 .padding(.vertical, 4)
         }
-        if dayReceivedEmails.isEmpty {
+        if dayConversations.isEmpty {
             Text(hiddenEmailSummary == nil ? "No emails for this day." : "No emails on the diary for this day.")
                 .font(.callout)
                 .foregroundStyle(.tertiary)
                 .padding(.horizontal)
                 .padding(.vertical, 6)
         } else {
-            ForEach(dayEmailThreads) { thread in
-                DayEmailThreadRow(thread: thread, onReconcile: { reconcilingThread = thread })
+            ForEach(dayConversations) { dc in
+                DayEmailThreadRow(conversation: dc.conversation, dayMessages: dc.dayMessages,
+                                  dayLoggedHours: dc.dayLoggedHours,
+                                  onReconcile: { reconcilingConversation = dc.conversation })
             }
         }
     }
 
-    // Resolve the thread's other party (link/create a Person) and apply to every message in it.
-    private func resolveEmailPerson(_ thread: EmailThread, _ result: AttendeeReconcileResult) {
+    // Resolve the conversation's other party (link/create a Person). The conversation owns `person`; each
+    // message's `person` is also set so per-message displays and re-threading stay consistent.
+    private func resolveEmailPerson(_ convo: EmailConversation, _ result: AttendeeReconcileResult) {
+        let address = convo.fromAddress
         let person: Person
         switch result {
         case .link(let p):
-            if !thread.fromAddress.isEmpty { p.emails = Person.appendingEmail(thread.fromAddress, to: p.emails) }
+            if !address.isEmpty { p.emails = Person.appendingEmail(address, to: p.emails) }
             p.updatedAt = Date()
             person = p
         case .create(let name, let inst):
             let p = Person(name: name)
-            if !thread.fromAddress.isEmpty { p.emails = [thread.fromAddress] }
+            if !address.isEmpty { p.emails = [address] }
             p.institution = inst
             modelContext.insert(p)
             person = p
         }
-        for message in thread.messages { message.person = person }
+        convo.person = person
+        for message in convo.messages { message.person = person }
     }
 
     // MARK: - Sections

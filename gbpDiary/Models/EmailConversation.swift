@@ -44,4 +44,37 @@ import SwiftData
         self.id = id
         self.threadKey = threadKey
     }
+
+    // MARK: - Display helpers (the entity replaces the ephemeral `struct EmailThread` in the views)
+
+    var sortedMessages: [EmailMessage] { messages.sorted { $0.date > $1.date } }
+    var latest: EmailMessage? { sortedMessages.first }
+    var count: Int { messages.count }
+    var date: Date { latest?.date ?? .distantPast }
+    var subject: String {
+        let s = latest?.subject ?? ""
+        return s.isEmpty ? "(no subject)" : s
+    }
+    /// Subject with Re:/Fwd: stripped (case preserved) — for display.
+    var displaySubject: String {
+        let s = EmailThreading.strippedSubject(latest?.subject ?? "")
+        return s.isEmpty ? "(no subject)" : s
+    }
+    var sentCount: Int { messages.filter { $0.direction == .sent }.count }
+    var receivedCount: Int { messages.filter { $0.direction == .inbox }.count }
+    /// The conversation's logged hours (its own time entries).
+    var loggedHours: Double { timeEntries.reduce(0.0) { $0 + $1.duration.hoursNormalized } }
+    /// To-dos made from any message in the conversation.
+    var tasks: [Task] { messages.flatMap(\.tasks) }
+    var taskCount: Int { tasks.count }
+    var hasOpenTasks: Bool { tasks.contains(where: \.isOpen) }
+    /// The latest message's per-message AI summary (fallback line until a synthesized summary is aligned).
+    var latestMessageSummary: String? { latest?.summary }
+    var isSummarizing: Bool { latest?.isSummarizing ?? false }
+    var fromName: String? { latest?.fromName }
+    var fromAddress: String { latest?.fromAddress ?? "" }
+    /// Messages on a given calendar day (the day's slice), latest-first.
+    func messages(on day: Date, calendar: Calendar = .current) -> [EmailMessage] {
+        sortedMessages.filter { calendar.isDate($0.date, inSameDayAs: day) }
+    }
 }
