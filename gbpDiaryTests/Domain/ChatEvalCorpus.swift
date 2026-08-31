@@ -32,6 +32,7 @@ enum ChatEvalCorpus {
         let activityItems: [ChatActivityItem]
         let meetings: [Minutes]
         let emails: [EmailMessage]
+        let conversations: [EmailConversation]
 
         func retrieve(_ query: String, _ limit: Int) -> (chunks: [ChatRankedChunk], error: String?) {
             (ChatHybridRanker().rank(query: query, chunks: chunks, embedder: nil, limit: limit), nil)
@@ -42,8 +43,8 @@ enum ChatEvalCorpus {
         // The shared per-project narrative report, from the real projection over the seeded @Model meetings
         // and emails — the same code the Timesheet and Chat use in production.
         @MainActor func projectActivity(_ interval: Range<Date>?) -> ProjectActivityReport {
-            ProjectActivityProjection.report(interval: interval, tasks: [], emails: emails, meetings: meetings,
-                                             focusBlocks: [], calendar: ChatEvalCorpus.calendar)
+            ProjectActivityProjection.report(interval: interval, tasks: [], conversations: conversations,
+                                             meetings: meetings, focusBlocks: [], calendar: ChatEvalCorpus.calendar)
         }
         func key(_ name: String, _ kind: ChatSourceKind) -> ChatSourceKey {
             ChatSourceKey(kind: kind, modelID: ids[name]!)
@@ -87,6 +88,15 @@ enum ChatEvalCorpus {
 
         let meetings = [febMeeting, mayMeeting, satMeeting]
         let emails = [nodesEmailThisWeek, nodesEmailLastWeek, otherEmailLastWeek, nodesEmailFebruary]
+        // Each email as a single-message conversation (the entity that now owns project/importance/time),
+        // mirroring production where conversations drive the per-project narrative.
+        let conversations = emails.map { e -> EmailConversation in
+            let c = EmailConversation(threadKey: e.subject)
+            c.messages = [e]
+            c.projects = e.projects
+            c.importance = e.importance
+            return c
+        }
         let result = ChatCorpusBuilder().build(
             projects: [nodesProject, otherProject], tasks: [], people: [], institutions: [],
             meetings: meetings, notes: [], days: [], documents: [],
@@ -122,7 +132,8 @@ enum ChatEvalCorpus {
             "febMeeting": uuid(20), "mayMeeting": uuid(21), "satMeeting": uuid(22),
         ]
         return Fixture(documents: documents, chunks: chunks, ids: ids, activities: activities,
-                       activityItems: activityItems, meetings: meetings, emails: emails)
+                       activityItems: activityItems, meetings: meetings, emails: emails,
+                       conversations: conversations)
     }
 
     private static func email(_ id: UUID, subject: String, summary: String, date: Date,

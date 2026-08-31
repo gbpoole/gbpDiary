@@ -19,6 +19,7 @@ struct ChatView: View {
     @Query private var days: [DayRecord]
     @Query private var documents: [Document]
     @Query(sort: \EmailMessage.date, order: .reverse) private var emails: [EmailMessage]
+    @Query private var conversations: [EmailConversation]
     @Query private var attachments: [Attachment]
     @Query private var focusBlocks: [FocusBlock]
 
@@ -368,10 +369,10 @@ struct ChatView: View {
         let result = await ChatAnswerPipeline().run(
             input,
             retrieve: { await rankedSources(for: $0, limit: $1) },
-            timeLedger: { TimeLedgerProjection.ledger(focusBlocks: focusBlocks, tasks: tasks, emails: emails,
+            timeLedger: { TimeLedgerProjection.ledger(focusBlocks: focusBlocks, tasks: tasks, conversations: conversations,
                                                       meetings: meetings, interval: $0) },
             activityProvider: { activityDigest(for: $0) },
-            projectActivity: { ProjectActivityProjection.report(interval: $0, tasks: tasks, emails: emails,
+            projectActivity: { ProjectActivityProjection.report(interval: $0, tasks: tasks, conversations: conversations,
                                                                 meetings: meetings, focusBlocks: focusBlocks) },
             answerer: answerer,
             scopeResolver: FoundationModelsScopeResolver())

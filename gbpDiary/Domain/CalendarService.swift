@@ -37,11 +37,21 @@ final class CalendarService {
 
     /// Requests full calendar access. The completion is delivered on the main actor.
     func requestAccess(_ completion: @escaping (CalendarAccess) -> Void) {
-        store.requestFullAccessToEvents { _, _ in
-            // Read the resolved status rather than trusting `granted`, then hop to the main actor.
-            let status = Self.map(EKEventStore.authorizationStatus(for: .event))
+        store.requestFullAccessToEvents { granted, _ in
+            // Trust `granted`: right after the first approval TCC hasn't yet propagated the new value to
+            // `authorizationStatus`, so re-reading it here would wrongly report `.notDetermined` and the
+            // caller would never load events. Fall back to the read status only when not granted (to
+            // distinguish denied/restricted/writeOnly).
+            let status = Self.resolve(granted: granted,
+                                      fallback: Self.map(EKEventStore.authorizationStatus(for: .event)))
             DispatchQueue.main.async { completion(status) }
         }
+    }
+
+    /// Resolves the effective access from EventKit's `granted` flag (authoritative on approval) and the
+    /// status read as a fallback. Pure — no EventKit — so it is unit-testable.
+    nonisolated static func resolve(granted: Bool, fallback: CalendarAccess) -> CalendarAccess {
+        granted ? .authorized : fallback
     }
 
     /// All events on `day` across every calendar, mapped to platform-neutral drafts and

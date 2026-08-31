@@ -30,18 +30,21 @@ struct SummaryContext: Equatable {
 
 /// The instructions + prompt handed to the on-device model.
 enum EmailSummaryPrompt {
-    /// Bump when the instructions/prompt change so stored summaries auto-refresh (see EmailSummaryPlanning).
-    static let promptVersion = 2
+    /// Bump `emailPromptBase` when the email-specific instructions change; the shared voice
+    /// (`AISummaryStyle.version`) is folded in so a style change also refreshes stored summaries.
+    private static let emailPromptBase = 3   // 3: strip quoted history from the body before summarising
+    static var promptVersion: Int { emailPromptBase + AISummaryStyle.version }
 
-    /// System instructions: identity-aware, concise, factual, no preamble/markdown.
+    /// System instructions: identity-aware, concise, factual. The voice/tense/format rules come from the
+    /// shared `AISummaryStyle` so every AI summary in the app reads the same; only the email-specific
+    /// rules (roster names, newest-message priority, figurative meaning, length) live here.
     static let instructions = """
     You write a one- or two-sentence summary of an email for the reader's daily diary. Rules:
-    • Refer to the reader (identified as "you" below) as "you" — never restate their name, title, or affiliation.
     • Use people's short/known names from the provided roster; never include titles, affiliations, or signatures.
     • Summarize the newest message, before any quoted reply history. Use quoted history only to clarify the newest message.
     • Preserve the intended meaning of idioms, metaphors, and hyperbole. Never turn figurative wording into a literal event (for example, "trains imploded" means severe train disruption, not an explosion).
     • Capture the gist and any request, decision, deadline, or action; ≤ ~40 words.
-    • Be factual and concise. No greeting, preamble, sign-off, or markdown — output only the summary sentence(s).
+    \(AISummaryStyle.directive)
     """
 
     /// Longest body slice fed to the model (keeps inference fast and within context).
@@ -78,7 +81,9 @@ enum EmailSummaryPrompt {
         lines.append("")
         lines.append("Subject: \(subject.isEmpty ? "(no subject)" : subject)")
         lines.append("")
-        lines.append(clampBody(body))
+        // Strip quoted reply/forward history so the model's evidence matches the header's sender/recipient
+        // — a trailing "On <date>, X wrote:" chain can't be mis-attributed to the newest message.
+        lines.append(clampBody(EmailQuotedHistory.newestMessage(body)))
         return lines.joined(separator: "\n")
     }
 

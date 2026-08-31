@@ -60,10 +60,9 @@ nonisolated struct ProjectActivityReport: Equatable, Sendable {
     static func phrasingPrompt(section: ProjectActivitySection) -> String {
         let block = section.items.map { "• \($0.label)" }.joined(separator: "\n")
         return """
-        Summarise the following list of work on the project "\(section.projectName)" as a brief, \
-        professional status update written in the third person. Do not address the reader; use no \
-        greeting or sign-off, and no first-person ("I"/"we") or second-person ("you"). Keep a neutral \
-        business tone. Use ONLY these items — do not add, infer, embellish, or omit anything. Keep it concise.
+        Summarise the following list of work on the project "\(section.projectName)" into a brief \
+        paragraph. Use ONLY these items — do not add, infer, embellish, or omit anything. Keep it concise. \
+        \(AISummaryStyle.inline)
 
         \(block)
         """

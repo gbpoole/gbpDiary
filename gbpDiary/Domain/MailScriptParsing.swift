@@ -5,13 +5,19 @@ import Foundation
 // lives in MailScriptService), so this is fully unit-testable.
 
 /// One message read from Mail. `address`/`name` are the *other party* (Inbox → sender; Sent → first recipient).
+/// `rfcMessageId`/`inReplyTo`/`references` are the RFC reply-chain headers (bare, no angle brackets) used to
+/// thread by the actual reply graph (`EmailThreadGraph`); empty when the server omits them.
 struct MailMessageDraft: Equatable {
-    var messageId: String
+    var messageId: String            // Mail's fast integer id (used for dedupe)
     var address: String
     var name: String?
     var subject: String
     var date: Date
     var direction: EmailDirection
+    var rfcMessageId: String = ""    // RFC Message-ID (bare)
+    var inReplyTo: String? = nil     // parent's Message-ID (bare)
+    var references: [String] = []    // ancestor Message-IDs (bare, in order)
+    var isJunk: Bool = false         // Mail flags this Inbox message as junk
 }
 
 enum MailScriptParsing {
@@ -91,6 +97,16 @@ enum MailScriptParsing {
             return dt
         end mkDateTime
 
+        on isJunk(m)
+            tell application "Mail"
+                set j to false
+                try
+                    set j to (junk mail status of m)
+                end try
+                return j
+            end tell
+        end isJunk
+
         on senderIsMine(m, myAddrs)
             set snd to ""
             tell application "Mail"
@@ -108,8 +124,7 @@ enum MailScriptParsing {
 
         on rec(dir, m, FS)
             tell application "Mail"
-                -- Use Mail's fast integer `id` (unique per message) for dedupe — NOT `message id` (the
-                -- RFC header), which forces a slow per-message header fetch.
+                -- Mail's fast integer `id` (unique per message) for dedupe.
                 set mid to ""
                 try
                     set mid to (id of m) as string
@@ -118,6 +133,24 @@ enum MailScriptParsing {
                 try
                     set subj to (subject of m) as string
                 end try
+                -- Reply-chain headers for threading (per-message reads; bounded by incremental fetch).
+                set rfcId to ""
+                try
+                    set rfcId to (message id of m) as string
+                end try
+                set irt to ""
+                try
+                    set irt to (content of (first header of m whose name is "In-Reply-To")) as string
+                end try
+                set refs to ""
+                try
+                    set refs to (content of (first header of m whose name is "References")) as string
+                end try
+                -- Junk flag (Inbox only): lets ingest drop new junk + dismiss stored mail Mail now flags.
+                set jnk to "0"
+                if dir is "in" then
+                    if my isJunk(m) then set jnk to "1"
+                end if
                 if dir is "in" then
                     set party to ""
                     try
@@ -147,7 +180,7 @@ enum MailScriptParsing {
                 set hh to (hours of theDate) as string
                 set mm to (minutes of theDate) as string
                 set ss to (seconds of theDate) as string
-                return dir & FS & mid & FS & party & FS & subj & FS & y & FS & mo & FS & dd & FS & hh & FS & mm & FS & ss
+                return dir & FS & mid & FS & party & FS & subj & FS & y & FS & mo & FS & dd & FS & hh & FS & mm & FS & ss & FS & rfcId & FS & irt & FS & refs & FS & jnk
             end tell
         end rec
         """
@@ -216,21 +249,60 @@ enum MailScriptParsing {
         s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
     }
 
-    /// Parses the AppleScript output into drafts. Malformed records are skipped.
+    /// Parses the AppleScript output into drafts. Malformed records are skipped. Records carry the
+    /// reply-chain header fields (indices 10–12); older 10-field records still parse (headers empty).
     nonisolated static func parseOutput(_ raw: String, calendar: Calendar = .current) -> [MailMessageDraft] {
         raw.components(separatedBy: recordSep).compactMap { record in
             let f = record.components(separatedBy: fieldSep)
-            guard f.count == 10 else { return nil }
+            guard f.count >= 10 else { return nil }
             let direction: EmailDirection = f[0] == "sent" ? .sent : .inbox
             let (name, address) = parseNameAddress(f[2])
             var comps = DateComponents()
             comps.year = Int(f[4]); comps.month = Int(f[5]); comps.day = Int(f[6])
             comps.hour = Int(f[7]); comps.minute = Int(f[8]); comps.second = Int(f[9])
             guard let date = calendar.date(from: comps) else { return nil }
+            let rfcId = f.count > 10 ? normalizeMessageId(f[10]) : ""
+            let inReplyTo = f.count > 11 ? parseMessageIds(f[11]).first : nil
+            let references = f.count > 12 ? parseMessageIds(f[12]) : []
+            let isJunk = f.count > 13 && f[13].trimmingCharacters(in: .whitespacesAndNewlines) == "1"
             return MailMessageDraft(messageId: f[1].trimmingCharacters(in: .whitespacesAndNewlines),
                                     address: address, name: name,
-                                    subject: f[3], date: date, direction: direction)
+                                    subject: f[3], date: date, direction: direction,
+                                    rfcMessageId: rfcId, inReplyTo: inReplyTo, references: references,
+                                    isJunk: isJunk)
         }
+    }
+
+    /// A bare Message-ID: trimmed, with any surrounding angle brackets removed (so `message id` values and
+    /// `<…>` header tokens compare equal).
+    nonisolated static func normalizeMessageId(_ s: String) -> String {
+        s.trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "<>"))
+    }
+
+    /// Extracts every `<…>` Message-ID token from a header value (In-Reply-To / References), returned bare
+    /// and in order. Falls back to a single bare token when the value has no angle brackets.
+    nonisolated static func parseMessageIds(_ raw: String) -> [String] {
+        var ids: [String] = []
+        var current = ""
+        var inside = false
+        for ch in raw {
+            if ch == "<" { inside = true; current = "" }
+            else if ch == ">" {
+                if inside {
+                    let t = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !t.isEmpty { ids.append(t) }
+                }
+                inside = false
+            } else if inside {
+                current.append(ch)
+            }
+        }
+        if ids.isEmpty {
+            let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty && !t.contains(" ") { ids.append(normalizeMessageId(t)) }
+        }
+        return ids
     }
 
     /// Splits `Alice Smith <a@x.com>` / `"Alice" <a@x.com>` / bare `a@x.com` into (name?, address).

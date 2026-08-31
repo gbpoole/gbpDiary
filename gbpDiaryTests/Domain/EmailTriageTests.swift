@@ -26,6 +26,19 @@ struct EmailTriageTests {
         #expect(EmailTriageCategory.classify(state: .unclassified, hasTasks: true) == .tasks)
     }
 
+    @Test func classifyThread_bucketsAWholeThread() {
+        // Any unclassified message keeps the whole thread in To triage.
+        #expect(EmailTriageCategory.classifyThread([(.accepted, false), (.unclassified, false)]) == .toTriage)
+        // No unclassified + a linked to-do → Tasks.
+        #expect(EmailTriageCategory.classifyThread([(.accepted, true), (.accepted, false)]) == .tasks)
+        // No unclassified, no tasks, any accepted → Accepted.
+        #expect(EmailTriageCategory.classifyThread([(.accepted, false), (.dismissed, false)]) == .accepted)
+        // All dismissed → Dismissed.
+        #expect(EmailTriageCategory.classifyThread([(.dismissed, false), (.dismissed, false)]) == .dismissed)
+        // Empty → To triage.
+        #expect(EmailTriageCategory.classifyThread([]) == .toTriage)
+    }
+
     // MARK: - Incremental fetch bounds
 
     private let cal: Calendar = {

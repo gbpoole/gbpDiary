@@ -53,29 +53,50 @@ enum EmailIngest {
             }
         }
 
+        // Map existing messages by dedupe key so junk that arrived earlier (before Mail flagged it) can be
+        // dismissed retroactively (self-heal, like the mailing-list loopback sweep above).
+        var existingByKey: [String: EmailMessage] = [:]
+        for e in existing {
+            existingByKey[MailScriptParsing.dedupeKey(messageId: e.messageId, account: e.account,
+                mailbox: e.mailbox, date: e.date, fromAddress: e.fromAddress, subject: e.subject)] = e
+        }
+
         var added = 0
+        var inserted: [EmailMessage] = []
         for d in drafts {
             let mailbox = EmailIngestPlanning.mailbox(for: d.direction)
             let key = MailScriptParsing.dedupeKey(messageId: d.messageId, account: account, mailbox: mailbox,
                                                   date: d.date, fromAddress: d.address, subject: d.subject)
+            // Junk-flagged Inbox mail: dismiss the stored copy if present, and never bring new junk in.
+            if d.isJunk {
+                if let e = existingByKey[key], !e.dismissed { e.triageDismiss() }
+                continue
+            }
             guard keys.insert(key).inserted else { continue }
             if EmailSelfMatching.isInboxFromSelf(direction: d.direction, fromAddress: d.address,
                                                  myAddresses: myAddresses) { continue }
             let msg = EmailMessage(messageId: d.messageId, account: account, mailbox: mailbox,
                                    direction: d.direction, fromAddress: d.address, fromName: d.name,
                                    subject: d.subject, date: d.date)
-            // Matches a spam rule → dismissed; sent mail → auto-accepted (you sent it); received → unclassified.
+            msg.rfcMessageId = d.rfcMessageId    // reply-chain headers → threading
+            msg.inReplyTo = d.inReplyTo
+            msg.references = d.references
+            // Matches a spam rule → dismissed; everything else (sent + received) → unclassified, so sent
+            // mail is actively triaged (file project / log time / accept) on the Emails page like received.
             if EmailExcludeMatching.isExcluded(fromAddress: d.address, subject: d.subject, rules: rules) {
                 msg.dismissed = true
-            } else if d.direction == .sent {
-                msg.accepted = true
             }
             context.insert(msg)
             if let pid = EmailPersonMatching.personID(forAddress: d.address, in: refs),
                let p = people.first(where: { $0.id == pid }) {
                 msg.person = p
             }
+            inserted.append(msg)
             added += 1
+        }
+        // Attach new mail to its conversation (reply-graph threaded), creating/merging as needed.
+        if !inserted.isEmpty {
+            EmailConversationReconciler.reconcile(emails: existing + inserted, context: context)
         }
         return added
     }

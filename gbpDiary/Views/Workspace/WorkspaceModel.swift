@@ -65,6 +65,21 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
 
     var id: Self { self }
 
+    // Sidebar/tab display name. Distinct from `rawValue`, which stays stable as a persistence key.
+    var title: String {
+        switch self {
+        case .triage: "Emails"
+        default:      rawValue
+        }
+    }
+
+    // The browse sidebar's grouping: ordered groups, each with a heading, for visual separation.
+    static let sidebarGroups: [(title: String, categories: [WorkspaceCategory])] = [
+        ("Workspace", [.diary, .tasks, .timesheet, .triage, .chat]),
+        ("Records",   [.projects, .meetings, .people, .institutions]),
+        ("Library",   [.documents, .content, .images, .tags]),
+    ]
+
     var systemImage: String {
         switch self {
         case .diary:        "calendar"

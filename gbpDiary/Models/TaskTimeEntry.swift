@@ -14,6 +14,9 @@ import SwiftData
     var task: Task?
     // When set, this entry logs time spent on a sent email (no task); EmailMessage declares the inverse.
     var email: EmailMessage?
+    // When set, this entry logs time against an email conversation (the conversation owns its time);
+    // EmailConversation declares the inverse.
+    var conversation: EmailConversation?
 
     init(date: Date, duration: Duration, comment: String? = nil,
          sortOrder: Int = 0, id: UUID = UUID()) {

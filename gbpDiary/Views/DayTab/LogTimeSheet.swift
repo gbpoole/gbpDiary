@@ -9,6 +9,8 @@ struct LogTimeSheet: View {
     var presetDate: Date = Date()
     // When set, the entry logs time against a sent email (no task required).
     var presetEmail: EmailMessage? = nil
+    // When set, the entry logs time against an email conversation (the conversation owns its time).
+    var presetConversation: EmailConversation? = nil
     // When set, the sheet edits the existing entry rather than creating a new one.
     var existingEntry: TaskTimeEntry? = nil
 
@@ -47,7 +49,9 @@ struct LogTimeSheet: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
-                    if let email = presetEmail ?? existingEntry?.email {
+                    if let convo = presetConversation ?? existingEntry?.conversation {
+                        conversationContextSection(convo)
+                    } else if let email = presetEmail ?? existingEntry?.email {
                         emailContextSection(email)
                     } else {
                         if !isEditing && presetTask == nil {
@@ -183,7 +187,8 @@ struct LogTimeSheet: View {
     // MARK: - Helpers
 
     private var canSave: Bool {
-        let hasTarget = effectiveTask != nil || presetEmail != nil || existingEntry?.email != nil
+        let hasTarget = effectiveTask != nil || presetConversation != nil || presetEmail != nil
+            || existingEntry?.conversation != nil || existingEntry?.email != nil
         return hasTarget && Duration.parse(durationText) != nil
     }
 
@@ -192,6 +197,17 @@ struct LogTimeSheet: View {
             HStack(spacing: 6) {
                 Image(systemName: "paperplane").foregroundStyle(.secondary)
                 Text(email.subject.isEmpty ? "(no subject)" : email.subject).lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func conversationContextSection(_ convo: EmailConversation) -> some View {
+        GroupBox("Email thread") {
+            HStack(spacing: 6) {
+                Image(systemName: "envelope").foregroundStyle(.secondary)
+                Text(convo.displaySubject).lineLimit(1)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -216,6 +232,12 @@ struct LogTimeSheet: View {
             entry.comment = comment.isEmpty ? nil : comment
             // Don't touch focusBlock here — the Activity section re-buckets by time when the time
             // changes. Reassigning here (without the day's blocks) would wrongly drop the entry.
+        } else if let convo = presetConversation {
+            let nextOrder = (convo.timeEntries.map(\.sortOrder).max() ?? -1) + 1
+            let entry = TaskTimeEntry(date: entryDate, duration: duration,
+                                      comment: comment.isEmpty ? nil : comment, sortOrder: nextOrder)
+            entry.conversation = convo
+            modelContext.insert(entry)
         } else if let email = presetEmail {
             let nextOrder = (email.timeEntries.map(\.sortOrder).max() ?? -1) + 1
             let entry = TaskTimeEntry(date: entryDate, duration: duration,

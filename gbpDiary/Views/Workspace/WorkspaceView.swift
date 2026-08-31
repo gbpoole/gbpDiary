@@ -24,7 +24,7 @@ struct WorkspaceView: View {
     @State private var hostWindow: NSWindow?
     #endif
 
-    // Emails awaiting triage across all fetched days (the Triage sidebar backlog badge).
+    // Emails awaiting triage across all fetched days (the Emails sidebar backlog badge).
     private var triageBacklogCount: Int {
         allEmails.filter { $0.triageState == .unclassified }.count
     }
@@ -56,11 +56,13 @@ struct WorkspaceView: View {
                 get: { workspace.active.current.category },
                 set: { if let cat = $0 { workspace.navigate(to: cat.tab) } }
             )) {
-                Section("Browse") {
-                    ForEach(WorkspaceCategory.allCases) { cat in
-                        Label(cat.rawValue, systemImage: cat.systemImage)
-                            .badge(badgeCount(for: cat))
-                            .tag(cat)
+                ForEach(WorkspaceCategory.sidebarGroups, id: \.title) { group in
+                    Section(group.title) {
+                        ForEach(group.categories) { cat in
+                            Label(cat.title, systemImage: cat.systemImage)
+                                .badge(badgeCount(for: cat))
+                                .tag(cat)
+                        }
                     }
                 }
             }
@@ -92,6 +94,7 @@ struct WorkspaceView: View {
         .background { TaskRecurrenceDriver() } // spawn recurring tasks + auto-cancel past-until tasks
         .background { EmailFetchDriver() }     // global auto-ingest (last few days, 5-min cadence)
         .background { EmailSummaryDriver() }   // global on-device email summarisation
+        .background { EmailThreadSummaryDriver() } // global on-device whole-thread day summaries
         .background { ChatIndexDriver() }      // rebuildable local semantic index + stale-source removal
         .sheet(isPresented: $showingNewContent) { ContentNoteEditorSheet(note: nil) }
         .onAppear {
@@ -100,6 +103,7 @@ struct WorkspaceView: View {
                 hasRestored = true
             }
             migratePersonEmails()
+            migrateEmailConversationsOnce()
         }
         // Persist the session when the app deactivates/backgrounds (covers ⌘Q and app switches).
         .onChange(of: scenePhase) { _, phase in
@@ -135,6 +139,20 @@ struct WorkspaceView: View {
             }
         }
         if changed { try? modelContext.save() }
+    }
+
+    // One-time: build `EmailConversation` entities for all existing emails (reply-graph where headers are
+    // present, subject fallback otherwise), folding each email's legacy triage/project/person/importance/
+    // time onto its conversation. Guarded by a flag; ongoing ingest keeps conversations current after this.
+    private func migrateEmailConversationsOnce() {
+        let key = "email.conversationsMigrated.v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        let emails = (try? modelContext.fetch(FetchDescriptor<EmailMessage>())) ?? []
+        if !emails.isEmpty {
+            EmailConversationReconciler.reconcile(emails: emails, context: modelContext)
+            try? modelContext.save()
+        }
+        UserDefaults.standard.set(true, forKey: key)
     }
 
     @ViewBuilder

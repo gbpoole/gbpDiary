@@ -7,10 +7,9 @@ struct ActivitySection: View {
 
     var dayRecord: DayRecord?
     var date: Date
-    var todayEntries: [TaskTimeEntry]
+    var todayEntries: [TaskTimeEntry]   // the day's time entries — task-, email-, and conversation-linked
     var meetings: [DayEntry] = []
     var completedTasks: [Task] = []
-    var sentEmails: [EmailMessage] = []
     // Lazily creates the DayRecord for `date` if it does not exist yet.
     var findOrCreateDayRecord: (() -> DayRecord)? = nil
     /// Trigger bindings wired from DayPageContent's action bar.
@@ -33,11 +32,12 @@ struct ActivitySection: View {
 
     // Block membership is derived purely from each entry's time — nothing is stored. The block
     // whose range contains the time owns the entry; entries covered by no block are standalone.
-    // Task-backed time entries (email-linked entries are shown on their sent-email rows instead).
-    // Weekday task entries only — weekend-dated work (folded onto Friday) is shown separately as an
-    // overtime group, not assigned to Friday's focus blocks. (Email-linked entries render on their rows.)
+    // Task-backed time entries only (email- and conversation-linked entries are shown in the diary
+    // Email section instead; their time still reduces a block's net, see emailHours(for:)).
+    // Weekday entries only — weekend-dated work (folded onto Friday) is shown separately as an
+    // overtime group, not assigned to Friday's focus blocks.
     private var taskEntries: [TaskTimeEntry] {
-        todayEntries.filter { $0.email == nil && !WeekendPolicy.isWeekend($0.date) }
+        todayEntries.filter { $0.email == nil && $0.conversation == nil && !WeekendPolicy.isWeekend($0.date) }
     }
 
     private func entries(for block: FocusBlock) -> [TaskTimeEntry] {
@@ -49,33 +49,38 @@ struct ActivitySection: View {
         taskEntries.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks) == nil }
     }
 
-    private var weekdaySentEmails: [EmailMessage] {
-        sentEmails.filter { !WeekendPolicy.isWeekend($0.date) }
+    // Weekday email/conversation-linked time entries. NOT rendered here (emails live in the diary Email
+    // section), but their logged time still reduces the containing block's net remaining.
+    private var weekdayEmailEntries: [TaskTimeEntry] {
+        todayEntries.filter { ($0.email != nil || $0.conversation != nil) && !WeekendPolicy.isWeekend($0.date) }
     }
 
-    // Sent emails bucketed into the focus block covering their send time (like time entries); the rest
-    // render standalone. Their logged time counts toward that block's net (or the day total).
-    private func sentEmails(for block: FocusBlock) -> [EmailMessage] {
-        weekdaySentEmails.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks)?.id == block.id }
-    }
-    private var standaloneSentEmails: [EmailMessage] {
-        weekdaySentEmails.filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks) == nil }
+    // The email/conversation time (hours) whose send time falls inside this block — reduces its net.
+    private func emailHours(for block: FocusBlock) -> Double {
+        weekdayEmailEntries
+            .filter { FocusBlockAssignment.containingBlock(for: $0.date, blocks: blocks)?.id == block.id }
+            .reduce(0.0) { $0 + $1.duration.hoursNormalized }
     }
 
     // MARK: - Weekend work (folded onto Friday, shown as one overtime group)
     private func isWeekend(_ date: Date) -> Bool { WeekendPolicy.isWeekend(date) }
     private var weekendEntries: [TaskTimeEntry] {
-        todayEntries.filter { $0.email == nil && isWeekend($0.date) }.sorted { $0.date < $1.date }
+        todayEntries.filter { $0.email == nil && $0.conversation == nil && isWeekend($0.date) }
+            .sorted { $0.date < $1.date }
     }
-    private var weekendSentEmails: [EmailMessage] { sentEmails.filter { isWeekend($0.date) } }
+    // Weekend-dated email/conversation time (folded to Friday overtime; not rendered, counted only).
+    private var weekendEmailHours: Double {
+        todayEntries.filter { ($0.email != nil || $0.conversation != nil) && isWeekend($0.date) }
+            .reduce(0.0) { $0 + $1.duration.hoursNormalized }
+    }
     private var weekendCompletedTasks: [Task] { completedTasks.filter { $0.completedAt.map(isWeekend) ?? false } }
     private var weekdayCompletedTasks: [Task] { completedTasks.filter { !($0.completedAt.map(isWeekend) ?? false) } }
     private var hasWeekendWork: Bool {
-        !weekendEntries.isEmpty || !weekendSentEmails.isEmpty || !weekendCompletedTasks.isEmpty
+        !weekendEntries.isEmpty || weekendEmailHours > 0 || !weekendCompletedTasks.isEmpty
     }
     private var weekendHours: Double {
         weekendEntries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
-            + weekendSentEmails.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
+            + weekendEmailHours
             + weekendCompletedTasks.compactMap(\.duration).reduce(0.0) { $0 + $1.hoursNormalized }
     }
     @State private var weekendCollapsed = false
@@ -144,7 +149,8 @@ struct ActivitySection: View {
 
     var body: some View {
         let hasContent = !blocks.isEmpty || !todayEntries.isEmpty
-            || !standaloneMeetings.isEmpty || !completedTasks.isEmpty || !sentEmails.isEmpty || hasWeekendWork
+            || !standaloneMeetings.isEmpty || !completedTasks.isEmpty
+            || hasWeekendWork
 
         activityHeader
 
@@ -154,7 +160,7 @@ struct ActivitySection: View {
                 switch item {
                 case .block(let block):
                     FocusBlockRow(block: block, date: date, entries: entries(for: block),
-                                  meetings: meetings(for: block), sentEmails: sentEmails(for: block))
+                                  meetings: meetings(for: block), emailHours: emailHours(for: block))
                 case .entry(let entry):
                     ActivityEntryRow(entry: entry)
                 }
@@ -162,11 +168,6 @@ struct ActivitySection: View {
 
             ForEach(standaloneMeetings, id: \.id) { minutes in
                 StandaloneMeetingRow(minutes: minutes)
-            }
-
-            // Standalone sent emails (outside every focus block), collapsed into one expandable group.
-            if !standaloneSentEmails.isEmpty {
-                SentEmailsGroupRow(emails: standaloneSentEmails)
             }
 
             ForEach(weekdayCompletedTasks) { task in
@@ -226,7 +227,7 @@ struct ActivitySection: View {
     // standalone weekday work); `overtime` is evening in-block + weekend work.
     private var dayLedger: LedgerResult {
         TimeLedgerProjection.diaryLedger(focusBlocks: blocks, taskEntries: todayEntries,
-                                         completedTasks: completedTasks, sentEmails: sentEmails,
+                                         completedTasks: completedTasks,
                                          meetings: meetings.compactMap(\.minutes))
     }
     private var totalHours: Double { dayLedger.standardTotal }
@@ -248,7 +249,6 @@ struct ActivitySection: View {
         .buttonStyle(.plain)
         if !weekendCollapsed {
             ForEach(weekendEntries) { entry in ActivityEntryRow(entry: entry) }
-            if !weekendSentEmails.isEmpty { SentEmailsGroupRow(emails: weekendSentEmails) }
             ForEach(weekendCompletedTasks) { task in CompletedTaskActivityRow(task: task) }
         }
     }
@@ -309,61 +309,9 @@ struct ActivitySection: View {
 
 }
 
-// Collapses a set of sent emails into a single expandable summary row ("N sent · total logged"),
-// keeping the diary Activity uncluttered. Used for both a focus block's emails and the standalone ones.
-// Internal so FocusBlockRow can use it too.
-struct SentEmailsGroupRow: View {
-    var emails: [EmailMessage]
-    @State private var expanded = false
-
-    private var totalHours: Double {
-        emails.flatMap(\.timeEntries).reduce(0.0) { $0 + $1.duration.hoursNormalized }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            summaryRow
-            if expanded {
-                ForEach(emails, id: \.persistentModelID) { email in
-                    SentEmailActivityRow(email: email)
-                }
-            }
-        }
-    }
-
-    private var summaryRow: some View {
-        HStack(alignment: .center, spacing: 6) {
-            Color.clear.frame(width: 16, height: 1)
-            HStack(alignment: .center, spacing: 6) {
-                Image(systemName: expanded ? "chevron.down" : "chevron.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(AppTheme.mutedText)
-                    .frame(width: 14)
-                Image(systemName: "paperplane")
-                    .font(.system(size: 12)).foregroundStyle(AppTheme.person).frame(width: 18)
-                Text("\(emails.count) sent email\(emails.count == 1 ? "" : "s")")
-                    .font(.subheadline).foregroundStyle(AppTheme.text)
-                Spacer(minLength: 8)
-                if totalHours > 0 {
-                    Chip(label: TimeFormat.short(hours: totalHours), color: AppTheme.duration)
-                }
-            }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(AppTheme.cardRaised.opacity(0.45))
-            .clipShape(RoundedRectangle(cornerRadius: 5))
-            .contentShape(Rectangle())
-            .onTapGesture { expanded.toggle() }
-            .padding(.trailing)
-        }
-        .padding(.leading)
-        .padding(.vertical, 1)
-    }
-}
-
-// A sent email in the activity timeline (inside its focus block by send time, or standalone), with a
-// button to log time spent sending it (an email-linked TaskTimeEntry counted toward the block/day).
-// Internal so FocusBlockRow can render block-nested sent emails too.
+// A sent email row with time-logging. Logged time attaches to the owning EmailConversation (which owns email
+// time and feeds the canonical ledger), counted toward the block/day. Shown inside an expanded conversation's
+// drill-down in the diary Email section.
 struct SentEmailActivityRow: View {
     var email: EmailMessage
     @Environment(\.modelContext) private var modelContext
@@ -374,17 +322,29 @@ struct SentEmailActivityRow: View {
     @State private var mailService = MailScriptService()
     @State private var openError: String?
 
+    // Email time is owned by the conversation; a message should always be threaded, but fall back to the
+    // message itself if not (pre-migration) so logging still works.
+    private var conversation: EmailConversation? { email.conversation }
+
     private var loggedHours: Double {
-        email.timeEntries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
+        let entries = conversation?.timeEntries ?? email.timeEntries
+        return entries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
     }
 
-    // One-click accumulate: append an email-linked time entry at the email's send time.
+    // One-click accumulate: append a time entry at the email's send time, against the conversation (so it
+    // reaches the Chat/Timesheet ledger) — falling back to the message when unthreaded.
     private func logEmailTime(_ minutes: Int) {
-        let nextOrder = (email.timeEntries.map(\.sortOrder).max() ?? -1) + 1
-        let entry = TaskTimeEntry(date: email.date,
-                                  duration: Duration(value: Double(minutes) / 60.0, unit: .h),
-                                  comment: nil, sortOrder: nextOrder)
-        entry.email = email
+        let duration = Duration(value: Double(minutes) / 60.0, unit: .h)
+        let entry: TaskTimeEntry
+        if let convo = conversation {
+            let nextOrder = (convo.timeEntries.map(\.sortOrder).max() ?? -1) + 1
+            entry = TaskTimeEntry(date: email.date, duration: duration, comment: nil, sortOrder: nextOrder)
+            entry.conversation = convo
+        } else {
+            let nextOrder = (email.timeEntries.map(\.sortOrder).max() ?? -1) + 1
+            entry = TaskTimeEntry(date: email.date, duration: duration, comment: nil, sortOrder: nextOrder)
+            entry.email = email
+        }
         modelContext.insert(entry)
     }
 
@@ -422,7 +382,11 @@ struct SentEmailActivityRow: View {
             EmailExperimentInChatButton(email: email)
         }
         .sheet(isPresented: $showingLogTime) {
-            LogTimeSheet(presetDate: email.date, presetEmail: email)
+            if let convo = conversation {
+                LogTimeSheet(presetDate: email.date, presetConversation: convo)
+            } else {
+                LogTimeSheet(presetDate: email.date, presetEmail: email)
+            }
         }
         .sheet(isPresented: $reconciling) {
             ResolveAttendeeSheet(
@@ -465,7 +429,12 @@ struct SentEmailActivityRow: View {
         }
     }
 
-    // Editable recipient chip → reconcile (link/create a Person), mirroring the triage row.
+    // Projects are owned by the conversation; display and edit those (falling back to the message when
+    // unthreaded), so filing here reaches the conversation-owned report/ledger like the diary/triage rows.
+    // Person stays per-message — a sent message's recipient is specific to that message.
+    private var displayedProjects: [Project] { conversation?.projects ?? email.projects }
+
+    // Editable recipient chip → reconcile (link/create a Person) for this message.
     @ViewBuilder private var personChip: some View {
         Button { reconciling = true } label: {
             if let person = email.person {
@@ -485,18 +454,22 @@ struct SentEmailActivityRow: View {
     // Editable project chip → picker (set / change / remove), mirroring the triage row.
     @ViewBuilder private var projectChip: some View {
         Button { editingProject = true } label: {
-            if let project = email.projects.first {
+            if let project = displayedProjects.first {
                 Chip(label: project.name, color: AppTheme.project)
             } else {
                 Chip(label: "No Project", color: AppTheme.mutedText)
             }
         }
         .buttonStyle(.plain)
-        .help(email.projects.isEmpty ? "No project — click to choose" : "Project — click to change")
+        .help(displayedProjects.isEmpty ? "No project — click to choose" : "Project — click to change")
         .overlay(alignment: .bottomLeading) {
             FuzzyPickerField(
                 allItems: allProjects,
-                selected: Binding(get: { email.projects }, set: { email.projects = $0 }),
+                selected: Binding(
+                    get: { displayedProjects },
+                    set: { newValue in
+                        if let convo = conversation { convo.projects = newValue } else { email.projects = newValue }
+                    }),
                 label: \.name,
                 chipColor: AppTheme.project,
                 onCreateItem: makeProject,
@@ -516,7 +489,8 @@ struct SentEmailActivityRow: View {
         return project
     }
 
-    // Mirrors the triage row: link → add the recipient address to that Person; create → new Person.
+    // Per-message reconcile: link → add the recipient address to that Person; create → new Person. The
+    // recipient is specific to this sent message, so `person` is set on the message only (not the conversation).
     private func resolvePerson(_ result: AttendeeReconcileResult) {
         switch result {
         case .link(let p):

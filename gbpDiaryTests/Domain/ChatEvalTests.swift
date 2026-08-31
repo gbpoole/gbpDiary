@@ -225,7 +225,7 @@ struct ChatEvalTests {
         let fx = ChatEvalCorpus.build()
         let r = await run(fx, "summarise my last week")    // model available (default mock)
         guard case .answered = r.outcome else { Issue.record("expected answered"); return }
-        #expect(r.prompt?.prompt.contains("Rewrite the following") == true)
+        #expect(r.prompt?.prompt.contains("Summarise the following list of your activity") == true)
         #expect(r.prompt?.prompt.contains("Fri 12 Jun") == true)
         #expect(r.prompt?.prompt.contains("13 Jun") == false)   // no weekend date reaches the model
     }

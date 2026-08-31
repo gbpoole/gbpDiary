@@ -59,8 +59,8 @@ struct ProjectActivityReportTests {
         let prompt = ProjectActivityReport.phrasingPrompt(section: s)
         #expect(prompt.contains("Use ONLY these items"))
         #expect(prompt.contains("do not add, infer, embellish, or omit"))
-        #expect(prompt.contains("third person"))          // professional business tone, not casual
-        #expect(prompt.contains("business tone"))
+        #expect(prompt.contains("second person"))         // the shared app-wide voice
+        #expect(prompt.contains("simple past tense"))
         #expect(prompt.contains("NODES"))
         #expect(prompt.contains("• Meeting: review (1h)"))
     }

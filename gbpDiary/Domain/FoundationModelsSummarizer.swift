@@ -56,6 +56,20 @@ struct FoundationModelsSummarizer: EmailSummarizing {
         throw EmailSummaryError.modelUnavailable
     }
 
+    /// Summarises an email conversation on-device from a pre-built prompt (the member emails' per-email
+    /// summaries — never raw bodies). Same on-device-only contract as `summarize`.
+    func summarizeThread(prompt: String) async throws -> String {
+        #if canImport(FoundationModels)
+        if #available(macOS 26, *), SystemLanguageModel.default.availability == .available {
+            let session = LanguageModelSession(instructions: EmailThreadSummaryPrompt.instructions)
+            let options = GenerationOptions(temperature: 0.3, maximumResponseTokens: 110)
+            let response = try await session.respond(to: prompt, generating: EmailSummaryOutput.self, options: options)
+            return EmailSummaryText.clean(response.content.summary)
+        }
+        #endif
+        throw EmailSummaryError.modelUnavailable
+    }
+
     /// Asks the on-device model to pick the single best-matching project name for an email (from the
     /// provided list) or nil for "none". Returns the exact matching entry from `projectNames`. Best
     /// effort — any error / unavailability returns nil (heuristics still provide suggestions).
