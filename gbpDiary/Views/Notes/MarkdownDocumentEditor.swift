@@ -441,11 +441,24 @@ struct MarkdownDocumentEditor: View {
 
     @ViewBuilder
     private var previewBody: some View {
-        if previewDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            Text(placeholder)
-                .foregroundStyle(.tertiary)
-                .font(.body)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        // A note with no visible text — truly empty, or only empty list/quote/heading scaffolding (e.g.
+        // a lone "- " bullet left behind by list editing) — renders as a blank-looking StructuredText
+        // with no reliable tap target, so treat it as empty and show the tap-to-edit placeholder
+        // instead (recovering notes that got stuck with a stray empty marker). See MarkdownBlank.
+        if MarkdownBlank.isBlank(previewDraft) {
+            // Empty note. When NOT editing, show a clearly clickable placeholder — the tap-to-edit hit
+            // area is the content shape of previewBody (see `body`), so give it real height, otherwise
+            // only a single faint text line is tappable and the rest of the card reads as dead space.
+            // While editing, previewBody is the live-preview pane, so an empty note previews as nothing
+            // (the placeholder belongs to the source editor, not the preview).
+            if !isEditing {
+                Text(placeholder)
+                    .foregroundStyle(.secondary)
+                    .font(.body)
+                    .frame(maxWidth: .infinity, minHeight: 60, alignment: .topLeading)
+            } else {
+                Color.clear.frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         } else {
             StructuredText(
                 markdown: NotePreviewMarkdown.render(previewDraft, resolve: fileURL(forAttachmentID:)),
