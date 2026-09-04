@@ -157,10 +157,21 @@ struct ImageChipTextEditor: NSViewRepresentable {
         tv.onInsertImageFiles = onInsertImageFiles
         tv.onInsertImageData = onInsertImageData
         tv.formattingEnabled = formattingEnabled
-        // Only rebuild on an external text change or an explicit refresh — never while the user is
-        // typing (textDidChange keeps lastMarkdown in sync so this comparison is false then).
-        if text != context.coordinator.lastMarkdown || refreshToken != context.coordinator.lastRefresh {
+        // Rebuild on an explicit refresh (e.g. a chip's display name changed), or on a *genuine* external
+        // text change — never for a stale echo of the user's own in-flight typing (which would revert the
+        // buffer and jump the caret). See MarkdownEditorSync.
+        if refreshToken != context.coordinator.lastRefresh {
             context.coordinator.lastRefresh = refreshToken
+            // Refresh only fires after the image-edit sheet closes (not mid-type). Rebuild from the
+            // buffer's current serialized content so any un-echoed in-flight typing isn't lost, and the
+            // new chip labels from `attachments` are picked up.
+            if let storage = tv.textStorage {
+                context.coordinator.apply(markdown: context.coordinator.serialize(storage), into: tv)
+            }
+            context.coordinator.pendingEchoes.removeAll()
+        } else if MarkdownEditorSync.shouldRebuild(incoming: text,
+                                                   buffer: context.coordinator.lastMarkdown,
+                                                   pendingEchoes: &context.coordinator.pendingEchoes) {
             context.coordinator.apply(markdown: text, into: tv)
         }
         // Host requested a caret insertion (e.g. a note link picked from the picker).
@@ -203,9 +214,26 @@ struct ImageChipTextEditor: NSViewRepresentable {
         var lastInsertionToken = Int.min
         var lastFormatToken = Int.min
         var lastNewLineToken = Int.min
+        // Self-originated markdown pushes that SwiftUI hasn't reconciled back through updateNSView yet.
+        // Lets updateNSView tell a stale echo of our own typing from a genuine external change — see
+        // MarkdownEditorSync. Capped so a coalesced push that never round-trips can't grow it unbounded.
+        var pendingEchoes: [String] = []
         private var heightPushScheduled = false
 
         init(_ parent: ImageChipTextEditor) { self.parent = parent }
+
+        // Push a self-originated edit back to the SwiftUI binding on the next run-loop tick (deferred to
+        // let AppKit finish its edit cycle first; a synchronous mutation re-enters layout and storms it),
+        // recording it as a pending echo so updateNSView won't mistake the lagging value for an external
+        // change and revert the buffer.
+        func pushMarkdownToSwiftUI(_ markdown: String) {
+            pendingEchoes.append(markdown)
+            if pendingEchoes.count > 32 { pendingEchoes.removeFirst(pendingEchoes.count - 32) }
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                if self.parent.text != markdown { self.parent.text = markdown }
+            }
+        }
 
         // Measure the laid-out content height and push it to SwiftUI (coalesced, deferred). Done
         // outside SwiftUI's layout pass so it never re-enters/loops sizing.
@@ -322,10 +350,7 @@ struct ImageChipTextEditor: NSViewRepresentable {
             tv.setSelectedRange(NSRange(location: range.location + attrFragment.length, length: 0))
             let markdown = serialize(storage)
             apply(markdown: markdown, into: tv)  // rebuild so the inserted ref renders as a chip
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                if self.parent.text != markdown { self.parent.text = markdown }
-            }
+            pushMarkdownToSwiftUI(markdown)
         }
 
         // Apply a formatting command to the current selection. Works on the text view's *display*
@@ -412,10 +437,7 @@ struct ImageChipTextEditor: NSViewRepresentable {
             let markdown = serialize(storage)
             lastMarkdown = markdown
             scheduleHeightPush()
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                if self.parent.text != markdown { self.parent.text = markdown }
-            }
+            pushMarkdownToSwiftUI(markdown)
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
@@ -428,15 +450,11 @@ struct ImageChipTextEditor: NSViewRepresentable {
             guard let tv = textView, let storage = tv.textStorage else { return }
             let markdown = serialize(storage)
             lastMarkdown = markdown
-            // Push to SwiftUI on the next run-loop tick. Mutating SwiftUI state synchronously here
-            // (mid text-edit) makes SwiftUI re-run sizeThatFits/ensureLayout re-entrantly on the text
-            // view being edited, which storms the layout system and beach-balls. Deferring lets
-            // AppKit finish its edit cycle first.
-            DispatchQueue.main.async { [weak self] in
-                guard let self else { return }
-                if self.parent.text != markdown { self.parent.text = markdown }
-                self.pushHeight()
-            }
+            // Push to SwiftUI on the next run-loop tick (deferred so AppKit finishes its edit cycle first;
+            // a synchronous mutation re-runs sizeThatFits/ensureLayout re-entrantly and storms layout).
+            // Recorded as a pending echo so the lagging value isn't mistaken for an external change.
+            pushMarkdownToSwiftUI(markdown)
+            DispatchQueue.main.async { [weak self] in self?.pushHeight() }
         }
 
         // MARK: Chip rendering
