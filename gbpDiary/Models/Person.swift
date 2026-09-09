@@ -36,6 +36,15 @@ import SwiftData
     var tagsKey: String { tags.joined(separator: ", ").lowercased() }
     var projectCount: Int { devProjects.count + sciProjects.count }
 
+    /// Projects this person is a team member of — the union of dev + sci teams, deduped by id (a person
+    /// on both a project's dev and sci team appears once), sorted by name. Used by the person page.
+    var teamProjects: [Project] {
+        var seen = Set<UUID>()
+        return (devProjects + sciProjects)
+            .filter { seen.insert($0.id).inserted }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
     init(name: String, id: UUID = UUID()) {
         self.id = id
         self.name = name

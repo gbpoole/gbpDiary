@@ -5,10 +5,10 @@ struct PeopleView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Person.name) private var people: [Person]
     @Query(sort: \Institution.name) private var institutions: [Institution]
+    @Query(sort: \Project.name) private var projects: [Project]
 
     @Environment(WorkspaceModel.self) private var workspace
 
-    @State private var selectedPerson: Person?
     @State private var showingAddPerson = false
     // @Model exposes `id: UUID` (its @Attribute), so the Table's selection is keyed by UUID.
     @State private var selection: Set<UUID> = []
@@ -36,26 +36,30 @@ struct PeopleView: View {
                 $0.institution?.id == inst.id
             }
         }
+        // Project membership: on the project's dev or sci team.
+        let projectGroup = projects.map { project in
+            PickerFilter<Person>(id: "project.\(project.id)", label: project.name, chipColor: AppTheme.project, group: "Project") { person in
+                person.devProjects.contains { $0.id == project.id } || person.sciProjects.contains { $0.id == project.id }
+            }
+        }
         let allTags = Set(people.flatMap(\.tags)).sorted()
         let tagGroup = allTags.map { tag in
             PickerFilter<Person>(id: "tag.\(tag)", label: tag, chipColor: AppTheme.tag, group: "Tag") {
                 $0.tags.contains(tag)
             }
         }
-        return institutionGroup + tagGroup
+        return institutionGroup + projectGroup + tagGroup
     }
 
     private var rows: [Person] {
         let f = filter
         let matched = FilterEngine.apply(people, filters: personFilters, activeIds: f.activeFilterIds)
         let query = f.searchText.trimmingCharacters(in: .whitespaces)
-        let searched = query.isEmpty ? matched : matched.filter { FuzzyMatch.matches(query, in: searchHaystack($0)) }
+        let searched = query.isEmpty ? matched : matched.filter {
+            PersonSearch.matches(query: query, name: $0.name, emails: $0.emails,
+                                 institution: $0.institution?.name, tags: $0.tags)
+        }
         return searched.sorted(using: TableSortPersistence.order(id: f.sortColumnID, ascending: f.sortAscending, columns: Self.sortColumns, fallbackID: "name"))
-    }
-
-    private func searchHaystack(_ p: Person) -> String {
-        [p.name, p.primaryEmail, p.institution?.name, p.tags.joined(separator: " ")]
-            .compactMap { $0 }.joined(separator: " ")
     }
 
     private var selectedPeople: [Person] {
@@ -96,7 +100,6 @@ struct PeopleView: View {
                 }
             }
         }
-        .sheet(item: $selectedPerson) { PersonEditorSheet(person: $0) }
         .sheet(isPresented: $showingAddPerson) { PersonEditorSheet(person: nil) }
         .alert("Delete \(selection.count) \(selection.count == 1 ? "person" : "people")?", isPresented: $confirmingBulkDelete) {
             Button("Delete", role: .destructive) { bulkDelete() }
@@ -109,8 +112,9 @@ struct PeopleView: View {
         }
     }
 
-    // Row-tap rule: Person is a light entity — open its editor sheet directly.
-    private func open(_ person: Person) { selectedPerson = person }
+    // Row-tap rule: Person is now a rich entity — open its detail page in a workspace tab
+    // (reusing an already-open tab for that person). New people are created via the "+" toolbar button.
+    private func open(_ person: Person) { workspace.focusOrOpen(.person(person.persistentModelID)) }
 
     #if os(macOS)
     private var peopleTable: some View {
