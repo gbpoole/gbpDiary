@@ -104,6 +104,7 @@ struct WorkspaceView: View {
             }
             migratePersonEmails()
             migrateEmailConversationsOnce()
+            migrateFocusBlockProjectsOnce()
         }
         // Persist the session when the app deactivates/backgrounds (covers ⌘Q and app switches).
         .onChange(of: scenePhase) { _, phase in
@@ -153,6 +154,46 @@ struct WorkspaceView: View {
             try? modelContext.save()
         }
         UserDefaults.standard.set(true, forKey: key)
+    }
+
+    // One-time: time can only be assigned to tasks, not projects. Fix any focus block still carrying a legacy
+    // `project` — a project-only block (no task) is backed by one auto-created, already-completed task per
+    // project; a task-backed block just has its stale project cleared (the task owns the project). Idempotent
+    // by design: a fixed block no longer carries a project, so `FocusBlockProjectMigration.plan` skips it.
+    private func migrateFocusBlockProjectsOnce() {
+        let blocks = (try? modelContext.fetch(FetchDescriptor<FocusBlock>())) ?? []
+        let plan = FocusBlockProjectMigration.plan(blocks.map {
+            FocusBlockProjectMigration.Input(blockID: $0.id, hasTask: $0.task != nil, projectID: $0.project?.id)
+        })
+        guard !plan.isEmpty else { return }
+
+        let byID = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, $0) })
+
+        if !plan.tasksPerProject.isEmpty {
+            let me = AppSettingsStore.myPersonID.flatMap { id in
+                (try? modelContext.fetch(FetchDescriptor<Person>(predicate: #Predicate { $0.id == id })))?.first
+            }
+            for (_, blockIDs) in plan.tasksPerProject {
+                let migratedBlocks = blockIDs.compactMap { byID[$0] }
+                guard let project = migratedBlocks.first?.project else { continue }
+                // A synthetic, already-completed stand-in for historical planned time on this project.
+                let task = Task(summary: project.name)
+                task.project = project
+                task.assignee = me
+                task.markReviewed()
+                task.markCompleted()
+                modelContext.insert(task)
+                for block in migratedBlocks {
+                    block.task = task
+                    block.project = nil
+                }
+            }
+        }
+
+        // Task-backed blocks with a stale legacy project (e.g. Obsidian-imported): the task owns the project.
+        for blockID in plan.clearProject { byID[blockID]?.project = nil }
+
+        try? modelContext.save()
     }
 
     @ViewBuilder

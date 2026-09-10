@@ -1,11 +1,6 @@
 import SwiftUI
 import SwiftData
 
-private enum FocusSource: String, CaseIterable {
-    case task = "Task"
-    case project = "Project"
-}
-
 struct FocusBlockEditorSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -13,7 +8,6 @@ struct FocusBlockEditorSheet: View {
     var dayRecord: DayRecord
     var existingBlock: FocusBlock? = nil
 
-    @Query(sort: \Project.name) private var allProjects: [Project]
     @Query(sort: \FocusBlock.sortOrder) private var allFocusBlocks: [FocusBlock]
 
     private var siblingsForDay: [FocusBlock] {
@@ -33,10 +27,8 @@ struct FocusBlockEditorSheet: View {
         }
     }
 
-    @State private var source: FocusSource = .task
     @State private var selectedSlot: DaySlot = .allDay
     @State private var selectedTask: Task?
-    @State private var selectedProject: Project?
     @State private var eveningStart: Date = Date()
     @State private var comment = ""
     @State private var showingDeleteConfirm = false
@@ -50,14 +42,10 @@ struct FocusBlockEditorSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 20) {
                     slotSection
-                    // Evening blocks are pure overtime containers — no task/project source.
+                    // Evening blocks are pure overtime containers — no task source. Time is only ever
+                    // assigned to tasks, so every standard block is task-backed.
                     if selectedSlot != .evening {
-                        sourceSection
-                        if source == .task {
-                            taskSection
-                        } else {
-                            projectSection
-                        }
+                        taskSection
                     }
                     commentSection
                 }
@@ -98,33 +86,9 @@ struct FocusBlockEditorSheet: View {
 
     // MARK: - Sections
 
-    private var sourceSection: some View {
-        GroupBox("Source") {
-            HStack(spacing: 6) {
-                ForEach(FocusSource.allCases, id: \.self) { s in
-                    capsule(label: s.rawValue, isActive: source == s) { source = s }
-                }
-            }
-        }
-    }
-
     private var taskSection: some View {
         GroupBox("Task") {
             FocusBlockTaskPickerRow(selectedTask: $selectedTask)
-        }
-    }
-
-    private var projectSection: some View {
-        GroupBox("Project") {
-            FuzzyPickerField(
-                allItems: allProjects,
-                selectedItem: $selectedProject,
-                label: { $0.name },
-                chipColor: AppTheme.project,
-                onCreateItem: { makeProject($0) },
-                tapArea: true,
-                emptyLabel: "None — tap to select project"
-            )
         }
     }
 
@@ -168,18 +132,9 @@ struct FocusBlockEditorSheet: View {
 
     // MARK: - Helpers
 
-    // Create a new Project on the fly while selecting one (auto-selected).
-    private func makeProject(_ projectName: String) -> Project? {
-        let trimmed = projectName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let project = Project(name: trimmed)
-        modelContext.insert(project)
-        return project
-    }
-
     private var canSave: Bool {
-        if selectedSlot == .evening { return true }   // container — no source required
-        return source == .task ? selectedTask != nil : selectedProject != nil
+        if selectedSlot == .evening { return true }   // container — no task required
+        return selectedTask != nil
     }
 
     private func loadExisting() {
@@ -191,13 +146,9 @@ struct FocusBlockEditorSheet: View {
         selectedSlot = block.slot
         comment = block.comment ?? ""
         if let start = block.startTime { eveningStart = start }
-        if let t = block.task {
-            source = .task
-            selectedTask = t
-        } else if let p = block.project {
-            source = .project
-            selectedProject = p
-        }
+        // Legacy project-backed blocks load with no task selected (the launch migration normally converts
+        // them first); saving re-backs the block with the chosen task.
+        selectedTask = block.task
     }
 
     private func save() {
@@ -217,16 +168,9 @@ struct FocusBlockEditorSheet: View {
         block.slot = selectedSlot
         block.comment = comment.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : comment
         block.startTime = selectedSlot == .evening ? eveningStart : nil
-        if selectedSlot == .evening {
-            block.task = nil
-            block.project = nil
-        } else if source == .task {
-            block.task = selectedTask
-            block.project = nil
-        } else {
-            block.project = selectedProject
-            block.task = nil
-        }
+        // Time is only ever assigned to tasks; `project` is cleared on every save (legacy field).
+        block.task = selectedSlot == .evening ? nil : selectedTask
+        block.project = nil
 
         dismiss()
     }
