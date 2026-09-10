@@ -133,7 +133,9 @@ struct WorkspaceTabStrip: View {
         }
     }
 
+    // Deleted-aware: a model deleted this session still resolves via `model(for:)`, but reading its
+    // stored properties (e.g. the labels below) traps — so exclude it and fall back to a generic label.
     private func model<T: PersistentModel>(_ id: PersistentIdentifier, as _: T.Type) -> T? {
-        modelContext.model(for: id) as? T
+        modelContext.liveModel(id, as: T.self)
     }
 }

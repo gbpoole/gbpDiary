@@ -192,8 +192,10 @@ struct WorkspaceView: View {
                                description: Text("This item may have been deleted."))
     }
 
+    // Deleted-aware: a model deleted this session resolves via `model(for:)` as a tombstone whose property
+    // reads trap — so exclude it here and render `missing` instead of crashing inside the detail view.
     private func model<T: PersistentModel>(_ id: PersistentIdentifier, as _: T.Type) -> T? {
-        modelContext.model(for: id) as? T
+        modelContext.liveModel(id, as: T.self)
     }
 }
 
