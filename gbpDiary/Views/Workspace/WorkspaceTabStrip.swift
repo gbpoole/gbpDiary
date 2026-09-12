@@ -130,6 +130,8 @@ struct WorkspaceTabStrip: View {
             return (model(pid, as: Minutes.self)?.summary ?? "Meeting", "person.3.sequence")
         case .document(let pid):
             return (model(pid, as: Document.self)?.summary ?? "Document", "doc")
+        case .task(let pid):
+            return (model(pid, as: Task.self)?.summary ?? "Task", "checkmark.square")
         }
     }
 

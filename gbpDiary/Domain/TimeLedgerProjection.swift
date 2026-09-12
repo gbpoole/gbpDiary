@@ -40,6 +40,14 @@ enum TimeLedgerProjection {
         return TimeLedger.compute(blocks: blocks, activities: activities, interval: interval, calendar: calendar)
     }
 
+    /// Per-focus-block net-remaining hours (`FocusBlock.id` → net), from the canonical ledger. Used by the
+    /// Tasks Time column and the task detail Time Log so a task's focus-block time reflects the dynamic net.
+    static func blockNet(focusBlocks: [FocusBlock], tasks: [Task], conversations: [EmailConversation],
+                         meetings: [Minutes], calendar: Calendar = .current) -> [UUID: Double] {
+        ledger(focusBlocks: focusBlocks, tasks: tasks, conversations: conversations,
+               meetings: meetings, calendar: calendar).blockNet
+    }
+
     // MARK: Diary (already-flattened day input)
 
     static func projectDiary(focusBlocks: [FocusBlock], taskEntries: [TaskTimeEntry], completedTasks: [Task],

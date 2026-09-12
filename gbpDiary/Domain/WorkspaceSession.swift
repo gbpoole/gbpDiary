@@ -99,6 +99,7 @@ enum WorkspaceTabCoding {
         case .minutes:     "minutes"
         case .document:    "document"
         case .contentNote: "contentNote"
+        case .task:        "task"
         default:           nil
         }
     }

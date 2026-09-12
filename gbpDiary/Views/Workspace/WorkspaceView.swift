@@ -105,6 +105,7 @@ struct WorkspaceView: View {
             migratePersonEmails()
             migrateEmailConversationsOnce()
             migrateFocusBlockProjectsOnce()
+            migrateFocusBlockDescriptionsOnce()
         }
         // Persist the session when the app deactivates/backgrounds (covers ⌘Q and app switches).
         .onChange(of: scenePhase) { _, phase in
@@ -196,6 +197,57 @@ struct WorkspaceView: View {
         try? modelContext.save()
     }
 
+    // One-time (flag-guarded): the Obsidian import named each block's task after its PROJECT and put the real
+    // description in the block's `comment`. Re-point each described block onto a task named after its
+    // description (one task per (project, description) group — repeated days share it), keeping the block so
+    // its net-capacity behavior is unchanged. No time entries are created.
+    private func migrateFocusBlockDescriptionsOnce() {
+        let key = "focusblock.descriptionTasks.v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+
+        let blocks = (try? modelContext.fetch(FetchDescriptor<FocusBlock>())) ?? []
+        let byID = Dictionary(uniqueKeysWithValues: blocks.map { ($0.id, $0) })
+        let groups = FocusBlockDescriptionMigration.plan(blocks.map {
+            FocusBlockDescriptionMigration.Input(blockID: $0.id, description: $0.comment,
+                                                 projectID: ($0.task?.project ?? $0.project)?.id)
+        })
+
+        if !groups.isEmpty {
+            let projectsByID = Dictionary(uniqueKeysWithValues:
+                ((try? modelContext.fetch(FetchDescriptor<Project>())) ?? []).map { ($0.id, $0) })
+            let me = AppSettingsStore.myPersonID.flatMap { id in
+                (try? modelContext.fetch(FetchDescriptor<Person>(predicate: #Predicate { $0.id == id })))?.first
+            }
+
+            var orphanCandidates = Set<Task>()
+            for group in groups {
+                let task = Task(summary: group.description)
+                task.project = group.projectID.flatMap { projectsByID[$0] }
+                task.assignee = me
+                task.markReviewed()
+                task.markCompleted()
+                modelContext.insert(task)
+                for blockID in group.blockIDs {
+                    guard let block = byID[blockID] else { continue }
+                    if let old = block.task { orphanCandidates.insert(old) }
+                    block.task = task
+                    block.comment = nil   // the description now lives in the task summary
+                }
+            }
+
+            // Delete import-artifact shells left with nothing attached (summary == project name, no blocks /
+            // time entries / children). Real or still-used tasks are untouched.
+            for old in orphanCandidates
+            where old.focusBlocks.isEmpty && old.timeEntries.isEmpty && old.children.isEmpty
+                && old.summary == old.project?.name {
+                modelContext.delete(old)
+            }
+        }
+
+        try? modelContext.save()
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
     @ViewBuilder
     private var activeContent: some View {
         switch workspace.active.current {
@@ -225,6 +277,8 @@ struct WorkspaceView: View {
             if let m = model(pid, as: Minutes.self) { MinutesDetailView(minutes: m) } else { missing }
         case .document(let pid):
             if let d = model(pid, as: Document.self) { DocumentDetailView(document: d) } else { missing }
+        case .task(let pid):
+            if let t = model(pid, as: Task.self) { TaskDetailView(task: t) } else { missing }
         }
     }
 

@@ -5,6 +5,10 @@ struct TasksView: View {
     @Query(sort: \Task.createdAt) private var allTasks: [Task]
     @Query(sort: \Project.name) private var allProjects: [Project]
     @Query(sort: \Person.name) private var allPeople: [Person]
+    // For the net-based "Time" column (focus-block net comes from the canonical TimeLedger).
+    @Query private var allFocusBlocks: [FocusBlock]
+    @Query private var allConversations: [EmailConversation]
+    @Query private var allMeetings: [Minutes]
 
     @Environment(\.modelContext) private var modelContext
     // Filter state is held on the active workspace tab so it survives navigation and differs per tab.
@@ -87,9 +91,12 @@ struct TasksView: View {
             .compactMap { $0 }.joined(separator: " ")
     }
 
-    // Sortable rows (urgency precomputed), ordered by the per-tab column sort order.
+    // Sortable rows (urgency precomputed), ordered by the per-tab column sort order. The focus-block net map
+    // is computed once here (one canonical-ledger pass, like the Timesheet) and drives the Time column.
     private var rows: [TaskRow] {
-        filteredTasks.map(TaskRow.init).sorted(using: filterState.sortOrder)
+        let blockNet = TimeLedgerProjection.blockNet(focusBlocks: allFocusBlocks, tasks: allTasks,
+                                                     conversations: allConversations, meetings: allMeetings)
+        return filteredTasks.map { TaskRow($0, blockNet: blockNet) }.sorted(using: filterState.sortOrder)
     }
 
     // The Inbox: open, top-level tasks awaiting Review, oldest first (clear the backlog).
@@ -134,10 +141,11 @@ struct TasksView: View {
         clearSelection()
     }
 
-    // Opens the double-clicked row's task. `rows` is the sorted display order, matching NSTableView.
+    // Opens the double-clicked row's task in its own workspace tab (like Projects/People). `rows` is the
+    // sorted display order, matching NSTableView. Editing stays available via the detail page + context menu.
     private func openRow(_ index: Int) {
         guard rows.indices.contains(index) else { return }
-        editingTask = rows[index].task
+        workspace.focusOrOpen(.task(rows[index].task.persistentModelID))
     }
 
     var body: some View {
@@ -305,6 +313,11 @@ struct TasksView: View {
                     .font(AppTheme.bodyFont(size: 12)).foregroundStyle(AppTheme.mutedText).monospacedDigit()
             }
             .width(min: 44, ideal: 50)
+            TableColumn("Time", value: \.timeSpentHours) { row in
+                Text(row.timeSpentHours > 0 ? TimeFormat.hours(row.timeSpentHours) : "")
+                    .font(AppTheme.bodyFont(size: 12)).foregroundStyle(AppTheme.duration).monospacedDigit()
+            }
+            .width(min: 50, ideal: 64)
             TableColumn("Assignee", value: \.assigneeKey) { row in
                 Text(row.task.assignee?.name ?? "").foregroundStyle(AppTheme.person).lineLimit(1)
             }

@@ -27,6 +27,9 @@ struct WorkspaceSessionTests {
         let projectTab = WorkspaceTab.project(dummyID())
         #expect(WorkspaceTabCoding.entityKind(for: projectTab) == "project")
         #expect(WorkspaceTabCoding.token(forCategoryTab: projectTab) == nil)
+        let taskTab = WorkspaceTab.task(dummyID())
+        #expect(WorkspaceTabCoding.entityKind(for: taskTab) == "task")
+        #expect(WorkspaceTabCoding.token(forCategoryTab: taskTab) == nil)
     }
 
     @Test func snapshot_jsonRoundTrips() throws {

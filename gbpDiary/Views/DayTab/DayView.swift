@@ -211,8 +211,10 @@ struct DayPageContent: View {
                 }
                 .padding(.vertical, 8)
             }
-            .onAppear { scrollToTargetIfNeeded(proxy) }
+            .onAppear { scrollToTargetIfNeeded(proxy); scrollToEntryTargetIfNeeded(proxy); scrollToBlockTargetIfNeeded(proxy) }
             .onChange(of: diaryState?.scrollTargetNoteId) { scrollToTargetIfNeeded(proxy) }
+            .onChange(of: diaryState?.scrollTargetEntryId) { scrollToEntryTargetIfNeeded(proxy) }
+            .onChange(of: diaryState?.scrollTargetBlockId) { scrollToBlockTargetIfNeeded(proxy) }
         }
         .background(AppTheme.background)
         .sheet(isPresented: $showingAddTask) {
@@ -384,6 +386,20 @@ struct DayPageContent: View {
               dayNotes.contains(where: { $0.id == target }) else { return }
         withAnimation { proxy.scrollTo(target, anchor: .top) }
         diaryState?.scrollTargetNoteId = nil
+    }
+
+    // Scroll to a logged time entry in the Activity section (each ActivityEntryRow carries `.id(entry.id)`).
+    private func scrollToEntryTargetIfNeeded(_ proxy: ScrollViewProxy) {
+        guard let target = diaryState?.scrollTargetEntryId else { return }
+        withAnimation { proxy.scrollTo(target, anchor: .top) }
+        diaryState?.scrollTargetEntryId = nil
+    }
+
+    // Scroll to a focus block in the Activity section (each FocusBlockRow carries `.id(block.id)`).
+    private func scrollToBlockTargetIfNeeded(_ proxy: ScrollViewProxy) {
+        guard let target = diaryState?.scrollTargetBlockId else { return }
+        withAnimation { proxy.scrollTo(target, anchor: .top) }
+        diaryState?.scrollTargetBlockId = nil
     }
 
     private func notesDropZone(belowIndex: Int) -> some View {

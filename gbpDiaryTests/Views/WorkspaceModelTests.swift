@@ -449,6 +449,62 @@ struct WorkspaceModelTests {
         #expect(ws2.tabs.contains { $0.current == .project(project.persistentModelID) })
     }
 
+    // MARK: - Task detail tab
+
+    @Test func task_tab_focusOrOpenReusesAndCloseEntityCloses() throws {
+        let ctx = ModelContext(try TestModelContainer.make())
+        let t = Task(summary: "T")
+        ctx.insert(t)
+        try ctx.save()
+        let ws = WorkspaceModel()
+        ws.focusOrOpen(.task(t.persistentModelID))
+        #expect(ws.active.current == .task(t.persistentModelID))
+        let count = ws.tabs.count
+        ws.focusOrOpen(.task(t.persistentModelID))   // already shown → reuse, no new tab
+        #expect(ws.tabs.count == count)
+        #expect(ws.references(t.persistentModelID))
+        ws.closeEntity(t.persistentModelID)
+        #expect(!ws.references(t.persistentModelID))
+    }
+
+    @Test func snapshot_capturesTaskEntity_andRestoresIt() throws {
+        let ctx = ModelContext(try TestModelContainer.make())
+        let t = Task(summary: "T")
+        ctx.insert(t)
+        try ctx.save()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(.task(t.persistentModelID))
+        let snap = ws.snapshot(using: ctx)
+        #expect(snap.tabs.contains { $0.history.contains(.entity(kind: "task", id: t.id)) })
+
+        let ws2 = WorkspaceModel()
+        ws2.restore(snap, using: ctx)
+        #expect(ws2.tabs.contains { $0.current == .task(t.persistentModelID) })
+    }
+
+    @Test func revealTimeEntry_focusesDiaryOnEntryDayWithScrollTarget() {
+        let ws = WorkspaceModel()
+        ws.openInNewTab(.tasks)   // active tab is not the diary
+        let entry = TaskTimeEntry(date: FixedDates.reference, duration: Duration(value: 1, unit: .h))
+        ws.revealTimeEntry(entry)
+        #expect(ws.active.current == .diary)
+        #expect(ws.active.diaryState.mode == .day)
+        #expect(ws.active.diaryState.currentDate == WeekendPolicy.weekday(for: FixedDates.reference))
+        #expect(ws.active.diaryState.scrollTargetEntryId == entry.id)
+    }
+
+    @Test func revealFocusBlock_focusesDiaryOnBlockDayWithScrollTarget() {
+        let ws = WorkspaceModel()
+        ws.openInNewTab(.tasks)
+        let block = FocusBlock(duration: Duration(value: 7.6, unit: .h))
+        block.dayRecord = DayRecord(date: FixedDates.reference)
+        ws.revealFocusBlock(block)
+        #expect(ws.active.current == .diary)
+        #expect(ws.active.diaryState.mode == .day)
+        #expect(ws.active.diaryState.currentDate == WeekendPolicy.weekday(for: FixedDates.reference))
+        #expect(ws.active.diaryState.scrollTargetBlockId == block.id)
+    }
+
     private func email(id: String) -> EmailMessage {
         EmailMessage(messageId: id, account: "account", mailbox: "INBOX", direction: .inbox,
                      fromAddress: "sender@example.com", fromName: "Sender", subject: "Subject", date: FixedDates.reference)

@@ -87,9 +87,7 @@ struct FocusBlockEditorSheet: View {
     // MARK: - Sections
 
     private var taskSection: some View {
-        GroupBox("Task") {
-            FocusBlockTaskPickerRow(selectedTask: $selectedTask)
-        }
+        FocusBlockTaskPickerRow(selectedTask: $selectedTask, dayDate: dayRecord.date)
     }
 
     private var commentSection: some View {
@@ -177,33 +175,75 @@ struct FocusBlockEditorSheet: View {
 }
 
 // Isolated so @Query task changes don't force a re-render of the whole sheet.
+// A single-select, searchable "Project" filter narrows the task list (fuzzy search scales to any number of
+// projects); "create new" routes through a seeded TaskEditorSheet (project = the selected filter project).
 private struct FocusBlockTaskPickerRow: View {
-    @Environment(\.modelContext) private var modelContext
     @Query(sort: \Task.summary) private var allTasks: [Task]
+    @Query(sort: \Project.name) private var allProjects: [Project]
     @Binding var selectedTask: Task?
+    var dayDate: Date
 
-    private var activeTasks: [Task] {
-        allTasks.filter { $0.status == .todo || $0.status == .started }
+    @State private var projectFilter: Project?
+    @State private var pickerOpen = false
+    @State private var newTaskRequest: NewTaskRequest?
+
+    // Carries the typed summary into the sheet via `.sheet(item:)`, avoiding the `.sheet(isPresented:)`
+    // stale-capture race where the summary set in the same tick wouldn't reach TaskEditorSheet.
+    private struct NewTaskRequest: Identifiable {
+        let id = UUID()
+        let name: String
     }
 
-    var body: some View {
-        FuzzyPickerField(
-            allItems: activeTasks,
-            selectedItem: $selectedTask,
-            label: { $0.summary },
-            chipColor: AppTheme.completed,
-            onCreateItem: { makeTask($0) },
-            tapArea: true,
-            emptyLabel: "None — tap to select task"
+    private var liveProjects: [Project] { allProjects.filter { !$0.isCompleted } }
+
+    private var filteredTasks: [Task] {
+        FocusBlockTaskFiltering.filter(
+            allTasks,
+            isActive: { $0.status == .todo || $0.status == .started },
+            projectID: { $0.project?.id },
+            activeProjectIDs: projectFilter.map { [$0.id] } ?? []   // single-select → set of 0 or 1
         )
     }
 
-    // Create a new Task on the fly while selecting one (auto-selected).
-    private func makeTask(_ summary: String) -> Task? {
-        let trimmed = summary.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let task = Task(summary: trimmed)
-        modelContext.insert(task)
-        return task
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            GroupBox("Project") {
+                FuzzyPickerField(
+                    allItems: liveProjects,
+                    selectedItem: $projectFilter,
+                    label: { $0.name },
+                    chipColor: AppTheme.project,
+                    tapArea: true,
+                    emptyLabel: "All projects — tap to filter"
+                )
+            }
+            GroupBox("Task") {
+                FuzzyPickerField(
+                    allItems: filteredTasks,
+                    selectedItem: $selectedTask,
+                    label: { $0.summary },
+                    chipColor: AppTheme.completed,
+                    onCreateItem: { name in
+                        // Defer creation to the seeded editor rather than making a bare task here.
+                        pickerOpen = false
+                        newTaskRequest = NewTaskRequest(name: name.trimmingCharacters(in: .whitespacesAndNewlines))
+                        return nil
+                    },
+                    tapArea: true,
+                    emptyLabel: "None — tap to select task",
+                    isPresented: $pickerOpen
+                )
+            }
+        }
+        .sheet(item: $newTaskRequest) { request in
+            TaskEditorSheet(
+                task: nil,
+                defaultDate: dayDate,
+                onTaskCreated: { selectedTask = $0 },
+                presetProject: projectFilter,
+                requireProject: true,
+                presetSummary: request.name.isEmpty ? nil : request.name
+            )
+        }
     }
 }

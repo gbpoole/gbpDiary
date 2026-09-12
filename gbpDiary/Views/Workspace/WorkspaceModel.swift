@@ -24,6 +24,7 @@ enum WorkspaceTab: Hashable, Identifiable {
     case minutes(PersistentIdentifier)
     case document(PersistentIdentifier)
     case contentNote(PersistentIdentifier)
+    case task(PersistentIdentifier)
 
     var id: Self { self }
 
@@ -33,7 +34,7 @@ enum WorkspaceTab: Hashable, Identifiable {
         case .diary:                     .diary
         case .chat:                      .chat
         case .triage:                    .triage
-        case .tasks:                     .tasks
+        case .tasks, .task:              .tasks
         case .projects, .project:        .projects
         case .people, .person:           .people
         case .institutions, .institution: .institutions
@@ -359,7 +360,7 @@ enum TaskViewMode: String, CaseIterable {
         history.contains { tab in
             switch tab {
             case .project(let x), .person(let x), .institution(let x),
-                 .minutes(let x), .document(let x), .contentNote(let x):
+                 .minutes(let x), .document(let x), .contentNote(let x), .task(let x):
                 return x == id
             default:
                 return false
@@ -576,6 +577,7 @@ enum TaskViewMode: String, CaseIterable {
         case .minutes(let pid):     (ctx.model(for: pid) as? Minutes)?.id
         case .document(let pid):    (ctx.model(for: pid) as? Document)?.id
         case .contentNote(let pid): (ctx.model(for: pid) as? Note)?.id
+        case .task(let pid):        (ctx.model(for: pid) as? Task)?.id
         default:                    nil
         }
     }
@@ -598,6 +600,8 @@ enum TaskViewMode: String, CaseIterable {
                 return first(FetchDescriptor<Document>(predicate: #Predicate { $0.id == id }), ctx).map { .document($0.persistentModelID) }
             case "contentNote":
                 return first(FetchDescriptor<Note>(predicate: #Predicate { $0.id == id }), ctx).map { .contentNote($0.persistentModelID) }
+            case "task":
+                return first(FetchDescriptor<Task>(predicate: #Predicate { $0.id == id }), ctx).map { .task($0.persistentModelID) }
             default:
                 return nil
             }
@@ -633,13 +637,27 @@ enum TaskViewMode: String, CaseIterable {
 
     /// Focus a Diary tab on the given date and request a scroll to `noteId`. Reuses an existing
     /// Diary tab if one is open, otherwise navigates the active tab to the Diary.
-    func focusDiary(date: Date, scrollTo noteId: UUID?) {
+    func focusDiary(date: Date, scrollTo noteId: UUID? = nil, scrollToEntry entryId: UUID? = nil,
+                    scrollToBlock blockId: UUID? = nil) {
         let target = tabs.first { $0.current == .diary } ?? active
         if target.current != .diary { target.navigate(to: .diary) }
         setActive(target.id)
         target.diaryState.mode = .day
         target.diaryState.goTo(date)
         target.diaryState.scrollTargetNoteId = noteId
+        target.diaryState.scrollTargetEntryId = entryId
+        target.diaryState.scrollTargetBlockId = blockId
+    }
+
+    /// Navigate to the diary day where a logged time entry lives, and request a scroll to it.
+    func revealTimeEntry(_ entry: TaskTimeEntry) {
+        focusDiary(date: entry.date, scrollToEntry: entry.id)
+    }
+
+    /// Navigate to the diary day of a focus block and request a scroll to it. No-op if it has no day.
+    func revealFocusBlock(_ block: FocusBlock) {
+        guard let date = block.dayRecord?.date else { return }
+        focusDiary(date: date, scrollToBlock: block.id)
     }
 
     /// Navigate to the container that holds a note (its day, meeting, or project).

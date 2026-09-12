@@ -9,6 +9,12 @@ import Foundation
     var mode: DiaryMode = .day
     // Set to request the day view scroll to a specific note; cleared once consumed.
     var scrollTargetNoteId: UUID? = nil
+    // Set to request the day view scroll to a specific logged time entry (Activity section); cleared once
+    // consumed. Used when jumping from a task's time-entry list to the diary.
+    var scrollTargetEntryId: UUID? = nil
+    // Set to request the day view scroll to a specific focus block (Activity section); cleared once consumed.
+    // Used when jumping from a task's focus-block time-log row to the diary.
+    var scrollTargetBlockId: UUID? = nil
     // True while the diary is parked on "today" (initial state, the Today button, or navigating to
     // today), so it can roll forward when the wall-clock day changes. Deliberate navigation to any
     // other day clears it. See DiaryDayRollover.

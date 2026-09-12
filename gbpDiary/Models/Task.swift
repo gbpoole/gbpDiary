@@ -105,6 +105,7 @@ extension Task {
         return Duration(value: loggedHoursNormalized, unit: .h)
     }
 
+
     var needsChevron: Bool {
         !children.isEmpty || (notes.map { !$0.isEmpty } ?? false)
     }

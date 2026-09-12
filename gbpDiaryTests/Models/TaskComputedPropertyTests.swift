@@ -20,6 +20,7 @@ struct TaskComputedPropertyTests {
         #expect(task.loggedHoursNormalized == 0)
     }
 
+
     // MARK: - loggedDuration
 
     @Test func loggedDuration_returnsNilWhenNoEntries() {

@@ -43,6 +43,7 @@ struct FocusBlockRow: View {
         .sheet(item: $selectedMeetingMinutes) { m in
             MinutesDetailView(minutes: m, asSheet: true).presentationSizing(.fitted)
         }
+        .id(block.id)   // scroll anchor so WorkspaceModel.revealFocusBlock can jump here
     }
 
     private var headerRow: some View {
@@ -305,6 +306,7 @@ struct ActivityEntryRow: View {
                 task.updatedAt = Date()
             }
         }
+        .id(entry.id)   // scroll anchor so WorkspaceModel.revealTimeEntry can jump here
     }
 
     @ViewBuilder

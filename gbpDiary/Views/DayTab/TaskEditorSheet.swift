@@ -15,6 +15,8 @@ struct TaskEditorSheet: View {
     var attendees: [Person] = []
     /// When true (meeting action items), an assignee must be chosen before saving.
     var requireAssignee: Bool = false
+    /// When true (focus-block task creation), a project must be chosen before saving.
+    var requireProject: Bool = false
     /// Pre-seed the summary/notes for a new task (e.g. from an email being turned into a todo).
     var presetSummary: String? = nil
     var presetNotes: String? = nil
@@ -43,7 +45,9 @@ struct TaskEditorSheet: View {
     private var isNew: Bool { task == nil }
 
     private var canSave: Bool {
-        !summary.trimmingCharacters(in: .whitespaces).isEmpty && (!requireAssignee || selectedAssignee != nil)
+        TaskEditorValidation.canSave(summary: summary,
+                                     hasProject: selectedProject != nil, requireProject: requireProject,
+                                     hasAssignee: selectedAssignee != nil, requireAssignee: requireAssignee)
     }
 
     var body: some View {
