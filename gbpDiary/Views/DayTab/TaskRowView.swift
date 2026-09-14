@@ -121,10 +121,10 @@ struct TaskRowView: View {
     private var contentRow: some View {
         HStack(alignment: .center, spacing: 6) {
             inlineTitleView
-            if task.originEmail != nil {
-                Image(systemName: "envelope")
+            if let kind = task.source?.kind ?? (task.originEmail != nil ? .email : nil) {
+                Image(systemName: kind.systemImage)
                     .font(.caption2).foregroundStyle(.secondary)
-                    .help("From an email")
+                    .help("From \(kind.displayName.lowercased())")
             }
             if task.isBlocked {
                 Image(systemName: "lock.fill")

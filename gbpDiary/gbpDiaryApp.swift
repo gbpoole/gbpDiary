@@ -11,9 +11,14 @@ struct gbpDiaryApp: App {
     @State private var didRunBundleImport = false
     @State private var workspace = WorkspaceModel()
     @State private var hotkeys = HotkeySettings()
+    #if os(macOS)
+    // Handles `gbpdiary://` capture URLs at the AppKit level — once, app-wide, in a single standalone panel,
+    // bypassing WindowGroup (which would otherwise spawn a new window and show the sheet on every window).
+    @NSApplicationDelegateAdaptor(CaptureAppDelegate.self) private var appDelegate
+    #endif
     @AppStorage(SettingsTab.storageKey) private var settingsTab = SettingsTab.general
 
-    var sharedModelContainer: ModelContainer = {
+    static let sharedModelContainer: ModelContainer = {
         let isUITesting = ProcessInfo.processInfo.arguments.contains("-ui-testing")
         let schema = Schema([
             Task.self,
@@ -48,7 +53,7 @@ struct gbpDiaryApp: App {
         #endif
         guard let request = ObsidianImportLaunchRequest(arguments: ProcessInfo.processInfo.arguments),
               request.exitAfterImport else { return }
-        let succeeded = Self.runBundleImport(request, in: sharedModelContainer)
+        let succeeded = Self.runBundleImport(request, in: Self.sharedModelContainer)
         exit(succeeded ? 0 : 1)
     }
 
@@ -63,7 +68,10 @@ struct gbpDiaryApp: App {
                     runBundleImportIfRequested()
                 }
         }
-        .modelContainer(sharedModelContainer)
+        // Don't let the WindowGroup spawn/activate a window for `gbpdiary://` opens — the AppKit
+        // CaptureAppDelegate handles those in a single floating panel instead.
+        .handlesExternalEvents(matching: [])
+        .modelContainer(Self.sharedModelContainer)
         .commands {
             AppCommands(workspace: workspace, hotkeys: hotkeys)
         }
@@ -87,13 +95,13 @@ struct gbpDiaryApp: App {
                     .tag(SettingsTab.appearance)
             }
             .environment(hotkeys)
-            .modelContainer(sharedModelContainer)
+            .modelContainer(Self.sharedModelContainer)
         }
         #endif
     }
 
     private func sweepOrphanedAttachments() {
-        let context = sharedModelContainer.mainContext
+        let context = Self.sharedModelContainer.mainContext
         let known: Set<URL>
         do {
             let attachments = try context.fetch(FetchDescriptor<Attachment>())
@@ -112,7 +120,7 @@ struct gbpDiaryApp: App {
     // has no nullify inverse) or is missing. Such orphans crash any reader that touches their `meetingAt`/`id`,
     // so we delete them once at launch. `persistentModelID` never faults, so it's safe to read on a dangling ref.
     private func sweepOrphanedMeetingEntries() {
-        let context = sharedModelContainer.mainContext
+        let context = Self.sharedModelContainer.mainContext
         guard let entries = try? context.fetch(FetchDescriptor<DayEntry>()) else { return }
         let live = Set((try? context.fetch(FetchDescriptor<Minutes>()))?.map(\.persistentModelID) ?? [])
         var removed = false
@@ -128,7 +136,7 @@ struct gbpDiaryApp: App {
         didRunBundleImport = true
         let args = ProcessInfo.processInfo.arguments
         guard let request = ObsidianImportLaunchRequest(arguments: args) else { return }
-        _ = Self.runBundleImport(request, in: sharedModelContainer)
+        _ = Self.runBundleImport(request, in: Self.sharedModelContainer)
         if request.exitAfterImport {
             #if os(macOS)
             NSApp.terminate(nil)

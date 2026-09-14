@@ -11,7 +11,9 @@ struct TaskDetailView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.openURL) private var openURL
     @Environment(WorkspaceModel.self) private var workspace
+    @State private var mailService = MailScriptService()
 
     // Whole-store queries feed the canonical ledger so a focus block's NET (capacity − other in-block
     // activity) is accurate — the same figure as the Tasks Time column and the Timesheet.
@@ -134,7 +136,30 @@ struct TaskDetailView: View {
             if totalHours > 0 {
                 Chip(label: "Logged \(TimeFormat.hours(totalHours))", color: AppTheme.duration)
             }
+            if let source = task.source {
+                Button { openSource(source) } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: source.kind.systemImage).font(.caption2)
+                        Text(source.title ?? source.url ?? source.kind.displayName).lineLimit(1)
+                    }
+                    .font(.caption)
+                    .padding(.horizontal, 8).padding(.vertical, 4)
+                    .background(AppTheme.chipBackground(AppTheme.accent), in: Capsule())
+                    .foregroundStyle(AppTheme.accent)
+                }
+                .buttonStyle(.plain)
+                .help("Open source")
+            }
         }
+    }
+
+    // Open where the task came from: email → Mail (via AppleScript); otherwise the deep link (slack://, https://).
+    private func openSource(_ source: TaskSource) {
+        if source.kind == .email, let email = source.email ?? task.originEmail {
+            mailService.openMessage(email) { _ in }
+            return
+        }
+        if let s = source.url, let url = URL(string: s) { openURL(url) }
     }
 
     private var statusLabel: some View {
