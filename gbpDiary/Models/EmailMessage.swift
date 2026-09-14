@@ -43,6 +43,8 @@ import SwiftData
     @Relationship(deleteRule: .nullify, inverse: \TaskTimeEntry.email) var timeEntries: [TaskTimeEntry] = []
     // Todos made from this email (nullify — deleting the email leaves the tasks, just unlinked).
     @Relationship(deleteRule: .nullify, inverse: \Task.originEmail) var tasks: [Task] = []
+    // Unified provenance sources pointing at this email (nullify on delete). Coexists with `tasks`.
+    @Relationship(deleteRule: .nullify, inverse: \TaskSource.email) var taskSources: [TaskSource] = []
 
     var hasTasks: Bool { !tasks.isEmpty }
     var hasOpenTask: Bool { tasks.contains(where: \.isOpen) }

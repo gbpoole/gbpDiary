@@ -43,7 +43,10 @@ import SwiftData
     var project: Project?
     var originDay: DayRecord?
     var originMinutes: Minutes?
-    var originEmail: EmailMessage?   // set when the task was made from a triaged email (EmailMessage declares the inverse)
+    var originEmail: EmailMessage?   // LEGACY email backbone (EmailMessage.tasks inverse); provenance now reads via `source`
+    // Unified provenance — where this task came from (email/slack/web/other). Cascade: deleting the task
+    // deletes its source. For email, coexists with `originEmail` (which still powers the email inverse).
+    @Relationship(deleteRule: .cascade, inverse: \TaskSource.task) var source: TaskSource?
     var meetingTaskSortOrder: Int = 0
     var parent: Task?
     @Relationship(deleteRule: .cascade, inverse: \Task.parent)

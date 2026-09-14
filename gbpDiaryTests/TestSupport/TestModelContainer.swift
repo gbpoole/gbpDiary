@@ -17,6 +17,7 @@ enum TestModelContainer {
             Note.self,
             TaskTimeEntry.self,
             FocusBlock.self,
+            TaskSource.self,
             EmailMessage.self,
             EmailThreadSummary.self,
             EmailConversation.self,

@@ -106,6 +106,7 @@ struct WorkspaceView: View {
             migrateEmailConversationsOnce()
             migrateFocusBlockProjectsOnce()
             migrateFocusBlockDescriptionsOnce()
+            migrateTaskSourcesOnce()
         }
         // Persist the session when the app deactivates/backgrounds (covers ⌘Q and app switches).
         .onChange(of: scenePhase) { _, phase in
@@ -245,6 +246,26 @@ struct WorkspaceView: View {
         }
 
         try? modelContext.save()
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
+    // One-time (flag-guarded): give every email-made task (legacy `originEmail`) a first-class email
+    // `TaskSource`, so provenance is unified. Idempotent — a task with a source is skipped.
+    private func migrateTaskSourcesOnce() {
+        let key = "task.emailSources.v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        let tasks = (try? modelContext.fetch(FetchDescriptor<Task>())) ?? []
+        let byID = Dictionary(uniqueKeysWithValues: tasks.map { ($0.id, $0) })
+        let needing = TaskSourceMigration.plan(tasks.map {
+            TaskSourceMigration.Input(taskID: $0.id, hasSource: $0.source != nil, hasOriginEmail: $0.originEmail != nil)
+        })
+        for id in needing {
+            guard let task = byID[id], let email = task.originEmail else { continue }
+            let source = TaskSource(kind: .email, title: email.subject, email: email)
+            modelContext.insert(source)
+            task.source = source
+        }
+        if !needing.isEmpty { try? modelContext.save() }
         UserDefaults.standard.set(true, forKey: key)
     }
 

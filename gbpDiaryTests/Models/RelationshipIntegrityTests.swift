@@ -5,6 +5,39 @@ import Testing
 
 @MainActor
 struct RelationshipIntegrityTests {
+    @Test func taskDelete_cascadesSource() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let task = Task(summary: "t")
+        let source = TaskSource(kind: .web, url: "https://example.com", title: "Ex")
+        context.insert(task); context.insert(source)
+        task.source = source
+        try context.save()
+
+        context.delete(task)
+        try context.save()
+        #expect(try context.fetch(FetchDescriptor<TaskSource>()).isEmpty)
+    }
+
+    @Test func emailDelete_nullifiesTaskSourceEmail_sourceSurvives() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let email = EmailMessage(messageId: "m1", account: "a", mailbox: "INBOX", direction: .inbox,
+                                 fromAddress: "s@x.com", fromName: "S", subject: "Subj", date: FixedDates.reference)
+        let task = Task(summary: "t")
+        let source = TaskSource(kind: .email, title: "Subj", email: email)
+        context.insert(email); context.insert(task); context.insert(source)
+        task.source = source
+        try context.save()
+
+        context.delete(email)
+        try context.save()
+        let sources = try context.fetch(FetchDescriptor<TaskSource>())
+        #expect(sources.count == 1)
+        #expect(sources.first?.email == nil)        // nullified
+        #expect(sources.first?.kind == .email)      // the source itself survives
+    }
+
     @Test func dayRecordDelete_cascadesEntries() throws {
         let container = try TestModelContainer.make()
         let context = ModelContext(container)

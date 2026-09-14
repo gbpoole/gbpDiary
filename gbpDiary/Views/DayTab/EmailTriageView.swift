@@ -97,7 +97,15 @@ struct EmailTriageView: View {
             TaskEditorSheet(
                 task: nil,
                 defaultDate: convo.date,
-                onTaskCreated: { task in task.originEmail = convo.latest; convo.accept() },
+                onTaskCreated: { task in
+                    task.originEmail = convo.latest
+                    if let latest = convo.latest {
+                        let source = TaskSource(kind: .email, title: latest.subject, email: latest)
+                        modelContext.insert(source)
+                        task.source = source
+                    }
+                    convo.accept()
+                },
                 presetProject: convo.projects.first,
                 presetSummary: convo.displaySubject == "(no subject)" ? nil : convo.displaySubject,
                 presetNotes: convo.latestMessageSummary
