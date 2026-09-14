@@ -121,11 +121,7 @@ struct TaskRowView: View {
     private var contentRow: some View {
         HStack(alignment: .center, spacing: 6) {
             inlineTitleView
-            if let kind = task.source?.kind ?? (task.originEmail != nil ? .email : nil) {
-                Image(systemName: kind.systemImage)
-                    .font(.caption2).foregroundStyle(.secondary)
-                    .help("From \(kind.displayName.lowercased())")
-            }
+            SourceGlyphButton(task: task)
             if task.isBlocked {
                 Image(systemName: "lock.fill")
                     .font(.caption2).foregroundStyle(AppTheme.destructive)

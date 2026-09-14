@@ -312,7 +312,7 @@ private struct DayTaskPanelRow: View {
             if let dur = task.loggedDuration {
                 Chip(label: dur.displayString, color: AppTheme.duration)
             }
-            if task.originEmail != nil { glyph("envelope", .secondary, "From an email") }
+            SourceGlyphButton(task: task)
         }
     }
 
