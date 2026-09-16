@@ -16,6 +16,10 @@ struct EmailTriageView: View {
     @Query private var allPeople: [Person]
 
     @State private var filter: EmailTriageCategory = .toTriage
+    // Paginate by day: only the most-recent N days of the active bucket are rendered (a "Show older" button
+    // reveals more). Keeps the list to a handful of rows even with hundreds of accumulated conversations.
+    @State private var visibleDayCount = EmailTriageView.pageDays
+    private static let pageDays = 3
     @State private var reconciling: EmailConversation?
     @State private var makingTodoFor: EmailConversation?
     @State private var openingTask: Task?
@@ -24,47 +28,45 @@ struct EmailTriageView: View {
     @State private var status: String?
 
     // Each conversation shown ONCE, grouped under its latest-message day, most-recent day first.
-    private var allDayGroups: [(day: Date, conversations: [EmailConversation])] {
+    private struct TriageModel {
+        var counts: [EmailTriageCategory: Int]                                  // per-bucket badge counts (all)
+        var dayGroups: [(day: Date, conversations: [EmailConversation])]        // active bucket, capped to page
+        var totalDays: Int                                                      // days available in the bucket
+    }
+
+    // One O(n) pass: classify every conversation once (drives all four badge counts), and — for the active
+    // bucket only — group by day (most-recent first, capped to `visibleDayCount`). Replaces the old
+    // allDayGroups + per-category count()×4 that re-classified every conversation on every render.
+    private var triage: TriageModel {
         let cal = Calendar.current
+        var counts: [EmailTriageCategory: Int] = [:]
         var order: [Date] = []
         var byDay: [Date: [EmailConversation]] = [:]
         for convo in allConversations.sorted(by: { $0.date > $1.date }) where !convo.messages.isEmpty {
+            let cat = EmailTriageCategory.classify(state: convo.triageState, hasTasks: convo.taskCount > 0)
+            counts[cat, default: 0] += 1
+            guard cat == filter else { continue }
             let day = cal.startOfDay(for: convo.date)
             if byDay[day] == nil { order.append(day) }
             byDay[day, default: []].append(convo)
         }
-        return order.map { ($0, byDay[$0] ?? []) }
-    }
-
-    private func category(of convo: EmailConversation) -> EmailTriageCategory {
-        EmailTriageCategory.classify(state: convo.triageState, hasTasks: convo.taskCount > 0)
-    }
-
-    // The selected bucket's conversations, grouped by day. Days are most-recent first; within a day,
-    // conversations run in ascending time (earliest → latest).
-    private var dayGroups: [(day: Date, conversations: [EmailConversation])] {
-        allDayGroups.compactMap { group in
-            let convos = group.conversations
-                .filter { category(of: $0) == filter }
-                .sorted { $0.date < $1.date }
-            return convos.isEmpty ? nil : (group.day, convos)
+        let groups = order.prefix(visibleDayCount).map { day in
+            (day: day, conversations: (byDay[day] ?? []).sorted { $0.date < $1.date })
         }
-    }
-
-    private func count(_ category: EmailTriageCategory) -> Int {
-        allDayGroups.reduce(0) { $0 + $1.conversations.filter { self.category(of: $0) == category }.count }
+        return TriageModel(counts: counts, dayGroups: Array(groups), totalDays: order.count)
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            controlBar
+        let model = triage
+        return VStack(spacing: 0) {
+            controlBar(counts: model.counts)
             Divider()
-            if dayGroups.isEmpty {
+            if model.dayGroups.isEmpty {
                 Text(emptyLabel).font(.callout).foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 List {
-                    ForEach(dayGroups, id: \.day) { group in
+                    ForEach(model.dayGroups, id: \.day) { group in
                         Section {
                             ForEach(group.conversations, id: \.persistentModelID) { convo in
                                 EmailTriageConversationRow(
@@ -83,9 +85,16 @@ struct EmailTriageView: View {
                             Text(group.day.formatted(.dateTime.weekday(.wide).day().month(.wide).year()))
                         }
                     }
+                    if model.totalDays > visibleDayCount {
+                        Button("Show older (\(model.totalDays - visibleDayCount) more day\(model.totalDays - visibleDayCount == 1 ? "" : "s"))") {
+                            visibleDayCount += Self.pageDays
+                        }
+                        .frame(maxWidth: .infinity, alignment: .center)
+                    }
                 }
             }
         }
+        .onChange(of: filter) { visibleDayCount = Self.pageDays }   // each bucket starts at the most-recent days
         .background(AppTheme.background)
         .sheet(item: $reconciling) { convo in
             ResolveAttendeeSheet(
@@ -133,7 +142,7 @@ struct EmailTriageView: View {
 
     // MARK: - Control bar
 
-    private var controlBar: some View {
+    private func controlBar(counts: [EmailTriageCategory: Int]) -> some View {
         HStack(spacing: 12) {
             Button { refresh() } label: {
                 Label(isFetching ? "Refreshing…" : "Refresh", systemImage: "arrow.clockwise")
@@ -141,7 +150,7 @@ struct EmailTriageView: View {
             .disabled(isFetching)
             Picker("", selection: $filter) {
                 ForEach(EmailTriageCategory.allCases, id: \.self) { c in
-                    Text("\(c.label) (\(count(c)))").tag(c)
+                    Text("\(c.label) (\(counts[c] ?? 0))").tag(c)
                 }
             }
             .pickerStyle(.segmented)

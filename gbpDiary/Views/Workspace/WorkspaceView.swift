@@ -107,6 +107,7 @@ struct WorkspaceView: View {
             migrateFocusBlockProjectsOnce()
             migrateFocusBlockDescriptionsOnce()
             migrateTaskSourcesOnce()
+            purgeOldDismissedEmail()
         }
         // Persist the session when the app deactivates/backgrounds (covers ⌘Q and app switches).
         .onChange(of: scenePhase) { _, phase in
@@ -267,6 +268,21 @@ struct WorkspaceView: View {
         }
         if !needing.isEmpty { try? modelContext.save() }
         UserDefaults.standard.set(true, forKey: key)
+    }
+
+    // Runs each launch (not one-time): delete dismissed conversations older than the retention window and
+    // their messages, so the email store — and the triage page — don't grow without bound. `messages` is a
+    // nullify relationship, so the messages are deleted explicitly; linked tasks (originEmail) just unlink.
+    private func purgeOldDismissedEmail() {
+        let convos = (try? modelContext.fetch(FetchDescriptor<EmailConversation>())) ?? []
+        var changed = false
+        for convo in convos where EmailRetention.isPurgeable(dismissed: convo.dismissed,
+                                                             latestDate: convo.latest?.date) {
+            for message in convo.messages { modelContext.delete(message) }
+            modelContext.delete(convo)
+            changed = true
+        }
+        if changed { try? modelContext.save() }
     }
 
     @ViewBuilder
