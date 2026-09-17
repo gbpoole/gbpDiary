@@ -94,9 +94,10 @@ enum TimeLedgerProjection {
     }
 
     private static func meetingActivities(_ meetings: [Minutes], _ ctx: Context) -> [LedgerActivity] {
-        meetings.compactMap { m in
-            guard let hours = m.duration?.hoursNormalized, hours > 0 else { return nil }
-            return ctx.meeting(id: m.id.uuidString, date: m.meetingAt, hours: hours, projects: m.projects.map(\.name))
+        meetings.flatMap { m -> [LedgerActivity] in
+            guard let hours = m.duration?.hoursNormalized, hours > 0 else { return [] }
+            return ctx.meetingSplit(id: m.id.uuidString, start: m.meetingAt, hours: hours,
+                                    projects: m.projects.map(\.name))
         }
     }
 
@@ -139,14 +140,40 @@ enum TimeLedgerProjection {
             LedgerActivity(sourceKey: id, date: fold(completedAt), hours: hours, projectNames: projects,
                            blockID: nil, isOvertime: isWeekend(completedAt))
         }
-        // Meetings are overtime only on weekends; a weekday meeting reduces its standard block's net, else it
-        // is standalone-standard (the diary never puts meetings in an evening/overtime block).
-        func meeting(id: String, date: Date, hours: Double, projects: [String]) -> LedgerActivity {
-            let weekend = isWeekend(date)
-            let cb = weekend ? nil : containing(date)
-            let block = (cb?.isOvertime ?? false) ? nil : cb
-            return LedgerActivity(sourceKey: id, date: fold(date), hours: hours, projectNames: projects,
-                                  blockID: block?.id, isOvertime: weekend)
+        // A weekday meeting is split across the day's standard blocks by the portion in each slot (so a meeting
+        // spanning 12:30 reduces each block's net by only its part — not double-counted at full duration in both);
+        // any part covered by no block is a standalone-standard remainder. A weekend meeting is overtime, whole.
+        func meetingSplit(id: String, start: Date, hours: Double, projects: [String]) -> [LedgerActivity] {
+            let folded = fold(start)
+            if isWeekend(start) {
+                return [LedgerActivity(sourceKey: id, date: folded, hours: hours, projectNames: projects,
+                                       blockID: nil, isOvertime: true)]
+            }
+            let dayBlocks = (blocksByDay[calendar.startOfDay(for: start)] ?? []).filter { !$0.isOvertime }
+            guard !dayBlocks.isEmpty else {
+                return [LedgerActivity(sourceKey: id, date: folded, hours: hours, projectNames: projects,
+                                       blockID: nil, isOvertime: false)]
+            }
+            var activities: [LedgerActivity] = []
+            var covered = 0.0
+            for fb in dayBlocks {
+                let overlap = MeetingSlotHours.overlapHours(start: start, durationHours: hours,
+                                                            slot: fb.slot, on: start, calendar: calendar)
+                guard overlap > 0 else { continue }
+                covered += overlap
+                activities.append(LedgerActivity(sourceKey: "\(id)#\(fb.id.uuidString)", date: folded,
+                                                 hours: overlap, projectNames: projects,
+                                                 blockID: fb.id, isOvertime: false))
+            }
+            let remainder = hours - covered
+            if remainder > 0.0001 {
+                activities.append(LedgerActivity(sourceKey: "\(id)#rest", date: folded, hours: remainder,
+                                                 projectNames: projects, blockID: nil, isOvertime: false))
+            }
+            return activities.isEmpty
+                ? [LedgerActivity(sourceKey: id, date: folded, hours: hours, projectNames: projects,
+                                  blockID: nil, isOvertime: false)]
+                : activities
         }
     }
 }

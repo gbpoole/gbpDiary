@@ -119,9 +119,12 @@ struct ActivitySection: View {
         case .allDay:
             return meetings
         case .morning, .afternoon:
+            // Only meetings that actually occupy time in this slot — so a meeting spanning 12:30 shows (and
+            // counts) in each block by its portion, and one ending exactly at 12:30 isn't a phantom afternoon row.
             return meetings.filter { entry in
-                guard let m = entry.minutes else { return false }
-                return MeetingSlotClassifier.slots(for: m, on: date).contains(block.slot)
+                guard let m = entry.minutes, let d = m.duration else { return false }
+                return MeetingSlotHours.overlapHours(start: m.meetingAt, durationHours: d.hoursNormalized,
+                                                     slot: block.slot, on: date) > 0
             }
         case .evening:
             return []

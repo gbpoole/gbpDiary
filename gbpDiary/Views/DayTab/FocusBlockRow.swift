@@ -20,10 +20,19 @@ struct FocusBlockRow: View {
 
     private var netHours: Double {
         let taskHours = entries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
-        let meetingHours = meetings.compactMap(\.minutes).compactMap(\.duration)
-            .reduce(0.0) { $0 + $1.hoursNormalized }
+        // A meeting counts only for the portion that falls inside this block's slot (so a meeting spanning the
+        // 12:30 boundary isn't double-counted at full duration in both morning and afternoon).
+        let meetingHours = meetings.compactMap(\.minutes).reduce(0.0) { sum, m in
+            slotHours(for: m) + sum
+        }
         return FocusBlockMath.netHours(capacity: block.duration.hoursNormalized,
                                        loggedHours: taskHours + meetingHours + emailHours)
+    }
+
+    private func slotHours(for m: Minutes) -> Double {
+        guard let d = m.duration else { return 0 }
+        return MeetingSlotHours.overlapHours(start: m.meetingAt, durationHours: d.hoursNormalized,
+                                             slot: block.slot, on: date)
     }
 
     @State private var isCollapsed = false
@@ -141,7 +150,9 @@ struct FocusBlockRow: View {
         ForEach(orderedBlockItems) { item in
             switch item {
             case .meeting(let entry):
-                if let minutes = entry.minutes { MeetingActivityRow(minutes: minutes) }
+                if let minutes = entry.minutes {
+                    MeetingActivityRow(minutes: minutes, displayHours: slotHours(for: minutes))
+                }
             case .entry(let entry):
                 ActivityEntryRow(entry: entry)
             }
@@ -151,6 +162,8 @@ struct FocusBlockRow: View {
 
 private struct MeetingActivityRow: View {
     var minutes: Minutes
+    // The meeting's hours within the owning block's slot (nil = show its full duration).
+    var displayHours: Double? = nil
 
     @Environment(WorkspaceModel.self) private var workspace
 
@@ -177,8 +190,9 @@ private struct MeetingActivityRow: View {
                     Chip(label: minutes.meetingAt.formatted(date: .omitted, time: .shortened),
                          color: AppTheme.project)
                     Group {
-                        if let d = minutes.duration {
-                            Chip(label: d.displayString, color: AppTheme.duration)
+                        let hours = displayHours ?? minutes.duration?.hoursNormalized ?? 0
+                        if hours > 0 {
+                            Chip(label: TimeFormat.short(hours: hours), color: AppTheme.duration)
                         }
                     }
                 }

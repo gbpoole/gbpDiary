@@ -26,6 +26,34 @@ struct TimeLedgerProjectionTests {
         #expect(r.standardTotal == 3)
     }
 
+    // The reported bug: a meeting spanning 12:30 must not be double-counted across the morning + afternoon blocks.
+    @Test func spanningMeeting_splitsHalfIntoMorningAndAfternoonBlocks() {
+        let map = Project(name: "MAP")
+        let day = DayRecord(date: at(3))
+        let morning = FocusBlock(duration: Duration(value: 4, unit: .h), slot: .morning); morning.dayRecord = day
+        let afternoon = FocusBlock(duration: Duration(value: 4, unit: .h), slot: .afternoon); afternoon.dayRecord = day
+        let m = Minutes(meetingAt: at(3, 12)); m.projects = [map]; m.duration = Duration(value: 1, unit: .h)  // 12:00–13:00
+
+        let r = TimeLedgerProjection.ledger(focusBlocks: [morning, afternoon], tasks: [], conversations: [], meetings: [m], calendar: cal)
+        #expect(hours(r, "MAP") == 1)                 // counted once, not twice
+        #expect(r.blockNet[morning.id] == 3.5)        // 4 − 0.5
+        #expect(r.blockNet[afternoon.id] == 3.5)      // 4 − 0.5
+    }
+
+    @Test func meetingEndingAt1230_countsFullyInMorning() {
+        let adacs = Project(name: "ADACS")
+        let day = DayRecord(date: at(3))
+        let morning = FocusBlock(duration: Duration(value: 4, unit: .h), slot: .morning); morning.dayRecord = day
+        let afternoon = FocusBlock(duration: Duration(value: 4, unit: .h), slot: .afternoon); afternoon.dayRecord = day
+        let m = Minutes(meetingAt: at(3, 11).addingTimeInterval(1800)); m.projects = [adacs]  // 11:30
+        m.duration = Duration(value: 1, unit: .h)                                              // 11:30–12:30
+
+        let r = TimeLedgerProjection.ledger(focusBlocks: [morning, afternoon], tasks: [], conversations: [], meetings: [m], calendar: cal)
+        #expect(hours(r, "ADACS") == 1)
+        #expect(r.blockNet[morning.id] == 3)          // 4 − 1
+        #expect(r.blockNet[afternoon.id] == 4)        // unchanged
+    }
+
     @Test func standaloneTaskEntry_countedOnADayWithNoBlocks() {
         let p = Project(name: "Alpha")
         let task = Task(summary: "t"); task.project = p
