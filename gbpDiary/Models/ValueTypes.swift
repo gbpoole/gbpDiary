@@ -124,6 +124,31 @@ enum DateWindow: String, CaseIterable {
     }
 }
 
+// Planning-board horizon a task is committed to. Optional on a Task: nil = not placed on the board
+// (a reviewed-but-unplaced backlog task). `rank` orders the board's sections Today → This Week → Maybe.
+enum PlanHorizon: String, Codable, CaseIterable {
+    case today
+    case thisWeek
+    case maybe
+
+    var displayName: String {
+        switch self {
+        case .today:    "Today"
+        case .thisWeek: "This Week"
+        case .maybe:    "Maybe"
+        }
+    }
+
+    /// Section order on the planning board (Today first).
+    var rank: Int {
+        switch self {
+        case .today:    0
+        case .thisWeek: 1
+        case .maybe:    2
+        }
+    }
+}
+
 enum DurationUnit: String, Codable {
     case h, d, w
 

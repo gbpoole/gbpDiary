@@ -108,4 +108,47 @@ struct TaskComputedPropertyTests {
         let task = Task(summary: "hello")
         #expect(!task.isInlineSummaryEmpty)
     }
+
+    // MARK: - standing tasks + planning horizon
+
+    @Test func newTask_isNotStandingByDefault() {
+        #expect(!Task(summary: "t").isStanding)
+    }
+
+    @Test func makeStanding_setsFlagClearsTriageAndHorizon() {
+        let task = Task(summary: "review email")
+        task.planHorizon = .today
+        #expect(task.needsTriage)          // new tasks start needing triage
+        task.makeStanding()
+        #expect(task.isStanding)
+        #expect(!task.needsTriage)         // standing tasks are already-reviewed
+        #expect(task.planHorizon == nil)   // never on the board
+    }
+
+    @Test func planHorizon_roundTripsThroughRaw() {
+        let task = Task(summary: "t")
+        #expect(task.planHorizon == nil)
+        task.planHorizon = .thisWeek
+        #expect(task.planHorizonRaw == PlanHorizon.thisWeek.rawValue)
+        #expect(task.planHorizon == .thisWeek)
+        task.planHorizon = nil
+        #expect(task.planHorizonRaw == nil)
+    }
+
+    @Test func place_setsHorizon_butStandingTasksIgnoreIt() {
+        let task = Task(summary: "t")
+        task.place(on: .maybe)
+        #expect(task.planHorizon == .maybe)
+        task.makeStanding()
+        task.place(on: .today)
+        #expect(task.planHorizon == nil)   // standing tasks never go on the board
+    }
+
+    @Test func isOverdue_exemptForStandingTasks() {
+        let task = Task(summary: "t")
+        task.dueAt = FixedDates.reference.addingTimeInterval(-30 * 86400)   // long past
+        #expect(task.isOverdue)            // ordinary open task is overdue
+        task.makeStanding()
+        #expect(!task.isOverdue)           // standing tasks never nag as overdue
+    }
 }

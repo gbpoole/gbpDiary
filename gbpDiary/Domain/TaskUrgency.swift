@@ -15,6 +15,7 @@ struct UrgencyInputs: Equatable {
     var isBlocked: Bool           // has an incomplete blocker (Stage 3)
     var isBlocking: Bool          // blocks another open task (Stage 3)
     var isWaiting: Bool           // wait-until in the future (Stage 4)
+    var isStanding: Bool = false  // stateless perpetual task → never ranked (score 0)
 }
 
 enum TaskUrgency {
@@ -32,7 +33,7 @@ enum TaskUrgency {
     static let ageMaxDays = 365.0
 
     static func score(_ i: UrgencyInputs, now: Date = Date()) -> Double {
-        guard i.isOpen else { return 0 }   // done/cancelled tasks aren't ranked
+        guard i.isOpen, !i.isStanding else { return 0 }   // done/cancelled/standing tasks aren't ranked
         var u = 0.0
         u += cDue * dueUrgency(i.dueAt, now: now)
         u += cPriority * i.priorityWeight
@@ -80,7 +81,8 @@ extension TaskUrgency {
             hasProject: task.project != nil,
             isBlocked: task.isBlocked,
             isBlocking: task.isBlocking,
-            isWaiting: task.isWaiting
+            isWaiting: task.isWaiting,
+            isStanding: task.isStanding
         )
         return score(inputs, now: now)
     }

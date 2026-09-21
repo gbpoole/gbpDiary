@@ -14,6 +14,8 @@ import SwiftData
     var isCompleted: Bool
     var createdAt: Date
     var updatedAt: Date
+    // Stamped when the project's tasks are marked reviewed in the curation stepper. Defaulted for migration.
+    var tasksReviewedAt: Date?
 
     var parent: Project?
     @Relationship(deleteRule: .nullify, inverse: \Project.parent)
@@ -44,6 +46,16 @@ import SwiftData
     var streamKey: String { (stream ?? "").lowercased() }
     var subprojectCount: Int { subprojects.count }
     var lastMeetingAt: Date { meetings.map(\.meetingAt).max() ?? .distantPast }
+    // Latest real work (time entries + focus blocks) logged against this project's OWN tasks — not rolled
+    // up over subprojects. Sort key for the Projects table's "Last Activity" column (neglect ordering).
+    var lastActivityAt: Date {
+        ProjectActivity.lastActivityAt(
+            timeEntryDates: tasks.flatMap { $0.timeEntries.map(\.date) },
+            focusBlockDates: tasks.flatMap { $0.focusBlocks.compactMap { $0.dayRecord?.date } }
+        ) ?? .distantPast
+    }
+    // Sort key for the "Tasks-Reviewed" column (never-reviewed sorts oldest).
+    var tasksReviewedKey: Date { tasksReviewedAt ?? .distantPast }
     var devTeamKey: String { Project.teamKey(lead: devLead, team: devTeam) }
     var sciTeamKey: String { Project.teamKey(lead: sciLead, team: sciTeam) }
 

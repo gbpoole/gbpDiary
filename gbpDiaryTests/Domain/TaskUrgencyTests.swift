@@ -54,6 +54,14 @@ struct TaskUrgencyTests {
         #expect(TaskUrgency.score(done, now: now) == 0)      // …still zero because it's finished
     }
 
+    @Test func standing_scoresZero() {
+        var standing = base()
+        standing.isStanding = true
+        standing.priorityWeight = TaskPriority.high.weight
+        standing.dueAt = now.addingTimeInterval(-100 * 86400)   // very overdue + high priority
+        #expect(TaskUrgency.score(standing, now: now) == 0)      // …still zero because it's a standing task
+    }
+
     @Test func effectiveDue_usesPendingFollowUpAndEarliest() {
         let due = now.addingTimeInterval(10 * 86400)
         let follow = now.addingTimeInterval(2 * 86400)
