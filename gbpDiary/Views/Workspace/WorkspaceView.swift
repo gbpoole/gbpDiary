@@ -91,11 +91,13 @@ struct WorkspaceView: View {
         }
         .environment(workspace.active.diaryState)
         .kanagawaAppBackground()
-        .background { TaskRecurrenceDriver() } // spawn recurring tasks + auto-cancel past-until tasks
-        .background { EmailFetchDriver() }     // global auto-ingest (last few days, 5-min cadence)
-        .background { EmailSummaryDriver() }   // global on-device email summarisation
-        .background { EmailThreadSummaryDriver() } // global on-device whole-thread day summaries
-        .background { ChatIndexDriver() }      // rebuildable local semantic index + stale-source removal
+        // Skipped under XCTest: unit tests run inside this app, and these drivers would hit Mail /
+        // rebuild the semantic index during a test run. See TestEnvironment for the deadlock.
+        .background { if !TestEnvironment.isRunningUnitTests { TaskRecurrenceDriver() } } // spawn recurring tasks + auto-cancel past-until tasks
+        .background { if !TestEnvironment.isRunningUnitTests { EmailFetchDriver() } }     // global auto-ingest (last few days, 5-min cadence)
+        .background { if !TestEnvironment.isRunningUnitTests { EmailSummaryDriver() } }   // global on-device email summarisation
+        .background { if !TestEnvironment.isRunningUnitTests { EmailThreadSummaryDriver() } } // global on-device whole-thread day summaries
+        .background { if !TestEnvironment.isRunningUnitTests { ChatIndexDriver() } }      // rebuildable local semantic index + stale-source removal
         .sheet(isPresented: $showingNewContent) { ContentNoteEditorSheet(note: nil) }
         .onAppear {
             if !hasRestored {

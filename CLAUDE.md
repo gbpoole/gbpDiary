@@ -556,7 +556,12 @@ a **second time at ingest against the "Me" person's addresses** (`EmailIngest.up
 *account* doesn't list (e.g. a work address that CCs a list from a Gmail account): a new received email
 from a "Me" address is dropped, and any that slipped in earlier are dismissed (self-heals every fetch as
 your addresses change). `MailScriptService.swift` (`@MainActor`)
-runs an `NSAppleScript` on a background queue (the Mail `whose date…` query can be slow) and delivers
+runs an `NSAppleScript` on **`MailScriptRunner`'s dedicated background thread, which owns a live run
+loop** (the Mail `whose date…` query can be slow). **RULE: never run these scripts on a plain GCD queue
+or on the main thread.** Mail's Apple Event reply is delivered through the calling thread's run loop, so
+a queue without one silently returns nothing; and on the main thread `NSAppleScript` spins a nested
+Carbon event loop that re-enters whatever that run loop is servicing — which blocks the UI and
+**deadlocks the XCTest host outright** (see `TestEnvironment`). The service delivers
 `MailMessageDraft`s on the main actor (`MainActor.assumeIsolated`; completion-handler, no `Swift.Task`).
 The AppleScript source generation and its delimited-output parsing are pure and tested in
 `Domain/MailScriptParsing.swift` (`script(forDay:)`, `parseOutput`, `parseNameAddress`, `dedupeKey`).
@@ -1142,7 +1147,9 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | Conversation reconcile (`@MainActor`, ingest + one-time migration): `EmailConversationReconciler.reconcile` groups emails by `EmailThreadGraph`, ensures one `EmailConversation` per group (sticky — an email keeps its conversation so user state survives), links new mail to an existing conversation without overwriting its state, merges conversations bridged by a later reply, and folds legacy per-message state (projects/person/importance/triage/time) onto newly-created conversations | Email conversations / entity | `gbpDiaryTests/Domain/EmailConversationReconcilerTests.swift` | `replyGraphGroupsIntoOneConversation_otherSubjectSeparate`, `foldsLegacyStateOntoConversation`, `anyUnclassifiedMemberKeepsConversationToTriage`, `newReplyJoinsExistingConversationWithoutOverwritingState`, `bridgingReplyMergesTwoConversations` |
 | Junk mail excluded: the fetch carries Mail's `junk mail status` per Inbox message (`MailScriptParsing` → `MailMessageDraft.isJunk`, parsed from the record's 14th field); `EmailIngest.upsert` skips new junk (never ingested) and **dismisses an already-stored copy** whose draft is now junk-flagged (self-heal) | Email ingest / junk | `gbpDiaryTests/Domain/MailScriptParsingTests.swift`, `gbpDiaryTests/Domain/EmailIngestJunkTests.swift` | `parseOutput_parsesJunkFlag`, `script_containsDayBoundsAccountAndMailboxes` (asserts `junk mail status`/`isJunk`), `junkDraftDismissesTheStoredCopy`, `newJunkIsNotIngested`, `nonJunkStillIngests` |
 
+| Unit tests never start the global background drivers: `TestEnvironment.isRunningUnitTests` is true while the app hosts an injected XCTest bundle (`XCTestCase` class present or `XCTestConfigurationFilePath` set), and `WorkspaceView` gates `TaskRecurrenceDriver` / `EmailFetchDriver` / `EmailSummaryDriver` / `EmailThreadSummaryDriver` / `ChatIndexDriver` on it. Without the gate `EmailFetchDriver` runs `MailScriptService`'s `NSAppleScript` on the main thread, whose nested Carbon event loop re-enters XCTest's start source and deadlocks the run ("test runner timed out while preparing to run tests") | Testing / test host | `gbpDiaryTests/Domain/TestEnvironmentTests.swift` | `testIsRunningUnitTests_isTrueInsideTheTestHost` |
 
+| Mail AppleScript runs off the main thread on a run-loop-owning thread: `MailScriptRunner` executes every script on one long-lived `Thread` parked on a live run loop (serial, as `NSAppleScript` is not thread-safe) and hops completions back to the main actor; all five `MailScriptService` entry points (`fetchDay`/`fetchRange`/`fetchContent`/`openMessage`/`runList`) route through it. A plain GCD queue would return empty output (no run loop to receive Mail's Apple Event reply) and the main thread would block the UI and deadlock the test host | Email fetch / Mail.app | `gbpDiaryTests/Domain/MailScriptRunnerIntegrationTests.swift` | `testListAccounts_returnsDataFromTheBackgroundRunLoopThread` (opt-in: `defaults write io.github.gbpoole.gbpDiary mailIntegrationTests -bool YES`; drives real Mail, skipped otherwise) |
 
 When new rules are added to this document, add at least one row linking each rule to test coverage.
 
