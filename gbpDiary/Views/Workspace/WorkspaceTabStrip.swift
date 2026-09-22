@@ -132,6 +132,9 @@ struct WorkspaceTabStrip: View {
             return (model(pid, as: Document.self)?.summary ?? "Document", "doc")
         case .task(let pid):
             return (model(pid, as: Task.self)?.summary ?? "Task", "checkmark.square")
+        case .curation(let pid):
+            let name = model(pid, as: Project.self)?.name
+            return (name.map { "Curate: \($0)" } ?? "Curate", "checklist.checked")
         }
     }
 

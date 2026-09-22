@@ -25,6 +25,8 @@ enum WorkspaceTab: Hashable, Identifiable {
     case document(PersistentIdentifier)
     case contentNote(PersistentIdentifier)
     case task(PersistentIdentifier)
+    // A curation session, identified by the root project it walks.
+    case curation(PersistentIdentifier)
 
     var id: Self { self }
 
@@ -35,6 +37,7 @@ enum WorkspaceTab: Hashable, Identifiable {
         case .chat:                      .chat
         case .triage:                    .triage
         case .tasks, .task:              .tasks
+        case .curation:                  .projects
         case .projects, .project:        .projects
         case .people, .person:           .people
         case .institutions, .institution: .institutions
@@ -318,6 +321,9 @@ enum TaskViewMode: String, CaseIterable {
     // Unsaved subtask-breakdown text, keyed by the task being broken down. Held on the tab (not in the
     // view) so a half-typed outline survives navigating away and back. Session-only, like chatState.
     var breakdownDrafts: [UUID: String] = [:]
+    // How far through a curation walk this tab is. Session-only: the walk itself is recomputed from
+    // live project data, and resuming mid-session after a relaunch would be more surprising than useful.
+    var curationIndex: Int = 0
     // Per-tab filter state for the other shared-style list pages, created lazily with page defaults.
     private var pageFilters: [WorkspaceCategory: ListPageFilter] = [:]
     func pageFilter(for category: WorkspaceCategory) -> ListPageFilter {
@@ -363,7 +369,8 @@ enum TaskViewMode: String, CaseIterable {
         history.contains { tab in
             switch tab {
             case .project(let x), .person(let x), .institution(let x),
-                 .minutes(let x), .document(let x), .contentNote(let x), .task(let x):
+                 .minutes(let x), .document(let x), .contentNote(let x), .task(let x),
+                 .curation(let x):
                 return x == id
             default:
                 return false
@@ -581,6 +588,7 @@ enum TaskViewMode: String, CaseIterable {
         case .document(let pid):    (ctx.model(for: pid) as? Document)?.id
         case .contentNote(let pid): (ctx.model(for: pid) as? Note)?.id
         case .task(let pid):        (ctx.model(for: pid) as? Task)?.id
+        case .curation(let pid):    (ctx.model(for: pid) as? Project)?.id
         default:                    nil
         }
     }
@@ -605,6 +613,8 @@ enum TaskViewMode: String, CaseIterable {
                 return first(FetchDescriptor<Note>(predicate: #Predicate { $0.id == id }), ctx).map { .contentNote($0.persistentModelID) }
             case "task":
                 return first(FetchDescriptor<Task>(predicate: #Predicate { $0.id == id }), ctx).map { .task($0.persistentModelID) }
+            case "curation":
+                return first(FetchDescriptor<Project>(predicate: #Predicate { $0.id == id }), ctx).map { .curation($0.persistentModelID) }
             default:
                 return nil
             }

@@ -83,6 +83,60 @@ struct WorkspaceModelTests {
         #expect(secondChat.chatState.mode == .emailExplorerLab)
     }
 
+    // MARK: - Curation sessions
+
+    /// The curation tab is an entity tab keyed by its ROOT project, so it reuses/closes like the others
+    /// and lives under the Projects sidebar category.
+    @Test func curationTab_focusOrOpenReusesAndCloseEntityCloses() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let project = Project(name: "Apollo")
+        context.insert(project)
+        try context.save()
+        let pid = project.persistentModelID
+
+        let ws = WorkspaceModel()
+        ws.focusOrOpen(.curation(pid))
+        #expect(ws.active.current == .curation(pid))
+        #expect(ws.active.current.category == .projects)
+        let count = ws.tabs.count
+
+        ws.focusOrOpen(.curation(pid))
+        #expect(ws.tabs.count == count)          // reused, not duplicated
+
+        #expect(ws.references(pid))
+        ws.closeEntity(pid)
+        #expect(!ws.tabs.contains { $0.current == .curation(pid) })
+    }
+
+    /// A curation tab survives a session save/restore by the root project's stable UUID.
+    @Test func snapshot_capturesCurationEntity_andRestoresIt() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let project = Project(name: "Apollo")
+        context.insert(project)
+        try context.save()
+
+        let ws = WorkspaceModel()
+        ws.focusOrOpen(.curation(project.persistentModelID))
+        let snapshot = ws.snapshot(using: context)
+
+        let restored = WorkspaceModel()
+        restored.restore(snapshot, using: context)
+        #expect(restored.tabs.contains { $0.current == .curation(project.persistentModelID) })
+    }
+
+    /// Walk position is per tab, so switching away and back resumes where the session was.
+    @Test func curationIndex_isHeldPerTab() {
+        let ws = WorkspaceModel()
+        let first = ws.active
+        first.curationIndex = 3
+        ws.openInNewTab(.projects)
+        #expect(ws.active.curationIndex == 0)    // the new tab has its own position
+        ws.selectTab(at: 0)
+        #expect(ws.active.curationIndex == 3)
+    }
+
     // MARK: - Subtask breakdown drafts
 
     /// A half-typed breakdown outline must survive switching tabs: the tab's content view is torn down

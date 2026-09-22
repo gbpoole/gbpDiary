@@ -318,6 +318,8 @@ struct WorkspaceView: View {
             if let d = model(pid, as: Document.self) { DocumentDetailView(document: d) } else { missing }
         case .task(let pid):
             if let t = model(pid, as: Task.self) { TaskDetailView(task: t) } else { missing }
+        case .curation(let pid):
+            if let p = model(pid, as: Project.self) { CurationView(root: p) } else { missing }
         }
     }
 

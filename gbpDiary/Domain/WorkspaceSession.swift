@@ -100,6 +100,7 @@ enum WorkspaceTabCoding {
         case .document:    "document"
         case .contentNote: "contentNote"
         case .task:        "task"
+        case .curation:    "curation"
         default:           nil
         }
     }

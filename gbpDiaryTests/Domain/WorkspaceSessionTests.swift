@@ -29,6 +29,9 @@ struct WorkspaceSessionTests {
         #expect(WorkspaceTabCoding.token(forCategoryTab: projectTab) == nil)
         let taskTab = WorkspaceTab.task(dummyID())
         #expect(WorkspaceTabCoding.entityKind(for: taskTab) == "task")
+        let curationTab = WorkspaceTab.curation(dummyID())
+        #expect(WorkspaceTabCoding.entityKind(for: curationTab) == "curation")
+        #expect(WorkspaceTabCoding.token(forCategoryTab: curationTab) == nil)
         #expect(WorkspaceTabCoding.token(forCategoryTab: taskTab) == nil)
     }
 
