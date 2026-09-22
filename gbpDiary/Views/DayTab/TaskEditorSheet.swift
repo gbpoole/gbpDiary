@@ -8,6 +8,7 @@ struct TaskEditorSheet: View {
     let task: Task?
     let defaultDate: Date
     var onTaskCreated: ((Task) -> Void)? = nil
+    @State private var breakdownText = ""
     /// Meeting action-item presets: pre-select the project, link the new task to the meeting, and
     /// offer its attendees as one-tap assignees.
     var presetProject: Project? = nil
@@ -66,6 +67,7 @@ struct TaskEditorSheet: View {
                     dependsSection
                     blockingSection
                     notesSection
+                    subtasksSection
                     if let t = task {
                         timeLogSection(t)
                     }
@@ -166,6 +168,30 @@ struct TaskEditorSheet: View {
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 60)
             }
+        }
+    }
+
+    // Subtasks typed as an indented outline. They are created on save (a new task does not exist yet),
+    // through the same TaskOutlineParser + TaskBreakdown path as the detail page's breakdown field.
+    private var subtasksSection: some View {
+        GroupBox(task == nil ? "Subtasks" : "Add subtasks") {
+            VStack(alignment: .leading, spacing: 6) {
+                ZStack(alignment: .topLeading) {
+                    if breakdownText.isEmpty {
+                        Text("One per line; indent to nest…")
+                            .foregroundStyle(.tertiary)
+                            .allowsHitTesting(false)
+                            .padding(.top, 2)
+                    }
+                    TextEditor(text: $breakdownText)
+                        .scrollContentBackground(.hidden)
+                        .frame(minHeight: 54)
+                }
+                Text("Indent with Tab or four spaces to make a subtask of the line above.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -491,6 +517,7 @@ struct TaskEditorSheet: View {
             t.assignee = selectedAssignee
             t.tags = tags
             t.updatedAt = Date()
+            TaskBreakdown.create(text: breakdownText, under: t, in: modelContext)
         } else {
             let newTask = Task(summary: trimmedSummary)
             newTask.notes = notes.isEmpty ? nil : notes
@@ -509,6 +536,8 @@ struct TaskEditorSheet: View {
                 newTask.meetingTaskSortOrder = (origin.newTasks.map(\.meetingTaskSortOrder).max() ?? -1) + 1
             }
             modelContext.insert(newTask)
+            // After insert, so the subtasks attach to a task the context already knows.
+            TaskBreakdown.create(text: breakdownText, under: newTask, in: modelContext)
             onTaskCreated?(newTask)
         }
         dismiss()

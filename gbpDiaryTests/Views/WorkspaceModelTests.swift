@@ -83,6 +83,46 @@ struct WorkspaceModelTests {
         #expect(secondChat.chatState.mode == .emailExplorerLab)
     }
 
+    // MARK: - Subtask breakdown drafts
+
+    /// A half-typed breakdown outline must survive switching tabs: the tab's content view is torn down
+    /// and rebuilt, so the draft is held on the tab state rather than in @State.
+    @Test func breakdownDraft_survivesSwitchingTabsAndComingBack() {
+        let ws = WorkspaceModel()
+        let taskID = UUID()
+        let taskTab = ws.active
+        taskTab.breakdownDrafts[taskID] = "Write changelog\n    Collect PRs"
+
+        ws.openInNewTab(.projects)
+        #expect(ws.active !== taskTab)
+        ws.selectTab(at: 0)
+
+        #expect(ws.active === taskTab)
+        #expect(ws.active.breakdownDrafts[taskID] == "Write changelog\n    Collect PRs")
+    }
+
+    /// Drafts are per task, so two tasks open in one tab don't share an outline.
+    @Test func breakdownDrafts_areKeyedPerTask() {
+        let state = WorkspaceTabState(.diary)
+        let a = UUID(), b = UUID()
+        state.breakdownDrafts[a] = "alpha"
+        state.breakdownDrafts[b] = "beta"
+        #expect(state.breakdownDrafts[a] == "alpha")
+        #expect(state.breakdownDrafts[b] == "beta")
+        #expect(state.breakdownDrafts[UUID()] == nil)
+    }
+
+    /// Session-only, like chatState: a draft is working state, not something to restore at launch.
+    @Test func breakdownDraft_isNotPersistedInTheSnapshot() throws {
+        let ws = WorkspaceModel()
+        ws.active.breakdownDrafts[UUID()] = "unsaved outline"
+        let container = try TestModelContainer.make()
+        let snapshot = ws.snapshot(using: ModelContext(container))
+        let json = try JSONEncoder().encode(snapshot)
+        let text = String(decoding: json, as: UTF8.self)
+        #expect(!text.contains("unsaved outline"))
+    }
+
     @Test func chatState_survivesNavigationWithinItsWorkspaceTab() {
         let ws = WorkspaceModel()
         ws.navigate(to: .chat)

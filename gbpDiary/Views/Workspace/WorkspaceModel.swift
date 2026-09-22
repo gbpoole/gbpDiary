@@ -315,6 +315,9 @@ enum TaskViewMode: String, CaseIterable {
     let chatState = ChatState()
     // Per-tab Tasks-page filter state (remembered across in-tab navigation).
     let tasksFilter = TasksFilterState()
+    // Unsaved subtask-breakdown text, keyed by the task being broken down. Held on the tab (not in the
+    // view) so a half-typed outline survives navigating away and back. Session-only, like chatState.
+    var breakdownDrafts: [UUID: String] = [:]
     // Per-tab filter state for the other shared-style list pages, created lazily with page defaults.
     private var pageFilters: [WorkspaceCategory: ListPageFilter] = [:]
     func pageFilter(for category: WorkspaceCategory) -> ListPageFilter {
