@@ -8,6 +8,7 @@ enum WorkspaceTab: Hashable, Identifiable {
     case chat
     case triage
     case tasks
+    case board
     case projects
     case people
     case institutions
@@ -37,6 +38,7 @@ enum WorkspaceTab: Hashable, Identifiable {
         case .chat:                      .chat
         case .triage:                    .triage
         case .tasks, .task:              .tasks
+        case .board:                     .board
         case .curation:                  .projects
         case .projects, .project:        .projects
         case .people, .person:           .people
@@ -57,6 +59,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     case chat         = "Chat"
     case triage       = "Triage"
     case tasks        = "Tasks"
+    case board        = "Board"
     case timesheet    = "Timesheet"
     case projects     = "Projects"
     case meetings     = "Meetings"
@@ -79,7 +82,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
 
     // The browse sidebar's grouping: ordered groups, each with a heading, for visual separation.
     static let sidebarGroups: [(title: String, categories: [WorkspaceCategory])] = [
-        ("Workspace", [.diary, .tasks, .timesheet, .triage, .chat]),
+        ("Workspace", [.diary, .tasks, .board, .timesheet, .triage, .chat]),
         ("Records",   [.projects, .meetings, .people, .institutions]),
         ("Library",   [.documents, .content, .images, .tags]),
     ]
@@ -90,6 +93,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         case .chat:         "bubble.left.and.bubble.right"
         case .triage:       "tray.and.arrow.down"
         case .tasks:        "checkmark.square"
+        case .board:        "rectangle.split.3x1"
         case .projects:     "folder"
         case .people:       "person.2"
         case .institutions: "building.2"
@@ -109,6 +113,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         case .chat:         .chat
         case .triage:       .triage
         case .tasks:        .tasks
+        case .board:        .board
         case .projects:     .projects
         case .people:       .people
         case .institutions: .institutions
@@ -304,7 +309,7 @@ enum TaskViewMode: String, CaseIterable {
         case .institutions: ListPageFilter(sortColumnID: "name", sortAscending: true)
         case .tags:         ListPageFilter(sortColumnID: "tag", sortAscending: true)
         case .images:       ListPageFilter(sortColumnID: "name", sortAscending: true)
-        case .diary, .chat, .triage, .tasks, .timesheet:
+        case .diary, .chat, .triage, .tasks, .board, .timesheet:
             ListPageFilter(sortColumnID: "name", sortAscending: true)  // unused (not list pages)
         }
     }
