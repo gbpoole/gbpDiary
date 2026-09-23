@@ -28,7 +28,9 @@ enum DayTaskBuckets {
         let window = WeekendPolicy.forwardRange(for: date, calendar: calendar)
         var b = Buckets()
         for task in allTasks {
-            guard task.parent == nil, task.isOpen else { continue }
+            // Standing tasks are perpetual and stateless: they are logged from the diary's standing
+            // strip, not worked through the action buckets, so they never appear here.
+            guard task.parent == nil, task.isOpen, !task.isStanding else { continue }
             if task.needsTriage { b.inbox.append(task); continue }
             if TaskFlags.isWaiting(waitUntil: task.waitUntil, now: date) { continue }
 

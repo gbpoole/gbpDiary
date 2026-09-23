@@ -53,7 +53,8 @@ struct TasksView: View {
             PickerFilter<Task>(id: "flag.hasDue", label: "Has due", chipColor: AppTheme.mutedText, group: "Flags") { $0.dueAt != nil },
             PickerFilter<Task>(id: "flag.blocked", label: "Blocked", chipColor: AppTheme.destructive, group: "Flags") { $0.isBlocked },
             PickerFilter<Task>(id: "flag.unblocked", label: "Unblocked", chipColor: AppTheme.completed, group: "Flags") { $0.isOpen && !$0.isBlocked },
-            PickerFilter<Task>(id: "flag.waiting", label: "Waiting", chipColor: AppTheme.mutedText, group: "Flags") { $0.isWaiting }
+            PickerFilter<Task>(id: "flag.waiting", label: "Waiting", chipColor: AppTheme.mutedText, group: "Flags") { $0.isWaiting },
+            PickerFilter<Task>(id: "flag.standing", label: "Standing", chipColor: AppTheme.duration, group: "Flags") { $0.isStanding }
         ]
         return state + status + priorities + flags + projects + assignees + mine + source
     }
@@ -71,13 +72,17 @@ struct TasksView: View {
         let matched = Set(FilterEngine.apply(allTasks, filters: taskFilters, activeIds: filterState.activeFilterIds).map(\.id))
         let query = filterState.searchText.trimmingCharacters(in: .whitespaces)
         let showWaiting = filterState.activeFilterIds.contains("flag.waiting")
+        let showStanding = filterState.activeFilterIds.contains("flag.standing")
         return allTasks.filter { task in
             if pendingStatusIds.contains(task.id) { return true }
-            // Untriaged, still-open tasks live in the Inbox (Triage view) — hidden from Reviewed until
-            // reviewed. Completed/cancelled tasks always show (no need to triage a closed task).
-            if task.isOpen && task.needsTriage { return false }
+            // Untriaged / waiting / standing tasks are each hidden until their own control reveals
+            // them — see TaskTableVisibility for why.
+            if TaskTableVisibility.isHidden(isOpen: task.isOpen, needsTriage: task.needsTriage,
+                                            isWaiting: task.isWaiting, isStanding: task.isStanding,
+                                            showWaiting: showWaiting, showStanding: showStanding) {
+                return false
+            }
             guard matched.contains(task.id) else { return false }
-            if task.isWaiting && !showWaiting { return false }   // deferred tasks hidden until revealed
             if let range = filterState.dateRange, !range.contains(task.createdAt) {
                 return false   // date presets/range match the captured (created) date
             }
@@ -308,6 +313,11 @@ struct TasksView: View {
                         Image(systemName: "arrow.clockwise")
                             .font(.system(size: 10)).foregroundStyle(AppTheme.mutedText)
                             .help("Repeats")
+                    }
+                    if row.task.isStanding {
+                        Image(systemName: "infinity")
+                            .font(.system(size: 10)).foregroundStyle(AppTheme.duration)
+                            .help("Standing task — perpetual, never completes")
                     }
                     Text(row.task.summary)
                         .lineLimit(1)

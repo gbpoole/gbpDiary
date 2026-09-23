@@ -107,6 +107,8 @@ struct DayTaskPanel: View {
                 }
                 .padding(.vertical, 6)
             }
+            // Pinned below the scrolling buckets: standing work is always to hand, never scrolled past.
+            StandingTaskStrip(date: date)
         }
         .background(AppTheme.background)
         .sheet(item: $editingTask) { task in TaskEditorSheet(task: task, defaultDate: date) }

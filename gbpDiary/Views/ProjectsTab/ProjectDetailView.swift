@@ -21,8 +21,11 @@ struct ProjectDetailView: View {
     @State private var showCompleted = false
     @State private var tagsText = ""
 
+    // Standing tasks have their own section below — they never complete, so listing them among the
+    // open tasks would leave them there permanently.
     private var openTasks: [Task] {
-        allTasks.filter { $0.project?.id == project.id && ($0.status == .todo || $0.status == .started) }
+        allTasks.filter { $0.project?.id == project.id && !$0.isStanding
+                          && ($0.status == .todo || $0.status == .started) }
     }
     private var completedTasks: [Task] {
         allTasks.filter { $0.project?.id == project.id && $0.status == .completed }
@@ -57,6 +60,7 @@ struct ProjectDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     section("Open Tasks (\(openTasks.count))") { openTasksContent }
+                    StandingTasksSection(project: project)
                     section("Meetings (\(project.meetings.count))") { meetingsContent }
                     section("Documents (\(project.documents.count))") { documentsContent }
                     if !project.subprojects.isEmpty {

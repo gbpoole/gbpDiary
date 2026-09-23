@@ -61,6 +61,7 @@ struct CurationView: View {
                     VStack(alignment: .leading, spacing: 0) {
                         inboxSection(project)
                         taskSection(project)
+                        StandingTasksSection(project: project)
                     }
                     .padding(.bottom, 28)
                     .id(project.id)   // reset per-project view state as the walk advances
