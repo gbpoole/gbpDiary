@@ -917,6 +917,24 @@ Five NSEvent monitor classes live in `gbpDiary/Views/DayTab/KeyboardMonitors.swi
 
 On macOS, applying `.alert()` in the outer modifier chain of a block view (outside `.background()` / `.clipShape()` but alongside `.padding(.horizontal)`) silently collapses the padding's layout proposal, producing ~0pt margin. **Fix:** apply `.alert()` at the `body` level (or inside the inner content chain, before `.background()`), not after the outer layout padding. This does not affect note or task blocks since they use only `.sheet()` or `.contextMenu()` in the outer chain.
 
+### macOS SwiftUI quirk: `NSViewRepresentable.updateNSView` must not write SwiftUI state
+
+`updateNSView(_:context:)` runs **inside** SwiftUI's update pass. Calling back into a closure that
+writes `@State` (or any observed state) from there is SwiftUI's **"Modifying state during view update,
+this will cause undefined behavior"** — it fired 3–4 times on every launch from `WindowAccessor`, whose
+`updateNSView` called `onResolve(nsView.window)` straight into `hostWindow = $0`.
+
+**Fix:** defer the callback off the update pass (`DispatchQueue.main.async`, which `makeNSView` already
+did for its own reason), and have the caller publish only a genuine change
+(`if hostWindow !== $0 { hostWindow = $0 }`) since the resolver fires on every update pass.
+**RULE: a representable that reports something back to SwiftUI must defer the write.**
+
+To confirm a fix, count the faults for a launch:
+`log show --start "<t>" --predicate 'process == "gbpDiary"' | grep -c "Modifying state during view update"`.
+Note the fault is logged by SwiftUI but is **not** reachable with an lldb breakpoint on
+`_os_log_fault_impl` / `_os_log_impl` / `SwiftUI.Log.runtimeIssuesLog` — bisecting the view tree and
+counting faults per launch is the practical way to locate it.
+
 ### SwiftUI quirk: `LazyVStack` + nested `ScrollView` → infinite layout loop
 
 Do **not** place a view that contains a `ScrollView` inside a `LazyVStack`. `LazyVStack`'s lazy measurement algorithm re-proposes heights as cells scroll into view; if the nested `ScrollView` (or any `NSViewRepresentable` inside it, such as `StructuredText` or `TextEditor`) reports a slightly different size between passes, SwiftUI enters an infinite measure → invalidate → re-measure cycle. Each pass allocates new view descriptors, producing unbounded memory growth and 100 % CPU. **Fix:** use a plain `VStack` instead. For sections bounded in number (e.g., 7 days in `WeekView`) the performance difference is negligible. `DayPageContent` contains a nested `ScrollView`, so any container that holds multiple `DayPageContent` instances must use `VStack`, not `LazyVStack`.

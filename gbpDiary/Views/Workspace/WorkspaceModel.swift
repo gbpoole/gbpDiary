@@ -330,7 +330,13 @@ enum TaskViewMode: String, CaseIterable {
     // live project data, and resuming mid-session after a relaunch would be more surprising than useful.
     var curationIndex: Int = 0
     // Per-tab filter state for the other shared-style list pages, created lazily with page defaults.
-    private var pageFilters: [WorkspaceCategory: ListPageFilter] = [:]
+    //
+    // @ObservationIgnored because `pageFilter(for:)` is called from list-page bodies, so the lazy insert
+    // below is a write during a view update. Measurement showed this was NOT the source of the app's
+    // "Modifying state during view update" faults (that was WindowAccessor) — this is defensive only.
+    // Nothing observes the cache itself: views observe the returned ListPageFilter, which is @Observable,
+    // so identity stays stable and filter edits still publish.
+    @ObservationIgnored private var pageFilters: [WorkspaceCategory: ListPageFilter] = [:]
     func pageFilter(for category: WorkspaceCategory) -> ListPageFilter {
         if let existing = pageFilters[category] { return existing }
         let created = ListPageFilter.makeDefault(for: category)

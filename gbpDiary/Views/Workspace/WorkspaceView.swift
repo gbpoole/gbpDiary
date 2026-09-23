@@ -119,7 +119,7 @@ struct WorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             workspace.save(using: modelContext)
         }
-        .background(WindowAccessor { hostWindow = $0 })
+        .background(WindowAccessor { if hostWindow !== $0 { hostWindow = $0 } })
         .onAppear {
             closeTabMonitor.action = { workspace.closeActiveTab() }
             closeTabMonitor.targetWindow = hostWindow
@@ -350,7 +350,10 @@ private struct WindowAccessor: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        onResolve(nsView.window)
+        // updateNSView runs INSIDE SwiftUI's update pass and `onResolve` writes @State, so calling it
+        // synchronously here is "Modifying state during view update" — undefined behaviour. Defer to the
+        // next runloop tick, exactly as makeNSView already does.
+        DispatchQueue.main.async { [weak nsView] in onResolve(nsView?.window) }
     }
 }
 #endif
