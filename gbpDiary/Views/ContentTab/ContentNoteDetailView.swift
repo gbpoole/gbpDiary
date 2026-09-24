@@ -18,8 +18,14 @@ struct ContentNoteDetailView: View {
     @State private var titleDebouncer = Debouncer()
 
     var body: some View {
-        Group {
-            if asSheet {
+        // The model can be deleted while this view is still mounted (its tab is closed, but
+        // the view renders once more in the same pass; a sheet is not a tab at all). Reading a
+        // deleted model's stored properties traps, so bail out before the content is built.
+        if note.isDeletedOrDetached {
+            DeletedEntityPlaceholder(noun: "note")
+        } else {
+            Group {
+                if asSheet {
                 VStack(alignment: .leading, spacing: 12) { header }.padding()
             } else {
                 ScrollView {
@@ -32,8 +38,9 @@ struct ContentNoteDetailView: View {
                 }
             }
         }
-        .navigationTitle(note.title.isEmpty ? "Untitled" : note.title)
-        .onAppear { titleDraft = note.title }
+            .navigationTitle(note.title.isEmpty ? "Untitled" : note.title)
+            .onAppear { titleDraft = note.title }
+        }
     }
 
     // MARK: - Header

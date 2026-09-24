@@ -30,7 +30,12 @@ struct PersonDetailView: View {
     }
 
     var body: some View {
-        if asSheet {
+        // The model can be deleted while this view is still mounted (its tab is closed, but
+        // the view renders once more in the same pass; a sheet is not a tab at all). Reading a
+        // deleted model's stored properties traps, so bail out before the content is built.
+        if person.isDeletedOrDetached {
+            DeletedEntityPlaceholder(noun: "person")
+        } else if asSheet {
             NavigationStack { coreContent }
             #if os(macOS)
             .frame(minWidth: 500, minHeight: 480)

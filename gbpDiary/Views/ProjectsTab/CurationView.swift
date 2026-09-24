@@ -52,7 +52,13 @@ struct CurationView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // The model can be deleted while this view is still mounted (its tab is closed, but
+        // the view renders once more in the same pass; a sheet is not a tab at all). Reading a
+        // deleted model's stored properties traps, so bail out before the content is built.
+        if root.isDeletedOrDetached {
+            DeletedEntityPlaceholder(noun: "project")
+        } else {
+            VStack(alignment: .leading, spacing: 0) {
             header
                 .padding(.horizontal).padding(.top, 12).padding(.bottom, 4)
             DayActionBar(items: actionItems)
@@ -72,8 +78,9 @@ struct CurationView: View {
                 }
             }
         }
-        .background(AppTheme.background)
-        .navigationTitle("Curate: \(root.name)")
+            .background(AppTheme.background)
+            .navigationTitle("Curate: \(root.name)")
+        }
     }
 
     // MARK: - Header

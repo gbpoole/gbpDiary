@@ -62,7 +62,12 @@ struct MinutesDetailView: View {
     }
 
     var body: some View {
-        if asSheet {
+        // The model can be deleted while this view is still mounted (its tab is closed, but
+        // the view renders once more in the same pass; a sheet is not a tab at all). Reading a
+        // deleted model's stored properties traps, so bail out before the content is built.
+        if minutes.isDeletedOrDetached {
+            DeletedEntityPlaceholder(noun: "meeting")
+        } else if asSheet {
             // Metadata-only sheet. Bounded height + an inner ScrollView so a long attendee list
             // scrolls rather than pushing the Cancel/Add button bar off the bottom of the sheet.
             NavigationStack {

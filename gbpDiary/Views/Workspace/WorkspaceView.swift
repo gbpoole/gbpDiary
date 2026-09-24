@@ -325,8 +325,7 @@ struct WorkspaceView: View {
     }
 
     private var missing: some View {
-        ContentUnavailableView("Not available", systemImage: "questionmark.folder",
-                               description: Text("This item may have been deleted."))
+        DeletedEntityPlaceholder(noun: "item")
     }
 
     // Deleted-aware: a model deleted this session resolves via `model(for:)` as a tombstone whose property
