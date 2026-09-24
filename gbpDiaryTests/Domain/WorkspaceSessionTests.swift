@@ -6,7 +6,7 @@ import Testing
 @MainActor
 struct WorkspaceSessionTests {
     @Test func categoryTokens_roundTrip() {
-        let tabs: [WorkspaceTab] = [.diary, .chat, .triage, .tasks, .board, .projects, .people, .institutions,
+        let tabs: [WorkspaceTab] = [.diary, .chat, .triage, .tasks, .projects, .people, .institutions,
                                     .meetings, .documents, .images, .tags, .timesheet, .content]
         for tab in tabs {
             let token = WorkspaceTabCoding.token(forCategoryTab: tab)
@@ -15,6 +15,14 @@ struct WorkspaceSessionTests {
         }
         #expect(WorkspaceTabCoding.token(forCategoryTab: .chat) == "chat")
         #expect(WorkspaceTabCoding.token(forCategoryTab: .triage) == "triage")
+    }
+
+    /// Migration: the board is a panel on Tasks now, but sessions saved while it was a tab still hold
+    /// a "board" token. It must resolve to Tasks — returning nil would silently drop the tab at restore.
+    @Test func legacyBoardToken_migratesToTasks() {
+        #expect(WorkspaceTabCoding.categoryTab(forToken: "board") == .tasks)
+        // ...and nothing writes that token any more.
+        #expect(WorkspaceTabCoding.token(forCategoryTab: .tasks) == "tasks")
     }
 
     @Test func categoryToken_nilForUnknownToken() {

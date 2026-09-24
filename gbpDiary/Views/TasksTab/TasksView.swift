@@ -21,6 +21,11 @@ struct TasksView: View {
     // Tasks selected but hidden by the current filter — restored to `selection` if the filter reverts.
     @State private var stashedSelection: Set<UUID> = []
     @State private var confirmingBulkDelete = false
+    /// True when the width rule closed the panel, so it can reopen when there is room again — but only
+    /// if the user didn't close it themselves.
+    @State private var autoHidden = false
+    /// Last known window width, from WindowWidthReader — drives both auto-hide and the panel's width.
+    @State private var windowWidth: CGFloat = 0
 
     private var taskFilters: [PickerFilter<Task>] {
         let status = TaskStatus.allCases.map { s in
@@ -115,6 +120,13 @@ struct TasksView: View {
 
     private var rows: [TaskRow] { hierarchyRows.map(\.item) }
 
+    /// Three lanes want ~560–780pt (measured). Give the panel what is left after the sidebar and a
+    /// readable table, clamped to that range, so a narrow window shrinks the panel before the table.
+    private var boardPanelWidth: CGFloat {
+        let availableForPanel = windowWidth - 200 - 420   // sidebar, then a usable table
+        return min(780, max(560, availableForPanel))
+    }
+
     // The Inbox: open, top-level tasks awaiting Review, oldest first (clear the backlog).
     private var triageTasks: [Task] {
         allTasks
@@ -166,16 +178,41 @@ struct TasksView: View {
 
     var body: some View {
         @Bindable var filter = filterState
-        return VStack(spacing: 0) {
-            viewModePicker
-            Divider()
-            switch filter.viewMode {
-            case .reviewed:   reviewedPane
-            case .triage:     triagePane
-            case .sideBySide: sideBySidePane
+        // Laid out by hand rather than with `.inspector()`: the inspector draws a translucent chrome
+        // band over the top of the page (it presents inside WorkspaceView's NavigationSplitView detail),
+        // which covered the view-mode buttons. A plain HStack negotiates width with nobody.
+        return HStack(spacing: 0) {
+            VStack(spacing: 0) {
+                viewModePicker
+                Divider()
+                switch filter.viewMode {
+                case .reviewed:   reviewedPane
+                case .triage:     triagePane
+                case .sideBySide: sideBySidePane
+                }
+            }
+            .frame(minWidth: 360, maxWidth: .infinity)
+            .background(AppTheme.background)
+
+            if workspace.active.boardPanelShown {
+                Divider()
+                BoardPanel()
+                    .frame(width: boardPanelWidth)
             }
         }
-        .background(AppTheme.background)
+        // Auto-hide keys off the WINDOW width, never the content column: hiding the panel widens the
+        // content, which would satisfy the show condition again and oscillate. Hysteresis keeps the two
+        // conditions from chasing each other, and the write is deferred out of the update pass.
+        .background(WindowWidthReader { width in
+            windowWidth = width
+            if width < 1150, workspace.active.boardPanelShown {
+                workspace.active.boardPanelShown = false
+                autoHidden = true
+            } else if width > 1250, autoHidden {
+                workspace.active.boardPanelShown = true
+                autoHidden = false
+            }
+        })
         .toolbar {
             ToolbarItem {
                 Button { showingAddTask = true } label: {
@@ -223,6 +260,17 @@ struct TasksView: View {
                     .font(.caption).foregroundStyle(AppTheme.accent)
             }
             Spacer()
+            Button {
+                autoHidden = false          // an explicit choice outranks the width rule
+                workspace.active.boardPanelShown.toggle()
+            } label: {
+                Label("Board", systemImage: "rectangle.split.3x1")
+                    .labelStyle(.titleAndIcon)
+                    .font(.caption)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(workspace.active.boardPanelShown ? AppTheme.accent : AppTheme.mutedText)
+            .help("Show the planning board beside the table")
         }
         .padding(.horizontal).padding(.vertical, 6)
     }

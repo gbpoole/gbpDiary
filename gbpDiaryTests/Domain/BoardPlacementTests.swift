@@ -1,3 +1,19 @@
+    /// Standing tasks ARE planned now: perpetual work such as "Triage Emails" belongs in a day. Since
+    /// it never completes, it leaves a lane only by being removed.
+    @Test func standingTaskCanBePlaced() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let task = Task(summary: "Triage Emails")
+        context.insert(task)
+        task.makeStanding()
+        task.place(on: .today)
+        try context.save()
+
+        #expect(task.planHorizon == .today, "makeStanding must not strip a horizon either")
+        let buckets = BoardPartition.partition([task], isOpen: \.isOpen,
+                                               horizon: \.planHorizon, sortOrder: \.planSortOrder)
+        #expect(buckets.today.map(\.id) == [task.id])
+    }
 import Foundation
 import SwiftData
 import Testing
@@ -35,27 +51,9 @@ struct BoardPlacementTests {
         #expect(task.planHorizon == .today)
         #expect(!task.needsTriage)
 
-        let buckets = BoardPartition.partition([task], needsTriage: \.needsTriage,
-                                               isStanding: \.isStanding, isOpen: \.isOpen,
+        let buckets = BoardPartition.partition([task], isOpen: \.isOpen,
                                                horizon: \.planHorizon, sortOrder: \.planSortOrder)
-        #expect(buckets.inbox.isEmpty)
         #expect(buckets.today.map(\.id) == [task.id])
     }
 
-    /// Standing tasks are never planned, so placing must not sneak one onto the board.
-    @Test func standingTaskStaysOffTheBoard() throws {
-        let container = try TestModelContainer.make()
-        let context = ModelContext(container)
-        let task = Task(summary: "Keep inbox at zero")
-        context.insert(task)
-        task.makeStanding()
-        task.place(on: .today)            // no-op for standing tasks
-        try context.save()
-
-        let buckets = BoardPartition.partition([task], needsTriage: \.needsTriage,
-                                               isStanding: \.isStanding, isOpen: \.isOpen,
-                                               horizon: \.planHorizon, sortOrder: \.planSortOrder)
-        #expect(buckets.today.isEmpty)
-        #expect(buckets.inbox.isEmpty)
-    }
 }

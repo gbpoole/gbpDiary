@@ -115,14 +115,15 @@ struct TaskComputedPropertyTests {
         #expect(!Task(summary: "t").isStanding)
     }
 
-    @Test func makeStanding_setsFlagClearsTriageAndHorizon() {
+    @Test func makeStanding_setsFlagAndClearsTriage_keepingAnyHorizon() {
         let task = Task(summary: "review email")
         task.planHorizon = .today
         #expect(task.needsTriage)          // new tasks start needing triage
         task.makeStanding()
         #expect(task.isStanding)
         #expect(!task.needsTriage)         // standing tasks are already-reviewed
-        #expect(task.planHorizon == nil)   // never on the board
+        // Standing work is placeable, so making a planned task standing must not drop it off the board.
+        #expect(task.planHorizon == .today)
     }
 
     @Test func planHorizon_roundTripsThroughRaw() {
@@ -135,13 +136,16 @@ struct TaskComputedPropertyTests {
         #expect(task.planHorizonRaw == nil)
     }
 
-    @Test func place_setsHorizon_butStandingTasksIgnoreIt() {
+    /// Standing tasks are placeable: "Triage Emails" is perpetual work you still plan into a day.
+    @Test func place_setsHorizon_includingForStandingTasks() {
         let task = Task(summary: "t")
         task.place(on: .maybe)
         #expect(task.planHorizon == .maybe)
         task.makeStanding()
         task.place(on: .today)
-        #expect(task.planHorizon == nil)   // standing tasks never go on the board
+        #expect(task.planHorizon == .today)
+        task.place(on: nil)                // and removal clears it
+        #expect(task.planHorizon == nil)
     }
 
     @Test func isOverdue_exemptForStandingTasks() {

@@ -15,21 +15,20 @@ struct BoardPartitionTests {
     private func partition(_ items: [T]) -> BoardBuckets<T> {
         BoardPartition.partition(
             items,
-            needsTriage: { $0.needsTriage },
-            isStanding: { $0.isStanding },
             isOpen: { $0.isOpen },
             horizon: { $0.horizon },
             sortOrder: { $0.order }
         )
     }
 
-    @Test func inboxIsNeedsTriage_regardlessOfHorizon() {
+    /// No Inbox lane any more: a task still needing triage is placed like anything else, because
+    /// placing it IS the triage act (the Tasks table reveals untriaged work with its own filter).
+    @Test func needsTriageTask_landsInItsHorizonLane() {
         let b = partition([
-            T(name: "new", needsTriage: true, horizon: .today),   // triage wins over stale horizon
+            T(name: "new", needsTriage: true, horizon: .today),
             T(name: "t", horizon: .today),
         ])
-        #expect(b.inbox.map(\.name) == ["new"])
-        #expect(b.today.map(\.name) == ["t"])
+        #expect(b.today.map(\.name) == ["new", "t"])
     }
 
     @Test func horizonsRouteToTheirSections() {
@@ -45,16 +44,17 @@ struct BoardPartitionTests {
 
     @Test func reviewedWithNoHorizon_isOffBoard() {
         let b = partition([T(name: "backlog", horizon: nil)])
-        #expect(b.inbox.isEmpty && b.today.isEmpty && b.thisWeek.isEmpty && b.maybe.isEmpty)
+        #expect(b.today.isEmpty && b.thisWeek.isEmpty && b.maybe.isEmpty)
     }
 
-    @Test func standingAndClosed_areExcluded() {
+    /// Closed tasks are excluded; standing tasks are NOT — perpetual work is legitimately planned.
+    @Test func closedExcluded_standingIncluded() {
         let b = partition([
             T(name: "standing", isStanding: true, horizon: .today),
             T(name: "done", isOpen: false, horizon: .today),
             T(name: "keep", horizon: .today),
         ])
-        #expect(b.today.map(\.name) == ["keep"])
+        #expect(b.today.map(\.name) == ["standing", "keep"])
     }
 
     @Test func sectionsSortByPlanSortOrder_stableOnTies() {
@@ -68,6 +68,6 @@ struct BoardPartitionTests {
 
     @Test func empty_returnsEmptyBuckets() {
         let b = partition([])
-        #expect(b.inbox.isEmpty && b.today.isEmpty && b.thisWeek.isEmpty && b.maybe.isEmpty)
+        #expect(b.today.isEmpty && b.thisWeek.isEmpty && b.maybe.isEmpty)
     }
 }

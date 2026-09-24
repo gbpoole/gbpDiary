@@ -294,7 +294,6 @@ struct WorkspaceView: View {
         case .chat:         ChatView(state: workspace.active.chatState)
         case .triage:       EmailTriageView()
         case .tasks:        TasksView()
-        case .board:        BoardView()
         case .projects:     ProjectsView()
         case .people:       PeopleView()
         case .institutions: InstitutionsView()

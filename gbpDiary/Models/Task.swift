@@ -168,13 +168,16 @@ extension Task {
     func makeStanding() {
         isStanding = true
         needsTriage = false
-        planHorizonRaw = nil
+        // Keeps any planHorizon: standing work is placeable, so making a planned task standing
+        // must not silently drop it off the board.
         updatedAt = Date()
     }
 
-    /// Place (or clear) the task on the planning board. Standing tasks never go on the board.
+    /// Place (or clear) the task on the planning board.
+    ///
+    /// Standing tasks ARE placeable: perpetual work such as "Triage Emails" is legitimately planned
+    /// into a day. Because such a task never completes, it leaves a lane only by being removed.
     func place(on horizon: PlanHorizon?) {
-        guard !isStanding else { return }
         planHorizon = horizon   // setter bumps updatedAt
     }
 
