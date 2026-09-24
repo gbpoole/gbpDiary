@@ -61,7 +61,10 @@ struct TasksView: View {
             PickerFilter<Task>(id: "flag.blocked", label: "Blocked", chipColor: AppTheme.destructive, group: "Flags") { $0.isBlocked },
             PickerFilter<Task>(id: "flag.unblocked", label: "Unblocked", chipColor: AppTheme.completed, group: "Flags") { $0.isOpen && !$0.isBlocked },
             PickerFilter<Task>(id: "flag.waiting", label: "Waiting", chipColor: AppTheme.mutedText, group: "Flags") { $0.isWaiting },
-            PickerFilter<Task>(id: "flag.standing", label: "Standing", chipColor: AppTheme.duration, group: "Flags") { $0.isStanding }
+            PickerFilter<Task>(id: "flag.standing", label: "Standing", chipColor: AppTheme.duration, group: "Flags") { $0.isStanding },
+            // Reveals the Inbox inside the Reviewed table — the route a fresh capture takes to the
+            // planning board, since placing it there marks it reviewed.
+            PickerFilter<Task>(id: "flag.needsTriage", label: "Needs triage", chipColor: AppTheme.followUp, group: "Flags") { $0.isOpen && $0.needsTriage }
         ]
         return state + status + priorities + flags + projects + assignees + mine + source
     }
@@ -80,13 +83,15 @@ struct TasksView: View {
         let query = filterState.searchText.trimmingCharacters(in: .whitespaces)
         let showWaiting = filterState.activeFilterIds.contains("flag.waiting")
         let showStanding = filterState.activeFilterIds.contains("flag.standing")
+        let showNeedsTriage = filterState.activeFilterIds.contains("flag.needsTriage")
         return allTasks.filter { task in
             if pendingStatusIds.contains(task.id) { return true }
             // Untriaged / waiting / standing tasks are each hidden until their own control reveals
             // them — see TaskTableVisibility for why.
             if TaskTableVisibility.isHidden(isOpen: task.isOpen, needsTriage: task.needsTriage,
                                             isWaiting: task.isWaiting, isStanding: task.isStanding,
-                                            showWaiting: showWaiting, showStanding: showStanding) {
+                                            showWaiting: showWaiting, showStanding: showStanding,
+                                            showNeedsTriage: showNeedsTriage) {
                 return false
             }
             guard matched.contains(task.id) else { return false }
