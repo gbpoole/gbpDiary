@@ -230,18 +230,16 @@ struct ChatLabState {
 // One browsing pane: a back/forward history of destinations, like a browser tab. Sidebar
 // selection and in-place drilldowns navigate within a single tab; only explicit "open in new
 // tab" actions (e.g. meeting minutes) create another tab.
-// The Tasks page's three presentations: the normal (Reviewed) table, the inbox Triage list, and both
-// side by side. Session-only per tab (not persisted).
+// The Tasks page's two presentations: the normal (Reviewed) table and the inbox Triage list.
+// Session-only per tab (not persisted), so dropping a case needs no migration.
 enum TaskViewMode: String, CaseIterable {
     case reviewed
     case triage
-    case sideBySide
 
     var label: String {
         switch self {
-        case .reviewed:    "Reviewed"
-        case .triage:      "Triage"
-        case .sideBySide:  "Side-by-side"
+        case .reviewed: "Reviewed"
+        case .triage:   "Triage"
         }
     }
 }

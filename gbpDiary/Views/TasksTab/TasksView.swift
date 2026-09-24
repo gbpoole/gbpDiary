@@ -229,7 +229,6 @@ struct TasksView: View {
                 switch filter.viewMode {
                 case .reviewed:   reviewedPane
                 case .triage:     triagePane
-                case .sideBySide: sideBySidePane
                 }
             }
             .frame(minWidth: 360, maxWidth: .infinity)
@@ -296,11 +295,8 @@ struct TasksView: View {
             .pickerStyle(.segmented)
             .labelsHidden()
             .fixedSize()
-            if !triageTasks.isEmpty {
-                Text("\(triageTasks.count) to review")
-                    .font(.caption).foregroundStyle(AppTheme.accent)
-            }
-            Spacer()
+            // Sits with Reviewed/Triage rather than across the page: it is a separate toggle, not a
+            // third mode (the board shows alongside whichever list you are in).
             Button {
                 autoHidden = false          // an explicit choice outranks the width rule
                 workspace.active.boardPanelShown.toggle()
@@ -312,6 +308,11 @@ struct TasksView: View {
             .buttonStyle(.plain)
             .foregroundStyle(workspace.active.boardPanelShown ? AppTheme.accent : AppTheme.mutedText)
             .help("Show the planning board beside the table")
+            if !triageTasks.isEmpty {
+                Text("\(triageTasks.count) to review")
+                    .font(.caption).foregroundStyle(AppTheme.accent)
+            }
+            Spacer()
         }
         .padding(.horizontal).padding(.vertical, 6)
     }
@@ -346,17 +347,6 @@ struct TasksView: View {
             }
         }
         .background(AppTheme.background)
-    }
-
-    private var sideBySidePane: some View {
-        #if os(macOS)
-        HSplitView {
-            reviewedPane.frame(minWidth: 380)
-            triagePane.frame(minWidth: 320, idealWidth: 440)
-        }
-        #else
-        triagePane
-        #endif
     }
 
     private var bulkBar: some View {
