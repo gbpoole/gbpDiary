@@ -26,6 +26,8 @@ struct TasksView: View {
     @State private var autoHidden = false
     /// Last known window width, from WindowWidthReader — drives both auto-hide and the panel's width.
     @State private var windowWidth: CGFloat = 0
+    /// Transient note about tasks a bulk add couldn't place (closed ones).
+    @State private var lastSkippedMessage: String? = nil
 
     private var taskFilters: [PickerFilter<Task>] {
         let status = TaskStatus.allCases.map { s in
@@ -142,6 +144,40 @@ struct TasksView: View {
 
     // Clears the active selection and the stashed (filtered-out) set — acting on the selection ends
     // the retain-and-restore cycle so a later filter change won't resurrect it.
+    /// Place every selected task (and its open subtree) in a lane. Closed tasks can't be planned, so
+    /// they are skipped and reported rather than silently doing nothing.
+    private func bulkPlace(on horizon: PlanHorizon) {
+        let chosen = allTasks.filter { selection.contains($0.id) }
+        let eligible = chosen.filter(\.isOpen)
+        let skipped = chosen.count - eligible.count
+
+        var childrenByParent: [UUID: [UUID]] = [:]
+        for task in allTasks {
+            if let pid = task.parent?.id { childrenByParent[pid, default: []].append(task.id) }
+        }
+        var targets: Set<UUID> = []
+        for task in eligible {
+            targets.formUnion(BoardHierarchy.placementTargets(
+                rootID: task.id, childrenByParent: childrenByParent,
+                isOpen: { id in allTasks.first { $0.id == id }?.isOpen ?? false }))
+        }
+        var nextOrder = BoardPlacement.appendOrder(
+            existingOrders: allTasks.filter { $0.planHorizon == horizon && !targets.contains($0.id) }
+                .map(\.planSortOrder))
+        for member in allTasks where targets.contains(member.id) {
+            let shouldReview = BoardPlacement.shouldReview(needsTriage: member.needsTriage)
+            member.place(on: horizon)
+            member.planSortOrder = nextOrder
+            if shouldReview { member.markReviewed() }
+            member.updatedAt = Date()
+            nextOrder += 1
+        }
+        lastSkippedMessage = skipped > 0
+            ? "\(skipped) completed task\(skipped == 1 ? "" : "s") skipped"
+            : nil
+        workspace.active.boardPanelShown = true   // show where the tasks just went
+    }
+
     private func clearSelection() { selection.removeAll(); stashedSelection.removeAll() }
 
     private func bulkComplete() { for t in selectedTasks { t.markCompleted() }; clearSelection() }
@@ -324,7 +360,20 @@ struct TasksView: View {
             Button("Started") { bulkStarted() }
             Button("To do") { bulkTodo() }
             Button("Cancel") { bulkCancel() }
+            Menu("Add to board") {
+                ForEach(PlanHorizon.allCases, id: \.self) { h in
+                    Button(h.displayName) { bulkPlace(on: h) }
+                }
+            }
             Button("Delete", role: .destructive) { confirmingBulkDelete = true }
+        }
+        .overlay(alignment: .trailing) {
+            // Closed tasks can't be planned, so say so rather than appearing to do nothing.
+            if let skipped = lastSkippedMessage {
+                Text(skipped)
+                    .font(.caption).foregroundStyle(AppTheme.mutedText)
+                    .padding(.trailing, 12)
+            }
         }
     }
 
@@ -339,7 +388,7 @@ struct TasksView: View {
         // Indentation / dimming for a row (context ancestors are dimmed so matches stand out).
         func level(_ row: TaskRow) -> Int { meta[row.id]?.depth ?? 0 }
         func dim(_ row: TaskRow) -> Double { (meta[row.id]?.isMatch ?? true) ? 1 : 0.5 }
-        return Table(hierarchy.map(\.item), selection: $selection, sortOrder: $filter.sortOrder) {
+        return Table(of: TaskRow.self, selection: $selection, sortOrder: $filter.sortOrder) {
             TableColumn("Summary", value: \.summaryKey) { row in
                 HStack(spacing: 4) {
                     if level(row) > 0 {
@@ -434,12 +483,25 @@ struct TasksView: View {
                 }
             }
             .width(min: 60, ideal: 80)
+        } rows: {
+            // Spiked before building on it: a TableRow drag carries the WHOLE selection, including a
+            // non-contiguous one — so dragging into a lane is a first-class way to plan, not just a
+            // single-task shortcut.
+            ForEach(hierarchy.map(\.item)) { row in
+                TableRow(row).draggable(row.task.id.uuidString)
+            }
         }
         .contextMenu(forSelectionType: UUID.self) { ids in
             if ids.count == 1, let t = allTasks.first(where: { $0.id == ids.first }) {
                 Button("Edit…") { editingTask = t }
                 Divider()
             }
+            Menu("Add to board") {
+                ForEach(PlanHorizon.allCases, id: \.self) { h in
+                    Button(h.displayName) { selection = ids; bulkPlace(on: h) }
+                }
+            }
+            Divider()
             Button("Complete") { selection = ids; bulkComplete() }
             Button("To do") { selection = ids; bulkTodo() }
             Button("Cancel") { selection = ids; bulkCancel() }

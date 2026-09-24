@@ -56,11 +56,13 @@ struct BoardPanel: View {
                             .foregroundStyle(AppTheme.mutedText)
                             .padding(.horizontal, 10).padding(.vertical, 6)
                     }
-                    ForEach(tasks) { task in
-                        BoardCard(task: task)
-                            .draggable(task.id.uuidString)
-                            .onTapGesture(count: 2) { workspace.focusOrOpen(.task(task.persistentModelID)) }
-                            .contextMenu { cardMenu(task) }
+                    ForEach(laneRows(tasks), id: \.item.id) { row in
+                        BoardCard(task: row.item, depth: row.depth, isContext: row.isContext)
+                            .draggable(row.item.id.uuidString)
+                            .onTapGesture(count: 2) {
+                                workspace.focusOrOpen(.task(row.item.persistentModelID))
+                            }
+                            .contextMenu { cardMenu(row.item, isContext: row.isContext) }
                     }
                 }
                 .padding(.horizontal, 8).padding(.bottom, 10)
@@ -76,14 +78,36 @@ struct BoardPanel: View {
         }
     }
 
-    @ViewBuilder private func cardMenu(_ task: Task) -> some View {
-        ForEach(PlanHorizon.allCases, id: \.self) { h in
-            if h != task.planHorizon {
-                Button("Move to \(h.displayName)") { place(task, on: h) }
+    @ViewBuilder private func cardMenu(_ task: Task, isContext: Bool) -> some View {
+        if isContext {
+            // A context row is only here to place its children; it holds no horizon of its own.
+            Text("Shown for context")
+        } else {
+            ForEach(PlanHorizon.allCases, id: \.self) { h in
+                if h != task.planHorizon {
+                    Button("Move to \(h.displayName)") { place(task, on: h) }
+                }
             }
+            Divider()
+            Button("Remove from board", role: .destructive) { remove(task) }
         }
-        Divider()
-        Button("Remove from board", role: .destructive) { remove(task) }
+    }
+
+    // MARK: - Layout
+
+    /// The lane's members laid out as nested rows, with the ancestors needed to place them.
+    private func laneRows(_ members: [Task]) -> [BoardRow<Task>] {
+        BoardHierarchy.rows(members: members, all: allTasks, id: \.id,
+                            parentID: { $0.parent?.id },
+                            planSortOrder: \.planSortOrder, treeSortOrder: \.sortOrder)
+    }
+
+    private var childrenByParent: [UUID: [UUID]] {
+        var map: [UUID: [UUID]] = [:]
+        for task in allTasks {
+            if let pid = task.parent?.id { map[pid, default: []].append(task.id) }
+        }
+        return map
     }
 
     // MARK: - Placement
@@ -97,18 +121,33 @@ struct BoardPanel: View {
         return true
     }
 
+    /// Placing (or moving) a task takes its whole open subtree with it, so a breakdown never splits
+    /// across lanes — which is what keeps an ancestor row unambiguous.
     private func place(_ task: Task, on horizon: PlanHorizon) {
-        let existing = allTasks.filter { $0.planHorizon == horizon && $0.id != task.id }
-        let shouldReview = BoardPlacement.shouldReview(needsTriage: task.needsTriage)
-        task.place(on: horizon)
-        task.planSortOrder = BoardPlacement.appendOrder(existingOrders: existing.map(\.planSortOrder))
-        if shouldReview { task.markReviewed() }
-        task.updatedAt = Date()
+        let targets = BoardHierarchy.placementTargets(
+            rootID: task.id, childrenByParent: childrenByParent,
+            isOpen: { id in allTasks.first { $0.id == id }?.isOpen ?? false })
+        var nextOrder = BoardPlacement.appendOrder(
+            existingOrders: allTasks.filter { $0.planHorizon == horizon && !targets.contains($0.id) }
+                .map(\.planSortOrder))
+        for member in allTasks where targets.contains(member.id) {
+            let shouldReview = BoardPlacement.shouldReview(needsTriage: member.needsTriage)
+            member.place(on: horizon)
+            member.planSortOrder = nextOrder
+            if shouldReview { member.markReviewed() }
+            member.updatedAt = Date()
+            nextOrder += 1
+        }
     }
 
+    /// Removal mirrors placement: the row and its descendants leave, siblings and ancestors stay.
     private func remove(_ task: Task) {
-        task.place(on: nil)
-        task.updatedAt = Date()
+        let targets = BoardHierarchy.placementTargets(
+            rootID: task.id, childrenByParent: childrenByParent, isOpen: { _ in true })
+        for member in allTasks where targets.contains(member.id) {
+            member.place(on: nil)
+            member.updatedAt = Date()
+        }
     }
 
     private func clear(_ tasks: [Task]) {
@@ -119,11 +158,19 @@ struct BoardPanel: View {
 // One task on the board: enough to decide, not so much that a lane becomes unreadable.
 private struct BoardCard: View {
     @Bindable var task: Task
+    var depth: Int = 0
+    /// An ancestor shown only to place its children: dimmed, and with no status control to press.
+    var isContext: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                TaskStatusMenu(task: task) { TaskStatusIcon(status: task.status) }
+                if isContext {
+                    Image(systemName: "arrow.turn.down.right")
+                        .font(.system(size: 9)).foregroundStyle(AppTheme.mutedText)
+                } else {
+                    TaskStatusMenu(task: task) { TaskStatusIcon(status: task.status) }
+                }
                 Text(task.summary)
                     .font(AppTheme.bodyFont(size: 12))
                     .foregroundStyle(AppTheme.text)
@@ -148,6 +195,9 @@ private struct BoardCard: View {
         }
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(AppTheme.cardRaised.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
+        .background(AppTheme.cardRaised.opacity(isContext ? 0.15 : 0.35),
+                    in: RoundedRectangle(cornerRadius: 6))
+        .opacity(isContext ? 0.65 : 1)
+        .padding(.leading, CGFloat(depth) * 12)
     }
 }
