@@ -28,6 +28,9 @@ struct TasksView: View {
     @State private var windowWidth: CGFloat = 0
     /// Transient note about tasks a bulk add couldn't place (closed ones).
     @State private var lastSkippedMessage: String? = nil
+    @State private var triageSelection: Set<UUID> = []
+    @State private var triageSkippedMessage: String? = nil
+    @State private var confirmingTriageDelete = false
 
     private var taskFilters: [PickerFilter<Task>] {
         let status = TaskStatus.allCases.map { s in
@@ -266,6 +269,11 @@ struct TasksView: View {
         .sheet(isPresented: $showingAddTask) {
             TaskEditorSheet(task: nil, defaultDate: Date())
         }
+        .alert("Delete \(triageSelection.count) task\(triageSelection.count == 1 ? "" : "s")?",
+               isPresented: $confirmingTriageDelete) {
+            Button("Delete", role: .destructive) { bulkDeleteTriage() }
+            Button("Cancel", role: .cancel) {}
+        } message: { Text("This permanently deletes the selected task\(triageSelection.count == 1 ? "" : "s").") }
         .alert("Delete \(selection.count) task\(selection.count == 1 ? "" : "s")?", isPresented: $confirmingBulkDelete) {
             Button("Delete", role: .destructive) { bulkDelete() }
             Button("Cancel", role: .cancel) {}
@@ -336,17 +344,67 @@ struct TasksView: View {
                                        description: Text("No tasks to review."))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(triageTasks) { task in
-                    TaskTriageRow(task: task, onEdit: { editingTask = task })
-                        .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
+                VStack(spacing: 0) {
+                    triageBulkBar
+                    Divider()
+                    List(triageTasks, selection: $triageSelection) { task in
+                        TaskTriageRow(task: task, onEdit: { editingTask = task })
+                            .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
             }
         }
         .background(AppTheme.background)
+    }
+
+    /// The inbox's own bulk bar. Mark-reviewed honours the same rule as the row button — a task needs
+    /// a project first — and reports what it skipped rather than appearing to do nothing.
+    private var triageBulkBar: some View {
+        BulkActionBar(count: triageSelection.count, onClear: { triageSelection.removeAll() }) {
+            Button("Mark reviewed") { bulkMarkReviewed() }
+            Menu("Add to board") {
+                ForEach(PlanHorizon.allCases, id: \.self) { h in
+                    Button(h.displayName) { selection = triageSelection; bulkPlace(on: h) }
+                }
+            }
+            Button("Cancel") { selectedTriageTasks.forEach { $0.markCancelled() }; triageSelection.removeAll() }
+            Button("Delete", role: .destructive) { confirmingTriageDelete = true }
+        }
+        .overlay(alignment: .trailing) {
+            if let note = triageSkippedMessage {
+                Text(note)
+                    .font(.caption).foregroundStyle(AppTheme.mutedText)
+                    .padding(.trailing, 12)
+            }
+        }
+    }
+
+    private var selectedTriageTasks: [Task] {
+        triageTasks.filter { triageSelection.contains($0.id) }
+    }
+
+    private func bulkMarkReviewed() {
+        let chosen = selectedTriageTasks
+        let eligible = chosen.filter { $0.project != nil }
+        for task in eligible { task.markReviewed() }
+        let skipped = chosen.count - eligible.count
+        triageSkippedMessage = skipped > 0
+            ? "\(skipped) still need\(skipped == 1 ? "s" : "") a project"
+            : nil
+        triageSelection.removeAll()
+    }
+
+    private func bulkDeleteTriage() {
+        for task in selectedTriageTasks {
+            workspace.closeEntity(task.persistentModelID)
+            modelContext.delete(task)
+        }
+        triageSelection.removeAll()
+        triageSkippedMessage = nil
     }
 
     private var bulkBar: some View {

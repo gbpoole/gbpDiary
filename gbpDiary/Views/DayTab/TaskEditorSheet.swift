@@ -34,6 +34,7 @@ struct TaskEditorSheet: View {
     @State private var dueDate: Date?
     @State private var priority: TaskPriority = .none
     @State private var selectedBlockers: [Task] = []
+    @State private var selectedParent: Task?
     @State private var repeatsText = ""
     @State private var waitDate: Date?
     @State private var untilDate: Date?
@@ -58,6 +59,7 @@ struct TaskEditorSheet: View {
                     summarySection
                     if let email = task?.originEmail { fromEmailSection(email) }
                     projectSection
+                    parentSection
                     assigneeSection
                     tagsSection
                     prioritySection
@@ -193,6 +195,36 @@ struct TaskEditorSheet: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+
+    // Making this task a subtask of another. Candidates exclude the task's own subtree, or the tree
+    // would fold into a ring and every walk over it (breakdown, board, roll-up) would loop or lose
+    // tasks — see TaskParenting.
+    private var parentSection: some View {
+        GroupBox("Parent task") {
+            FuzzyPickerField(
+                allItems: parentCandidates,
+                selectedItem: $selectedParent,
+                label: \.summary,
+                chipColor: AppTheme.accent,
+                tapArea: true,
+                emptyLabel: "None — a top-level task"
+            )
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private var parentCandidates: [Task] {
+        guard let editing = task else {
+            // A task being created has no subtree yet, so anything open may parent it.
+            return allTasks.filter(\.isOpen)
+        }
+        var childrenByParent: [UUID: [UUID]] = [:]
+        for t in allTasks {
+            if let pid = t.parent?.id { childrenByParent[pid, default: []].append(t.id) }
+        }
+        let forbidden = TaskParenting.subtree(of: editing.id, childrenByParent: childrenByParent)
+        return allTasks.filter { $0.isOpen && !forbidden.contains($0.id) }
     }
 
     private var projectSection: some View {
@@ -464,6 +496,7 @@ struct TaskEditorSheet: View {
         dueDate = t.dueAt
         priority = t.priority
         selectedBlockers = t.dependsOn
+        selectedParent = t.parent
         repeatsText = t.recurrenceRule ?? ""
         waitDate = t.waitUntil
         untilDate = t.until
@@ -510,6 +543,13 @@ struct TaskEditorSheet: View {
             t.dueAt = dueDate
             t.priorityRaw = priority.rawValue
             t.dependsOn = selectedBlockers
+            if t.parent?.id != selectedParent?.id {
+                t.parent = selectedParent
+                if selectedParent != nil {
+                    t.dayRecord = nil          // container ownership is for root tasks only
+                    t.originMinutes = nil
+                }
+            }
             t.recurrenceRule = RecurrenceRule.parse(repeatsText)?.normalized
             t.waitUntil = waitDate
             t.until = untilDate
@@ -525,6 +565,7 @@ struct TaskEditorSheet: View {
             newTask.dueAt = dueDate
             newTask.priorityRaw = priority.rawValue
             newTask.dependsOn = selectedBlockers
+            newTask.parent = selectedParent
             newTask.recurrenceRule = RecurrenceRule.parse(repeatsText)?.normalized
             newTask.waitUntil = waitDate
             newTask.until = untilDate
