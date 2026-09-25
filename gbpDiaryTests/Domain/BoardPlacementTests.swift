@@ -29,31 +29,25 @@ struct BoardPlacementTests {
         #expect(BoardPlacement.appendOrder(existingOrders: [-3]) == -2)
     }
 
-    @Test func shouldReview_onlyWhenComingFromTheInbox() {
-        #expect(BoardPlacement.shouldReview(needsTriage: true))
-        #expect(!BoardPlacement.shouldReview(needsTriage: false))
+    /// Triage is a gate, not something planning does for you: inbox work must be filed first.
+    @Test func canPlace_requiresAnOpenTriagedTask() {
+        #expect(BoardPlacement.canPlace(isOpen: true, needsTriage: false))
+        #expect(!BoardPlacement.canPlace(isOpen: true, needsTriage: true))    // still in the inbox
+        #expect(!BoardPlacement.canPlace(isOpen: false, needsTriage: false))  // finished
+        #expect(!BoardPlacement.canPlace(isOpen: false, needsTriage: true))
     }
 
-    /// Placing an inbox task plans it and reviews it in one move, so it leaves the Inbox column.
-    @Test func placingAnInboxTask_reviewsItAndLeavesTheInbox() throws {
+    /// Placing no longer reviews anything — it used to, and that rule was deliberately reversed.
+    @Test func placingDoesNotReviewATask() throws {
         let container = try TestModelContainer.make()
         let context = ModelContext(container)
         let task = Task(summary: "Write changelog")
         context.insert(task)
         #expect(task.needsTriage)
 
-        if BoardPlacement.shouldReview(needsTriage: task.needsTriage) {
-            task.place(on: .today)
-            task.markReviewed()
-        }
+        task.place(on: .today)
         try context.save()
-
-        #expect(task.planHorizon == .today)
-        #expect(!task.needsTriage)
-
-        let buckets = BoardPartition.partition([task], isOpen: \.isOpen,
-                                               horizon: \.planHorizon, sortOrder: \.planSortOrder)
-        #expect(buckets.today.map(\.id) == [task.id])
+        #expect(task.needsTriage, "planning must not file a task for you")
     }
 
 }

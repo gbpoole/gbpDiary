@@ -21,7 +21,8 @@ struct BoardPanel: View {
     var body: some View {
         let b = buckets
         HStack(alignment: .top, spacing: 0) {
-            lane("Today", systemImage: "sun.max", tint: AppTheme.today, tasks: b.today, horizon: .today)
+            lane("Today", systemImage: "sun.max", tint: AppTheme.today, tasks: b.today,
+                 horizon: .today, derived: dueGroup)
             Divider()
             lane("This Week", systemImage: "calendar", tint: AppTheme.accent, tasks: b.thisWeek, horizon: .thisWeek)
             Divider()
@@ -31,13 +32,23 @@ struct BoardPanel: View {
         .background(AppTheme.background)
     }
 
+    /// Tasks that are due today or overdue but unplanned. Derived every render — nothing is written,
+    /// so `planHorizon` stays purely manual (see BoardDueGroup).
+    private var dueGroup: [Task] {
+        BoardDueGroup.members(allTasks, inputs: {
+            .init(isOpen: $0.isOpen, needsTriage: $0.needsTriage, isWaiting: $0.isWaiting,
+                  isStanding: $0.isStanding, hasHorizon: $0.planHorizon != nil, dueAt: $0.dueAt)
+        })
+    }
+
     private func lane(_ title: String, systemImage: String, tint: Color,
-                      tasks: [Task], horizon: PlanHorizon) -> some View {
+                      tasks: [Task], horizon: PlanHorizon,
+                      derived: [Task] = []) -> some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Image(systemName: systemImage).font(.caption).foregroundStyle(tint)
                 Text(title).font(AppTheme.bodyFont(size: 12).weight(.semibold)).foregroundStyle(AppTheme.text)
-                Text("\(tasks.count)")
+                Text("\(tasks.count + derived.count)")
                     .font(AppTheme.bodyFont(size: 11)).foregroundStyle(AppTheme.mutedText).monospacedDigit()
                 Spacer()
             }
@@ -50,7 +61,22 @@ struct BoardPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
-                    if tasks.isEmpty {
+                    if !derived.isEmpty {
+                        Text("Due & overdue")
+                            .font(AppTheme.bodyFont(size: 10).weight(.semibold))
+                            .foregroundStyle(AppTheme.mutedText)
+                            .padding(.horizontal, 2).padding(.top, 2)
+                        ForEach(laneRows(derived), id: \.item.id) { row in
+                            BoardCard(task: row.item, depth: row.depth, isContext: row.isContext,
+                                      isDerived: !row.isContext)
+                                .onTapGesture(count: 2) {
+                                    workspace.focusOrOpen(.task(row.item.persistentModelID))
+                                }
+                                .contextMenu { derivedMenu(row.item, isContext: row.isContext) }
+                        }
+                        Divider().padding(.vertical, 4)
+                    }
+                    if tasks.isEmpty && derived.isEmpty {
                         Text("Drop tasks here.")
                             .font(AppTheme.bodyFont(size: 11))
                             .foregroundStyle(AppTheme.mutedText)
@@ -75,6 +101,16 @@ struct BoardPanel: View {
             place(ids: items, on: horizon)
         } isTargeted: { targeted in
             dropTarget = targeted ? horizon : (dropTarget == horizon ? nil : dropTarget)
+        }
+    }
+
+    /// Derived cards hold no horizon, so there is nothing to move or remove — the one action is to
+    /// turn the date-driven suggestion into a real plan.
+    @ViewBuilder private func derivedMenu(_ task: Task, isContext: Bool) -> some View {
+        if isContext {
+            Text("Shown for context")
+        } else {
+            Button("Plan it") { place(task, on: .today) }
         }
     }
 
@@ -131,10 +167,10 @@ struct BoardPanel: View {
             existingOrders: allTasks.filter { $0.planHorizon == horizon && !targets.contains($0.id) }
                 .map(\.planSortOrder))
         for member in allTasks where targets.contains(member.id) {
-            let shouldReview = BoardPlacement.shouldReview(needsTriage: member.needsTriage)
+            // Triage is a gate: inbox work must be filed before it can be planned.
+            guard BoardPlacement.canPlace(isOpen: member.isOpen, needsTriage: member.needsTriage) else { continue }
             member.place(on: horizon)
             member.planSortOrder = nextOrder
-            if shouldReview { member.markReviewed() }
             member.updatedAt = Date()
             nextOrder += 1
         }
@@ -161,6 +197,8 @@ private struct BoardCard: View {
     var depth: Int = 0
     /// An ancestor shown only to place its children: dimmed, and with no status control to press.
     var isContext: Bool = false
+    /// A date-driven suggestion rather than something you planned: accented, and not draggable.
+    var isDerived: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -197,6 +235,16 @@ private struct BoardCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(AppTheme.cardRaised.opacity(isContext ? 0.15 : 0.35),
                     in: RoundedRectangle(cornerRadius: 6))
+        .overlay(alignment: .leading) {
+            // A stripe in the due colour marks a card you cannot drag, so it doesn't look like the
+            // planned cards below it.
+            if isDerived {
+                Rectangle()
+                    .fill(task.isOverdue ? AppTheme.destructive : AppTheme.followUp)
+                    .frame(width: 3)
+                    .clipShape(RoundedRectangle(cornerRadius: 2))
+            }
+        }
         .opacity(isContext ? 0.65 : 1)
         .padding(.leading, CGFloat(depth) * 12)
     }

@@ -115,13 +115,17 @@ struct TaskComputedPropertyTests {
         #expect(!Task(summary: "t").isStanding)
     }
 
-    @Test func makeStanding_setsFlagAndClearsTriage_keepingAnyHorizon() {
+    @Test func makeStanding_setsFlagClearsTriageAndDueDate_keepingAnyHorizon() {
         let task = Task(summary: "review email")
         task.planHorizon = .today
+        task.dueAt = FixedDates.reference
         #expect(task.needsTriage)          // new tasks start needing triage
         task.makeStanding()
         #expect(task.isStanding)
         #expect(!task.needsTriage)         // standing tasks are already-reviewed
+        // Perpetual work has no deadline. It also can't be left behind: isOverdue is exempt for
+        // standing tasks but isDueToday is not, so a lingering date would read as "due today" for ever.
+        #expect(task.dueAt == nil)
         // Standing work is placeable, so making a planned task standing must not drop it off the board.
         #expect(task.planHorizon == .today)
     }

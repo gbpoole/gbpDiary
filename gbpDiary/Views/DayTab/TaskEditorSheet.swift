@@ -393,7 +393,21 @@ struct TaskEditorSheet: View {
         }
     }
 
-    private var dueSection: some View {
+    @ViewBuilder private var dueSection: some View {
+        if task?.isStanding == true {
+            // Perpetual work has no deadline (makeStanding clears any due date), so offering the field
+            // would only invite setting one that is then silently dropped.
+            GroupBox("Due") {
+                Text("Standing tasks have no due date.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        } else {
+            dueEditor
+        }
+    }
+
+    private var dueEditor: some View {
         GroupBox("Due") {
             VStack(alignment: .leading, spacing: 6) {
                 Toggle("Has a due date", isOn: Binding(

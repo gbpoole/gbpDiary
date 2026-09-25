@@ -168,6 +168,10 @@ extension Task {
     func makeStanding() {
         isStanding = true
         needsTriage = false
+        // Perpetual work has no deadline, so a standing task holds no due date. Besides being
+        // meaningless, a lingering one would leak into date-driven views: `isOverdue` is exempt for
+        // standing tasks but `isDueToday` is not, so it would surface as "due today" for ever.
+        dueAt = nil
         // Keeps any planHorizon: standing work is placeable, so making a planned task standing
         // must not silently drop it off the board.
         updatedAt = Date()

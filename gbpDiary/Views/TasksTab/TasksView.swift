@@ -156,8 +156,9 @@ struct TasksView: View {
     /// they are skipped and reported rather than silently doing nothing.
     private func bulkPlace(on horizon: PlanHorizon) {
         let chosen = allTasks.filter { selection.contains($0.id) }
-        let eligible = chosen.filter(\.isOpen)
-        let skipped = chosen.count - eligible.count
+        let eligible = chosen.filter { BoardPlacement.canPlace(isOpen: $0.isOpen, needsTriage: $0.needsTriage) }
+        let closed = chosen.filter { !$0.isOpen }.count
+        let untriaged = chosen.filter { $0.isOpen && $0.needsTriage }.count
 
         var childrenByParent: [UUID: [UUID]] = [:]
         for task in allTasks {
@@ -173,16 +174,17 @@ struct TasksView: View {
             existingOrders: allTasks.filter { $0.planHorizon == horizon && !targets.contains($0.id) }
                 .map(\.planSortOrder))
         for member in allTasks where targets.contains(member.id) {
-            let shouldReview = BoardPlacement.shouldReview(needsTriage: member.needsTriage)
+            guard BoardPlacement.canPlace(isOpen: member.isOpen, needsTriage: member.needsTriage) else { continue }
             member.place(on: horizon)
             member.planSortOrder = nextOrder
-            if shouldReview { member.markReviewed() }
             member.updatedAt = Date()
             nextOrder += 1
         }
-        lastSkippedMessage = skipped > 0
-            ? "\(skipped) completed task\(skipped == 1 ? "" : "s") skipped"
-            : nil
+        // Say which rule skipped what: "needs triage" is actionable, "completed" is not.
+        var notes: [String] = []
+        if untriaged > 0 { notes.append("\(untriaged) need\(untriaged == 1 ? "s" : "") triage") }
+        if closed > 0 { notes.append("\(closed) completed") }
+        lastSkippedMessage = notes.isEmpty ? nil : notes.joined(separator: ", ") + " skipped"
         workspace.active.boardPanelShown = true   // show where the tasks just went
     }
 
@@ -347,11 +349,19 @@ struct TasksView: View {
                 VStack(spacing: 0) {
                     triageBulkBar
                     Divider()
-                    List(triageTasks, selection: $triageSelection) { task in
-                        TaskTriageRow(task: task, onEdit: { editingTask = task })
-                            .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
+                    List(selection: $triageSelection) {
+                        // Overdue captures can't reach the board (triage is a gate), so this is the
+                        // only place they surface. FIFO survives within the backlog below.
+                        if !triageDueTasks.isEmpty {
+                            Section("Due & overdue") {
+                                ForEach(triageDueTasks) { task in triageRow(task) }
+                            }
+                            Section("Inbox") {
+                                ForEach(triageBacklogTasks) { task in triageRow(task) }
+                            }
+                        } else {
+                            ForEach(triageTasks) { task in triageRow(task) }
+                        }
                     }
                     .listStyle(.plain)
                     .scrollContentBackground(.hidden)
@@ -366,11 +376,6 @@ struct TasksView: View {
     private var triageBulkBar: some View {
         BulkActionBar(count: triageSelection.count, onClear: { triageSelection.removeAll() }) {
             Button("Mark reviewed") { bulkMarkReviewed() }
-            Menu("Add to board") {
-                ForEach(PlanHorizon.allCases, id: \.self) { h in
-                    Button(h.displayName) { selection = triageSelection; bulkPlace(on: h) }
-                }
-            }
             Button("Cancel") { selectedTriageTasks.forEach { $0.markCancelled() }; triageSelection.removeAll() }
             Button("Delete", role: .destructive) { confirmingTriageDelete = true }
         }
@@ -381,6 +386,28 @@ struct TasksView: View {
                     .padding(.trailing, 12)
             }
         }
+    }
+
+    @ViewBuilder private func triageRow(_ task: Task) -> some View {
+        TaskTriageRow(task: task, onEdit: { editingTask = task })
+            .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 2, trailing: 0))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+    }
+
+    /// Inbox tasks that are already due or overdue, most overdue first. Waiting and standing work is
+    /// excluded by the same rule the board uses.
+    private var triageDueTasks: [Task] {
+        BoardDueGroup.members(triageTasks, inputs: {
+            .init(isOpen: $0.isOpen, needsTriage: false,   // these ARE the inbox; triage isn't the filter here
+                  isWaiting: $0.isWaiting, isStanding: $0.isStanding,
+                  hasHorizon: false, dueAt: $0.dueAt)
+        })
+    }
+
+    private var triageBacklogTasks: [Task] {
+        let due = Set(triageDueTasks.map(\.id))
+        return triageTasks.filter { !due.contains($0.id) }
     }
 
     private var selectedTriageTasks: [Task] {
