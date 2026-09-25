@@ -19,6 +19,10 @@ struct BoardPanel: View {
     /// Set the moment a card drag starts, so TasksView can reveal its remove target. Cleared on
     /// mouse-up by BoardDragMonitor — SwiftUI reports no drag end.
     @Binding var isDragging: Bool
+    /// Board fills the detail area, hiding the task table. Toggled by the chevron in the first lane
+    /// header — the control has to live HERE, because in full width the table (and the Board toggle
+    /// beside Reviewed/Triage) is collapsed and could not bring you back.
+    @Binding var isFullWidth: Bool
 
     private var buckets: BoardBuckets<Task> {
         BoardPartition.partition(allTasks, isOpen: \.isOpen,
@@ -54,6 +58,19 @@ struct BoardPanel: View {
         let tint = horizon.tint
         return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
+                if horizon == .today {
+                    Button {
+                        isFullWidth.toggle()
+                    } label: {
+                        Image(systemName: isFullWidth
+                              ? "arrow.right.and.line.vertical.and.arrow.left"
+                              : "arrow.left.and.line.vertical.and.arrow.right")
+                            .font(.system(size: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(AppTheme.mutedText)
+                    .help(isFullWidth ? "Show the task list again (Esc)" : "Expand the board to full width")
+                }
                 Image(systemName: systemImage).font(.caption).foregroundStyle(tint)
                 Text(title).font(AppTheme.bodyFont(size: 12).weight(.semibold)).foregroundStyle(AppTheme.text)
                 Text("\(tasks.count + derived.count)")

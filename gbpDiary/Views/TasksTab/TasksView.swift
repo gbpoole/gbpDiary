@@ -139,6 +139,11 @@ struct TasksView: View {
 
     private var rows: [TaskRow] { hierarchyRows.map(\.item) }
 
+    private var fullWidthBinding: Binding<Bool> {
+        Binding(get: { workspace.active.boardFullWidth },
+                set: { workspace.active.boardFullWidth = $0 })
+    }
+
     /// Three lanes want ~560–780pt (measured). Give the panel what is left after the sidebar and a
     /// readable table, clamped to that range, so a narrow window shrinks the panel before the table.
     private var boardPanelWidth: CGFloat {
@@ -221,6 +226,7 @@ struct TasksView: View {
             }
             .foregroundStyle(unplanTargeted ? AppTheme.destructive : AppTheme.mutedText)
             .shadow(radius: 8)
+            .padding(20)
             .dropDestination(for: String.self) { payloads, _ in
                 unplan(BoardDragPayload.decode(payloads))
             } isTargeted: { unplanTargeted = $0 }
@@ -297,34 +303,43 @@ struct TasksView: View {
         // Laid out by hand rather than with `.inspector()`: the inspector draws a translucent chrome
         // band over the top of the page (it presents inside WorkspaceView's NavigationSplitView detail),
         // which covered the view-mode buttons. A plain HStack negotiates width with nobody.
+        let full = workspace.active.boardPanelShown && workspace.active.boardFullWidth
         return HStack(spacing: 0) {
-            VStack(spacing: 0) {
-                viewModePicker
-                Divider()
-                switch filter.viewMode {
-                case .reviewed:   reviewedPane
-                case .triage:     triagePane
+            if !full {
+                VStack(spacing: 0) {
+                    viewModePicker
+                    Divider()
+                    switch filter.viewMode {
+                    case .reviewed:   reviewedPane
+                    case .triage:     triagePane
+                    }
                 }
+                .frame(minWidth: 360, maxWidth: .infinity)
+                .background(AppTheme.background)
             }
-            .frame(minWidth: 360, maxWidth: .infinity)
-            .background(AppTheme.background)
-            .overlay { removeDropTarget }
             // NOTE: deliberately NOT a drop destination. The table's own rows drag `String`, so
             // accepting drops here made a row-drag enter its own destination and wedge AppKit in a
             // dragging-update loop — an unrecoverable stuck drag. Removal by drag lives on
             // BoardPanel's remove strip, which contains no drag sources.
 
             if workspace.active.boardPanelShown {
-                Divider()
-                BoardPanel(selection: $boardSelection, isDragging: $boardDragging)
-                    .frame(width: boardPanelWidth)
+                if !full { Divider() }
+                BoardPanel(selection: $boardSelection, isDragging: $boardDragging,
+                           isFullWidth: fullWidthBinding)
+                    .frame(maxWidth: full ? .infinity : boardPanelWidth)
             }
         }
+        // Anchored to the detail area, not to either pane, so it lands in the same physical place in
+        // split and full modes. An overlay is painted on top rather than being an ancestor of the
+        // cards, so it cannot produce the dragging-update loop that once wedged the pointer.
+        .overlay(alignment: .bottomTrailing) { removeDropTarget }
         // Auto-hide keys off the WINDOW width, never the content column: hiding the panel widens the
         // content, which would satisfy the show condition again and oscillate. Hysteresis keeps the two
         // conditions from chasing each other, and the write is deferred out of the update pass.
         .background(WindowWidthReader { width in
             windowWidth = width
+            // Full width has no table to protect, and the board should not change state on its own.
+            if workspace.active.boardFullWidth { return }
             if width < 1150, workspace.active.boardPanelShown {
                 workspace.active.boardPanelShown = false
                 autoHidden = true
@@ -356,6 +371,9 @@ struct TasksView: View {
             Button("Cancel", role: .cancel) {}
         } message: { Text("This permanently deletes the selected task\(selection.count == 1 ? "" : "s").") }
         .onChange(of: filterState.activeFilterIds) { pendingStatusIds.removeAll() }
+        .onExitCommand {
+            if workspace.active.boardFullWidth { workspace.active.boardFullWidth = false }
+        }
         .onAppear {
             // Mouse-up ends every drag, however it finished, so the target never gets stranded on screen.
             boardDragMonitor.onEnded = { boardDragging = false }

@@ -325,6 +325,8 @@ enum TaskViewMode: String, CaseIterable {
     // Whether this tab's planning-board panel is open. Per tab (like tasksFilter) so one tab can be
     // a planning surface while another stays a full-width table; persisted in WorkspaceSnapshot.
     var boardPanelShown: Bool = false
+    /// Board fills the detail area, collapsing the task table. Per tab, like `boardPanelShown`.
+    var boardFullWidth: Bool = false
     // Per-tab filter state for the other shared-style list pages, created lazily with page defaults.
     //
     // @ObservationIgnored because `pageFilter(for:)` is called from list-page bodies, so the lazy insert
@@ -521,6 +523,7 @@ enum TaskViewMode: String, CaseIterable {
             apply(tabSnap.tasksFilter, to: state.tasksFilter)
             // Absent in sessions saved before the board became a panel — treat as closed.
             state.boardPanelShown = tabSnap.boardPanelShown ?? false
+            state.boardFullWidth = tabSnap.boardFullWidth ?? false
             for (rawCategory, fs) in tabSnap.pageFilters {
                 guard let category = WorkspaceCategory(rawValue: rawCategory) else { continue }
                 let pf = state.pageFilter(for: category)
@@ -561,7 +564,8 @@ enum TaskViewMode: String, CaseIterable {
                                      mode: tab.diaryState.mode.rawValue,
                                      tracksToday: tab.diaryState.tracksToday),
                 tasksFilter: tasks, pageFilters: pageFilters,
-                boardPanelShown: tab.boardPanelShown)
+                boardPanelShown: tab.boardPanelShown,
+                boardFullWidth: tab.boardFullWidth)
         }
         // Keep active index valid even if some tabs produced empty histories (rare; entity gone).
         let validTabs = tabSnaps.enumerated().filter { !$0.element.history.isEmpty }

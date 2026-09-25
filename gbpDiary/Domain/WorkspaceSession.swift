@@ -45,6 +45,8 @@ struct TabSnapshot: Codable, Equatable {
     /// before the board became a panel have no such key, and a required field would fail to decode —
     /// taking every tab with it. Absent means "closed".
     var boardPanelShown: Bool?
+    /// Also optional, for the same reason: sessions written before full-width existed have no such key.
+    var boardFullWidth: Bool?
 }
 
 struct WorkspaceSnapshot: Codable, Equatable {

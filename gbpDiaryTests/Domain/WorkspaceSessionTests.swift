@@ -62,6 +62,36 @@ struct WorkspaceSessionTests {
         #expect(decoded == snap)
     }
 
+    /// The board's panel flags are optional ON PURPOSE: a session written before they existed has no
+    /// such keys, and a required field would fail to decode — taking every tab in the snapshot with it.
+    @Test func snapshotWithoutBoardKeys_stillDecodes() throws {
+        let json = """
+        {"activeIndex":0,"tabs":[{"history":[{"page":{"_0":"tasks"}}],"index":0,
+        "diary":{"date":811692000,"mode":"Day","tracksToday":true},
+        "tasksFilter":{"activeFilterIds":[],"searchText":"","sortColumnID":"urgency","sortAscending":false},
+        "pageFilters":{}}]}
+        """
+        let decoded = try JSONDecoder().decode(WorkspaceSnapshot.self, from: Data(json.utf8))
+        #expect(decoded.tabs.count == 1, "an older session must not lose its tabs")
+        #expect(decoded.tabs[0].boardPanelShown == nil)
+        #expect(decoded.tabs[0].boardFullWidth == nil)
+    }
+
+    @Test func boardPanelFlags_roundTrip() throws {
+        let tab = TabSnapshot(
+            history: [.page("tasks")], index: 0,
+            diary: DiarySnapshot(date: FixedDates.reference, mode: "Day", tracksToday: true),
+            tasksFilter: TasksFilterSnapshot(activeFilterIds: [], searchText: "",
+                                             sortColumnID: "urgency", sortAscending: false,
+                                             dateRangeStart: nil, dateRangeEnd: nil, datePreset: nil),
+            pageFilters: [:], boardPanelShown: true, boardFullWidth: true)
+        let snap = WorkspaceSnapshot(tabs: [tab], activeIndex: 0)
+        let decoded = try JSONDecoder().decode(WorkspaceSnapshot.self,
+                                               from: try JSONEncoder().encode(snap))
+        #expect(decoded.tabs[0].boardPanelShown == true)
+        #expect(decoded.tabs[0].boardFullWidth == true)
+    }
+
     @Test func store_setGetClear() {
         let snap = WorkspaceSnapshot(tabs: [
             TabSnapshot(history: [.page("tasks")], index: 0,
