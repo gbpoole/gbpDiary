@@ -8,7 +8,6 @@ enum WorkspaceTab: Hashable, Identifiable {
     case chat
     case triage
     case tasks
-    case board
     case projects
     case people
     case institutions
@@ -38,7 +37,6 @@ enum WorkspaceTab: Hashable, Identifiable {
         case .chat:                      .chat
         case .triage:                    .triage
         case .tasks, .task:              .tasks
-        case .board:                     .board
         case .curation:                  .projects
         case .projects, .project:        .projects
         case .people, .person:           .people
@@ -59,7 +57,6 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     case chat         = "Chat"
     case triage       = "Triage"
     case tasks        = "Tasks"
-    case board        = "Board"
     case timesheet    = "Timesheet"
     case projects     = "Projects"
     case meetings     = "Meetings"
@@ -82,7 +79,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
 
     // The browse sidebar's grouping: ordered groups, each with a heading, for visual separation.
     static let sidebarGroups: [(title: String, categories: [WorkspaceCategory])] = [
-        ("Workspace", [.diary, .tasks, .board, .timesheet, .triage, .chat]),
+        ("Workspace", [.diary, .tasks, .timesheet, .triage, .chat]),
         ("Records",   [.projects, .meetings, .people, .institutions]),
         ("Library",   [.documents, .content, .images, .tags]),
     ]
@@ -93,7 +90,6 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         case .chat:         "bubble.left.and.bubble.right"
         case .triage:       "tray.and.arrow.down"
         case .tasks:        "checkmark.square"
-        case .board:        "rectangle.split.3x1"
         case .projects:     "folder"
         case .people:       "person.2"
         case .institutions: "building.2"
@@ -113,7 +109,6 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         case .chat:         .chat
         case .triage:       .triage
         case .tasks:        .tasks
-        case .board:        .board
         case .projects:     .projects
         case .people:       .people
         case .institutions: .institutions
@@ -235,18 +230,16 @@ struct ChatLabState {
 // One browsing pane: a back/forward history of destinations, like a browser tab. Sidebar
 // selection and in-place drilldowns navigate within a single tab; only explicit "open in new
 // tab" actions (e.g. meeting minutes) create another tab.
-// The Tasks page's three presentations: the normal (Reviewed) table, the inbox Triage list, and both
-// side by side. Session-only per tab (not persisted).
+// The Tasks page's two presentations: the normal (Reviewed) table and the inbox Triage list.
+// Session-only per tab (not persisted), so dropping a case needs no migration.
 enum TaskViewMode: String, CaseIterable {
     case reviewed
     case triage
-    case sideBySide
 
     var label: String {
         switch self {
-        case .reviewed:    "Reviewed"
-        case .triage:      "Triage"
-        case .sideBySide:  "Side-by-side"
+        case .reviewed: "Reviewed"
+        case .triage:   "Triage"
         }
     }
 }
@@ -309,7 +302,7 @@ enum TaskViewMode: String, CaseIterable {
         case .institutions: ListPageFilter(sortColumnID: "name", sortAscending: true)
         case .tags:         ListPageFilter(sortColumnID: "tag", sortAscending: true)
         case .images:       ListPageFilter(sortColumnID: "name", sortAscending: true)
-        case .diary, .chat, .triage, .tasks, .board, .timesheet:
+        case .diary, .chat, .triage, .tasks, .timesheet:
             ListPageFilter(sortColumnID: "name", sortAscending: true)  // unused (not list pages)
         }
     }
@@ -329,6 +322,11 @@ enum TaskViewMode: String, CaseIterable {
     // How far through a curation walk this tab is. Session-only: the walk itself is recomputed from
     // live project data, and resuming mid-session after a relaunch would be more surprising than useful.
     var curationIndex: Int = 0
+    // Whether this tab's planning-board panel is open. Per tab (like tasksFilter) so one tab can be
+    // a planning surface while another stays a full-width table; persisted in WorkspaceSnapshot.
+    var boardPanelShown: Bool = false
+    /// Board fills the detail area, collapsing the task table. Per tab, like `boardPanelShown`.
+    var boardFullWidth: Bool = false
     // Per-tab filter state for the other shared-style list pages, created lazily with page defaults.
     //
     // @ObservationIgnored because `pageFilter(for:)` is called from list-page bodies, so the lazy insert
@@ -523,6 +521,9 @@ enum TaskViewMode: String, CaseIterable {
             state.diaryState.mode = DiaryMode(rawValue: tabSnap.diary.mode) ?? .day
             state.diaryState.tracksToday = tabSnap.diary.tracksToday
             apply(tabSnap.tasksFilter, to: state.tasksFilter)
+            // Absent in sessions saved before the board became a panel — treat as closed.
+            state.boardPanelShown = tabSnap.boardPanelShown ?? false
+            state.boardFullWidth = tabSnap.boardFullWidth ?? false
             for (rawCategory, fs) in tabSnap.pageFilters {
                 guard let category = WorkspaceCategory(rawValue: rawCategory) else { continue }
                 let pf = state.pageFilter(for: category)
@@ -562,7 +563,9 @@ enum TaskViewMode: String, CaseIterable {
                 diary: DiarySnapshot(date: tab.diaryState.currentDate,
                                      mode: tab.diaryState.mode.rawValue,
                                      tracksToday: tab.diaryState.tracksToday),
-                tasksFilter: tasks, pageFilters: pageFilters)
+                tasksFilter: tasks, pageFilters: pageFilters,
+                boardPanelShown: tab.boardPanelShown,
+                boardFullWidth: tab.boardFullWidth)
         }
         // Keep active index valid even if some tabs produced empty histories (rare; entity gone).
         let validTabs = tabSnaps.enumerated().filter { !$0.element.history.isEmpty }

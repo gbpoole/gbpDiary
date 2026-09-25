@@ -168,13 +168,24 @@ extension Task {
     func makeStanding() {
         isStanding = true
         needsTriage = false
-        planHorizonRaw = nil
+        // Perpetual work has no deadline, so a standing task holds no due date. Besides being
+        // meaningless, a lingering one would leak into date-driven views: `isOverdue` is exempt for
+        // standing tasks but `isDueToday` is not, so it would surface as "due today" for ever.
+        dueAt = nil
+        // Keeps any planHorizon: standing work is placeable, so making a planned task standing
+        // must not silently drop it off the board.
         updatedAt = Date()
     }
 
-    /// Place (or clear) the task on the planning board. Standing tasks never go on the board.
+    /// On the planning board. The single rule shared by the board itself, the Tasks table's styling
+    /// and its "Not on board" filter — so those three can never disagree about what "planned" means.
+    var isOnBoard: Bool { planHorizon != nil }
+
+    /// Place (or clear) the task on the planning board.
+    ///
+    /// Standing tasks ARE placeable: perpetual work such as "Triage Emails" is legitimately planned
+    /// into a day. Because such a task never completes, it leaves a lane only by being removed.
     func place(on horizon: PlanHorizon?) {
-        guard !isStanding else { return }
         planHorizon = horizon   // setter bumps updatedAt
     }
 

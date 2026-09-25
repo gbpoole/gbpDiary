@@ -41,6 +41,12 @@ struct TabSnapshot: Codable, Equatable {
     var diary: DiarySnapshot
     var tasksFilter: TasksFilterSnapshot
     var pageFilters: [String: ListFilterSnapshot]   // key = WorkspaceCategory.rawValue
+    /// Whether this tab's planning-board panel is open. **Optional on purpose**: sessions written
+    /// before the board became a panel have no such key, and a required field would fail to decode —
+    /// taking every tab with it. Absent means "closed".
+    var boardPanelShown: Bool?
+    /// Also optional, for the same reason: sessions written before full-width existed have no such key.
+    var boardFullWidth: Bool?
 }
 
 struct WorkspaceSnapshot: Codable, Equatable {
@@ -58,7 +64,6 @@ enum WorkspaceTabCoding {
         case .chat:         "chat"
         case .triage:       "triage"
         case .tasks:        "tasks"
-        case .board:        "board"
         case .projects:     "projects"
         case .people:       "people"
         case .institutions: "institutions"
@@ -77,8 +82,9 @@ enum WorkspaceTabCoding {
         case "diary":        .diary
         case "chat":         .chat
         case "triage":       .triage
-        case "tasks":        .tasks
-        case "board":        .board
+        // Migration: the board used to be its own tab. Land on Tasks (whose panel now hosts it)
+        // rather than returning nil, which would silently drop the tab at restore.
+        case "tasks", "board": .tasks
         case "projects":     .projects
         case "people":       .people
         case "institutions": .institutions

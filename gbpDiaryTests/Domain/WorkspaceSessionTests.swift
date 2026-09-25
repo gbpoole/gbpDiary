@@ -6,7 +6,7 @@ import Testing
 @MainActor
 struct WorkspaceSessionTests {
     @Test func categoryTokens_roundTrip() {
-        let tabs: [WorkspaceTab] = [.diary, .chat, .triage, .tasks, .board, .projects, .people, .institutions,
+        let tabs: [WorkspaceTab] = [.diary, .chat, .triage, .tasks, .projects, .people, .institutions,
                                     .meetings, .documents, .images, .tags, .timesheet, .content]
         for tab in tabs {
             let token = WorkspaceTabCoding.token(forCategoryTab: tab)
@@ -15,6 +15,14 @@ struct WorkspaceSessionTests {
         }
         #expect(WorkspaceTabCoding.token(forCategoryTab: .chat) == "chat")
         #expect(WorkspaceTabCoding.token(forCategoryTab: .triage) == "triage")
+    }
+
+    /// Migration: the board is a panel on Tasks now, but sessions saved while it was a tab still hold
+    /// a "board" token. It must resolve to Tasks — returning nil would silently drop the tab at restore.
+    @Test func legacyBoardToken_migratesToTasks() {
+        #expect(WorkspaceTabCoding.categoryTab(forToken: "board") == .tasks)
+        // ...and nothing writes that token any more.
+        #expect(WorkspaceTabCoding.token(forCategoryTab: .tasks) == "tasks")
     }
 
     @Test func categoryToken_nilForUnknownToken() {
@@ -52,6 +60,36 @@ struct WorkspaceSessionTests {
         let data = try JSONEncoder().encode(snap)
         let decoded = try JSONDecoder().decode(WorkspaceSnapshot.self, from: data)
         #expect(decoded == snap)
+    }
+
+    /// The board's panel flags are optional ON PURPOSE: a session written before they existed has no
+    /// such keys, and a required field would fail to decode — taking every tab in the snapshot with it.
+    @Test func snapshotWithoutBoardKeys_stillDecodes() throws {
+        let json = """
+        {"activeIndex":0,"tabs":[{"history":[{"page":{"_0":"tasks"}}],"index":0,
+        "diary":{"date":811692000,"mode":"Day","tracksToday":true},
+        "tasksFilter":{"activeFilterIds":[],"searchText":"","sortColumnID":"urgency","sortAscending":false},
+        "pageFilters":{}}]}
+        """
+        let decoded = try JSONDecoder().decode(WorkspaceSnapshot.self, from: Data(json.utf8))
+        #expect(decoded.tabs.count == 1, "an older session must not lose its tabs")
+        #expect(decoded.tabs[0].boardPanelShown == nil)
+        #expect(decoded.tabs[0].boardFullWidth == nil)
+    }
+
+    @Test func boardPanelFlags_roundTrip() throws {
+        let tab = TabSnapshot(
+            history: [.page("tasks")], index: 0,
+            diary: DiarySnapshot(date: FixedDates.reference, mode: "Day", tracksToday: true),
+            tasksFilter: TasksFilterSnapshot(activeFilterIds: [], searchText: "",
+                                             sortColumnID: "urgency", sortAscending: false,
+                                             dateRangeStart: nil, dateRangeEnd: nil, datePreset: nil),
+            pageFilters: [:], boardPanelShown: true, boardFullWidth: true)
+        let snap = WorkspaceSnapshot(tabs: [tab], activeIndex: 0)
+        let decoded = try JSONDecoder().decode(WorkspaceSnapshot.self,
+                                               from: try JSONEncoder().encode(snap))
+        #expect(decoded.tabs[0].boardPanelShown == true)
+        #expect(decoded.tabs[0].boardFullWidth == true)
     }
 
     @Test func store_setGetClear() {

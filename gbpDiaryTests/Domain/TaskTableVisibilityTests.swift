@@ -6,10 +6,10 @@ struct TaskTableVisibilityTests {
 
     private func hidden(isOpen: Bool = true, needsTriage: Bool = false, isWaiting: Bool = false,
                         isStanding: Bool = false, showWaiting: Bool = false,
-                        showStanding: Bool = false) -> Bool {
+                        showStanding: Bool = false, showNeedsTriage: Bool = false) -> Bool {
         TaskTableVisibility.isHidden(isOpen: isOpen, needsTriage: needsTriage, isWaiting: isWaiting,
                                      isStanding: isStanding, showWaiting: showWaiting,
-                                     showStanding: showStanding)
+                                     showStanding: showStanding, showNeedsTriage: showNeedsTriage)
     }
 
     @Test func ordinaryReviewedTask_isShown() {
@@ -39,8 +39,23 @@ struct TaskTableVisibilityTests {
         #expect(!hidden(isWaiting: true, isStanding: true, showWaiting: true, showStanding: true))
     }
 
-    /// Triage hiding wins regardless of the flag filters — the inbox is a separate surface.
-    @Test func untriagedStaysHidden_evenWhenItsOtherFlagsAreRevealed() {
+    /// Triage hiding yields only to its OWN filter: revealing waiting or standing work does not drag
+    /// the inbox in with it.
+    @Test func untriagedStaysHidden_whenOnlyOtherFlagsAreRevealed() {
         #expect(hidden(needsTriage: true, isStanding: true, showStanding: true))
+        #expect(hidden(needsTriage: true, isWaiting: true, showWaiting: true))
+    }
+
+    /// The route a fresh capture takes to the planning board: reveal it here, then place it (which
+    /// marks it reviewed).
+    @Test func untriagedTask_revealedByItsOwnFilter() {
+        #expect(hidden(needsTriage: true))
+        #expect(!hidden(needsTriage: true, showNeedsTriage: true))
+    }
+
+    /// Revealing the inbox must not also drag in waiting or standing work.
+    @Test func needsTriageReveal_doesNotRevealTheOtherHiddenKinds() {
+        #expect(hidden(isWaiting: true, showNeedsTriage: true))
+        #expect(hidden(isStanding: true, showNeedsTriage: true))
     }
 }

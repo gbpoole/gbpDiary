@@ -1,3 +1,19 @@
+    /// Standing tasks ARE planned now: perpetual work such as "Triage Emails" belongs in a day. Since
+    /// it never completes, it leaves a lane only by being removed.
+    @Test func standingTaskCanBePlaced() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let task = Task(summary: "Triage Emails")
+        context.insert(task)
+        task.makeStanding()
+        task.place(on: .today)
+        try context.save()
+
+        #expect(task.planHorizon == .today, "makeStanding must not strip a horizon either")
+        let buckets = BoardPartition.partition([task], isOpen: \.isOpen,
+                                               horizon: \.planHorizon, sortOrder: \.planSortOrder)
+        #expect(buckets.today.map(\.id) == [task.id])
+    }
 import Foundation
 import SwiftData
 import Testing
@@ -13,49 +29,25 @@ struct BoardPlacementTests {
         #expect(BoardPlacement.appendOrder(existingOrders: [-3]) == -2)
     }
 
-    @Test func shouldReview_onlyWhenComingFromTheInbox() {
-        #expect(BoardPlacement.shouldReview(needsTriage: true))
-        #expect(!BoardPlacement.shouldReview(needsTriage: false))
+    /// Triage is a gate, not something planning does for you: inbox work must be filed first.
+    @Test func canPlace_requiresAnOpenTriagedTask() {
+        #expect(BoardPlacement.canPlace(isOpen: true, needsTriage: false))
+        #expect(!BoardPlacement.canPlace(isOpen: true, needsTriage: true))    // still in the inbox
+        #expect(!BoardPlacement.canPlace(isOpen: false, needsTriage: false))  // finished
+        #expect(!BoardPlacement.canPlace(isOpen: false, needsTriage: true))
     }
 
-    /// Placing an inbox task plans it and reviews it in one move, so it leaves the Inbox column.
-    @Test func placingAnInboxTask_reviewsItAndLeavesTheInbox() throws {
+    /// Placing no longer reviews anything — it used to, and that rule was deliberately reversed.
+    @Test func placingDoesNotReviewATask() throws {
         let container = try TestModelContainer.make()
         let context = ModelContext(container)
         let task = Task(summary: "Write changelog")
         context.insert(task)
         #expect(task.needsTriage)
 
-        if BoardPlacement.shouldReview(needsTriage: task.needsTriage) {
-            task.place(on: .today)
-            task.markReviewed()
-        }
+        task.place(on: .today)
         try context.save()
-
-        #expect(task.planHorizon == .today)
-        #expect(!task.needsTriage)
-
-        let buckets = BoardPartition.partition([task], needsTriage: \.needsTriage,
-                                               isStanding: \.isStanding, isOpen: \.isOpen,
-                                               horizon: \.planHorizon, sortOrder: \.planSortOrder)
-        #expect(buckets.inbox.isEmpty)
-        #expect(buckets.today.map(\.id) == [task.id])
+        #expect(task.needsTriage, "planning must not file a task for you")
     }
 
-    /// Standing tasks are never planned, so placing must not sneak one onto the board.
-    @Test func standingTaskStaysOffTheBoard() throws {
-        let container = try TestModelContainer.make()
-        let context = ModelContext(container)
-        let task = Task(summary: "Keep inbox at zero")
-        context.insert(task)
-        task.makeStanding()
-        task.place(on: .today)            // no-op for standing tasks
-        try context.save()
-
-        let buckets = BoardPartition.partition([task], needsTriage: \.needsTriage,
-                                               isStanding: \.isStanding, isOpen: \.isOpen,
-                                               horizon: \.planHorizon, sortOrder: \.planSortOrder)
-        #expect(buckets.today.isEmpty)
-        #expect(buckets.inbox.isEmpty)
-    }
 }
