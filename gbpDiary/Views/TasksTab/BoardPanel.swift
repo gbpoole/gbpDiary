@@ -28,12 +28,11 @@ struct BoardPanel: View {
     var body: some View {
         let b = buckets
         HStack(alignment: .top, spacing: 0) {
-            lane("Today", systemImage: "sun.max", tint: AppTheme.today, tasks: b.today,
-                 horizon: .today, derived: dueGroup)
+            lane("Today", tasks: b.today, horizon: .today, derived: dueGroup)
             Divider()
-            lane("This Week", systemImage: "calendar", tint: AppTheme.accent, tasks: b.thisWeek, horizon: .thisWeek)
+            lane("This Week", tasks: b.thisWeek, horizon: .thisWeek)
             Divider()
-            lane("Maybe", systemImage: "questionmark.circle", tint: AppTheme.mutedText, tasks: b.maybe, horizon: .maybe)
+            lane("Maybe", tasks: b.maybe, horizon: .maybe)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .background(AppTheme.background)
@@ -48,10 +47,12 @@ struct BoardPanel: View {
         })
     }
 
-    private func lane(_ title: String, systemImage: String, tint: Color,
-                      tasks: [Task], horizon: PlanHorizon,
+    private func lane(_ title: String, tasks: [Task], horizon: PlanHorizon,
                       derived: [Task] = []) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
+        // Icon and tint come from PlanHorizon, the same source the Tasks table marker uses.
+        let systemImage = horizon.systemImage
+        let tint = horizon.tint
+        return VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 6) {
                 Image(systemName: systemImage).font(.caption).foregroundStyle(tint)
                 Text(title).font(AppTheme.bodyFont(size: 12).weight(.semibold)).foregroundStyle(AppTheme.text)

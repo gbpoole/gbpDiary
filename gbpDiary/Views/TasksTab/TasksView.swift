@@ -280,6 +280,13 @@ struct TasksView: View {
 
     // Opens the double-clicked row's task in its own workspace tab (like Projects/People). `rows` is the
     // sorted display order, matching NSTableView. Editing stays available via the detail page + context menu.
+    /// Pending status changes stay muted (they are mid-transition); otherwise a planned task takes its
+    /// lane's colour, so "is it planned, and where?" is answered by the text you were already reading.
+    private func summaryColor(_ row: TaskRow) -> Color {
+        if pendingStatusIds.contains(row.id) { return AppTheme.mutedText }
+        return row.task.planHorizon?.tint ?? AppTheme.text
+    }
+
     private func openRow(_ index: Int) {
         guard rows.indices.contains(index) else { return }
         workspace.focusOrOpen(.task(rows[index].task.persistentModelID))
@@ -570,12 +577,15 @@ struct TasksView: View {
                             .font(.system(size: 10)).foregroundStyle(AppTheme.duration)
                             .help("Standing task — perpetual, never completes")
                     }
+                    // A task on the board colours its SUMMARY TEXT by lane — the text is what you
+                    // read anyway, so the signal costs no extra parsing. Not a glyph (one more thing
+                    // to scan), not italic (Hiragino Sans has no italic face, so it renders nothing),
+                    // not opacity (that already marks hierarchy-context rows).
                     Text(row.task.summary)
                         .lineLimit(1)
                         .font(AppTheme.bodyFont(size: 13))
-                        .italic(row.task.isOnBoard)
-                        .foregroundStyle(row.task.isOnBoard || pendingStatusIds.contains(row.id)
-                                         ? AppTheme.mutedText : AppTheme.text)
+                        .foregroundStyle(summaryColor(row))
+                        .help(row.task.planHorizon.map { "On the board — \($0.displayName)" } ?? "")
                 }
                 .padding(.leading, CGFloat(level(row)) * 16)
                 .opacity(dim(row))
