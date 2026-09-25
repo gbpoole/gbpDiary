@@ -25,6 +25,16 @@ import SwiftData
     // triaged; `init` sets it `true` so every newly-created task needs triage. See `markReviewed()`.
     var needsTriage: Bool = false
 
+    // Standing task: a stateless, perpetual, per-project time bucket (e.g. "review email"). It has no
+    // cyclable status, accumulates time, is exempt from overdue/urgency nagging, never appears on the
+    // planning board, and is created already-reviewed. Defaulted for migration.
+    var isStanding: Bool = false
+
+    // Planning-board placement. `planHorizonRaw` backs the optional `planHorizon` (nil = not on the
+    // board). `planSortOrder` orders tasks within a board section. Both defaulted for migration.
+    var planHorizonRaw: String?
+    var planSortOrder: Int = 0
+
     // Array attributes stored as JSON strings (CoreData cannot materialize Array<T>)
     var tagsJSON: String
     var followedUpHistoryJSON: String
@@ -121,8 +131,14 @@ extension Task {
         set { priorityRaw = newValue.rawValue; updatedAt = Date() }
     }
 
-    /// Open and past its due date (day-granularity).
-    var isOverdue: Bool { TaskFlags.isOverdue(dueAt: dueAt, isOpen: isOpen) }
+    /// Planning-board horizon (nil = not placed on the board). Setting also clears when nil.
+    var planHorizon: PlanHorizon? {
+        get { planHorizonRaw.flatMap(PlanHorizon.init(rawValue:)) }
+        set { planHorizonRaw = newValue?.rawValue; updatedAt = Date() }
+    }
+
+    /// Open and past its due date (day-granularity). Standing tasks never nag as overdue.
+    var isOverdue: Bool { !isStanding && TaskFlags.isOverdue(dueAt: dueAt, isOpen: isOpen) }
     var isDueToday: Bool { TaskFlags.isDueToday(dueAt: dueAt) }
 
     /// Blocked while any prerequisite is still open (completing a blocker auto-unblocks — derived).
@@ -145,6 +161,21 @@ extension Task {
         guard needsTriage else { return }
         needsTriage = false
         updatedAt = Date()
+    }
+
+    /// Turn this into a stateless standing task: perpetual, exempt from nagging, off the board, and
+    /// already-reviewed (never blocks a project's tasks-reviewed gate). Idempotent.
+    func makeStanding() {
+        isStanding = true
+        needsTriage = false
+        planHorizonRaw = nil
+        updatedAt = Date()
+    }
+
+    /// Place (or clear) the task on the planning board. Standing tasks never go on the board.
+    func place(on horizon: PlanHorizon?) {
+        guard !isStanding else { return }
+        planHorizon = horizon   // setter bumps updatedAt
     }
 
     func unmarkCompleted() {

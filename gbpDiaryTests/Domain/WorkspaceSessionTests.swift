@@ -6,7 +6,7 @@ import Testing
 @MainActor
 struct WorkspaceSessionTests {
     @Test func categoryTokens_roundTrip() {
-        let tabs: [WorkspaceTab] = [.diary, .chat, .triage, .tasks, .projects, .people, .institutions,
+        let tabs: [WorkspaceTab] = [.diary, .chat, .triage, .tasks, .board, .projects, .people, .institutions,
                                     .meetings, .documents, .images, .tags, .timesheet, .content]
         for tab in tabs {
             let token = WorkspaceTabCoding.token(forCategoryTab: tab)
@@ -29,6 +29,9 @@ struct WorkspaceSessionTests {
         #expect(WorkspaceTabCoding.token(forCategoryTab: projectTab) == nil)
         let taskTab = WorkspaceTab.task(dummyID())
         #expect(WorkspaceTabCoding.entityKind(for: taskTab) == "task")
+        let curationTab = WorkspaceTab.curation(dummyID())
+        #expect(WorkspaceTabCoding.entityKind(for: curationTab) == "curation")
+        #expect(WorkspaceTabCoding.token(forCategoryTab: curationTab) == nil)
         #expect(WorkspaceTabCoding.token(forCategoryTab: taskTab) == nil)
     }
 

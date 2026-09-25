@@ -53,7 +53,8 @@ struct TasksView: View {
             PickerFilter<Task>(id: "flag.hasDue", label: "Has due", chipColor: AppTheme.mutedText, group: "Flags") { $0.dueAt != nil },
             PickerFilter<Task>(id: "flag.blocked", label: "Blocked", chipColor: AppTheme.destructive, group: "Flags") { $0.isBlocked },
             PickerFilter<Task>(id: "flag.unblocked", label: "Unblocked", chipColor: AppTheme.completed, group: "Flags") { $0.isOpen && !$0.isBlocked },
-            PickerFilter<Task>(id: "flag.waiting", label: "Waiting", chipColor: AppTheme.mutedText, group: "Flags") { $0.isWaiting }
+            PickerFilter<Task>(id: "flag.waiting", label: "Waiting", chipColor: AppTheme.mutedText, group: "Flags") { $0.isWaiting },
+            PickerFilter<Task>(id: "flag.standing", label: "Standing", chipColor: AppTheme.duration, group: "Flags") { $0.isStanding }
         ]
         return state + status + priorities + flags + projects + assignees + mine + source
     }
@@ -71,13 +72,17 @@ struct TasksView: View {
         let matched = Set(FilterEngine.apply(allTasks, filters: taskFilters, activeIds: filterState.activeFilterIds).map(\.id))
         let query = filterState.searchText.trimmingCharacters(in: .whitespaces)
         let showWaiting = filterState.activeFilterIds.contains("flag.waiting")
+        let showStanding = filterState.activeFilterIds.contains("flag.standing")
         return allTasks.filter { task in
             if pendingStatusIds.contains(task.id) { return true }
-            // Untriaged, still-open tasks live in the Inbox (Triage view) — hidden from Reviewed until
-            // reviewed. Completed/cancelled tasks always show (no need to triage a closed task).
-            if task.isOpen && task.needsTriage { return false }
+            // Untriaged / waiting / standing tasks are each hidden until their own control reveals
+            // them — see TaskTableVisibility for why.
+            if TaskTableVisibility.isHidden(isOpen: task.isOpen, needsTriage: task.needsTriage,
+                                            isWaiting: task.isWaiting, isStanding: task.isStanding,
+                                            showWaiting: showWaiting, showStanding: showStanding) {
+                return false
+            }
             guard matched.contains(task.id) else { return false }
-            if task.isWaiting && !showWaiting { return false }   // deferred tasks hidden until revealed
             if let range = filterState.dateRange, !range.contains(task.createdAt) {
                 return false   // date presets/range match the captured (created) date
             }
@@ -91,13 +96,24 @@ struct TasksView: View {
             .compactMap { $0 }.joined(separator: " ")
     }
 
-    // Sortable rows (urgency precomputed), ordered by the per-tab column sort order. The focus-block net map
+    // Sortable rows (urgency precomputed), laid out as a parent → child task tree. The focus-block net map
     // is computed once here (one canonical-ledger pass, like the Timesheet) and drives the Time column.
-    private var rows: [TaskRow] {
+    //
+    // Rows are built for *every* task, not just the matches, because a matched subtask's ancestors are
+    // shown as dimmed context (so you can see where it sits) — exactly the ProjectsView treatment.
+    // `ProjectHierarchy.rows` is generic and pure, so it is reused here rather than reimplemented.
+    private var hierarchyRows: [HierarchyRow<TaskRow>] {
         let blockNet = TimeLedgerProjection.blockNet(focusBlocks: allFocusBlocks, tasks: allTasks,
                                                      conversations: allConversations, meetings: allMeetings)
-        return filteredTasks.map { TaskRow($0, blockNet: blockNet) }.sorted(using: filterState.sortOrder)
+        let comparator = filterState.sortOrder
+        return ProjectHierarchy.rows(
+            all: allTasks.map { TaskRow($0, blockNet: blockNet) },
+            id: \.id, parentID: { $0.task.parent?.id },
+            matched: Set(filteredTasks.map(\.id)),
+            sortSiblings: { $0.sorted(using: comparator) })
     }
+
+    private var rows: [TaskRow] { hierarchyRows.map(\.item) }
 
     // The Inbox: open, top-level tasks awaiting Review, oldest first (clear the backlog).
     private var triageTasks: [Task] {
@@ -267,9 +283,22 @@ struct TasksView: View {
     #if os(macOS)
     private var taskTable: some View {
         @Bindable var filter = filterState
-        return Table(rows, selection: $selection, sortOrder: $filter.sortOrder) {
+        // Computed once per render and captured by the cell closures below. Reading it through a
+        // computed property instead would re-run the whole hierarchy (and its ledger pass) per cell.
+        let hierarchy = hierarchyRows
+        let meta = Dictionary(hierarchy.map { ($0.item.id, (depth: $0.depth, isMatch: $0.isMatch)) },
+                              uniquingKeysWith: { first, _ in first })
+        // Indentation / dimming for a row (context ancestors are dimmed so matches stand out).
+        func level(_ row: TaskRow) -> Int { meta[row.id]?.depth ?? 0 }
+        func dim(_ row: TaskRow) -> Double { (meta[row.id]?.isMatch ?? true) ? 1 : 0.5 }
+        return Table(hierarchy.map(\.item), selection: $selection, sortOrder: $filter.sortOrder) {
             TableColumn("Summary", value: \.summaryKey) { row in
                 HStack(spacing: 4) {
+                    if level(row) > 0 {
+                        Image(systemName: "arrow.turn.down.right")
+                            .font(.system(size: 9))
+                            .foregroundStyle(AppTheme.mutedText)
+                    }
                     if row.task.isBlocked {
                         Image(systemName: "lock.fill")
                             .font(.system(size: 10)).foregroundStyle(AppTheme.destructive)
@@ -285,52 +314,67 @@ struct TasksView: View {
                             .font(.system(size: 10)).foregroundStyle(AppTheme.mutedText)
                             .help("Repeats")
                     }
+                    if row.task.isStanding {
+                        Image(systemName: "infinity")
+                            .font(.system(size: 10)).foregroundStyle(AppTheme.duration)
+                            .help("Standing task — perpetual, never completes")
+                    }
                     Text(row.task.summary)
                         .lineLimit(1)
                         .font(AppTheme.bodyFont(size: 13))
                         .foregroundStyle(pendingStatusIds.contains(row.id) ? AppTheme.mutedText : AppTheme.text)
                 }
+                .padding(.leading, CGFloat(level(row)) * 16)
+                .opacity(dim(row))
             }
             .width(min: 160, ideal: 300)
             TableColumn("Project", value: \.projectKey) { row in
                 Text(row.task.project?.name ?? "").foregroundStyle(AppTheme.project).lineLimit(1)
+                    .opacity(dim(row))
             }
             .width(min: 80, ideal: 140)
             TableColumn("Status", value: \.statusRank) { row in
                 TaskStatusMenu(task: row.task, onBeforeChange: { pendingStatusIds.insert(row.id) }) {
                     TaskStatusIcon(status: row.task.status)
                 }
+                .opacity(dim(row))
             }
             .width(min: 96, ideal: 130)
             TableColumn("Pri", value: \.priorityRank) { row in
                 if row.task.priority != .none {
                     Chip(label: row.task.priority.short, color: priorityColor(row.task.priority))
+                        .opacity(dim(row))
                 }
             }
             .width(min: 40, ideal: 46)
             TableColumn("Urg", value: \.urgency) { row in
                 Text(String(format: "%.1f", row.urgency))
                     .font(AppTheme.bodyFont(size: 12)).foregroundStyle(AppTheme.mutedText).monospacedDigit()
+                    .opacity(dim(row))
             }
             .width(min: 44, ideal: 50)
             TableColumn("Time", value: \.timeSpentHours) { row in
                 Text(row.timeSpentHours > 0 ? TimeFormat.hours(row.timeSpentHours) : "")
                     .font(AppTheme.bodyFont(size: 12)).foregroundStyle(AppTheme.duration).monospacedDigit()
+                    .opacity(dim(row))
             }
             .width(min: 50, ideal: 64)
             TableColumn("Assignee", value: \.assigneeKey) { row in
                 Text(row.task.assignee?.name ?? "").foregroundStyle(AppTheme.person).lineLimit(1)
+                    .opacity(dim(row))
             }
             .width(min: 80, ideal: 120)
             TableColumn("Created", value: \.createdAt) { row in
                 Text(row.createdAt, format: .dateTime.month(.abbreviated).day().year())
                     .foregroundStyle(AppTheme.mutedText)
+                    .opacity(dim(row))
             }
             .width(min: 80, ideal: 100)
             TableColumn("Due", value: \.dueKey) { row in
                 if let due = row.task.dueAt {
                     Text(due, format: .dateTime.month(.abbreviated).day())
                         .foregroundStyle(row.task.isOverdue ? AppTheme.destructive : AppTheme.mutedText)
+                        .opacity(dim(row))
                 }
             }
             .width(min: 60, ideal: 80)
@@ -338,6 +382,7 @@ struct TasksView: View {
                 if let scheduled = row.task.scheduledAt {
                     Text(scheduled, format: .dateTime.month(.abbreviated).day())
                         .foregroundStyle(AppTheme.mutedText)
+                        .opacity(dim(row))
                 }
             }
             .width(min: 60, ideal: 80)

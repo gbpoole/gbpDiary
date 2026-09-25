@@ -44,4 +44,29 @@ struct ProjectSortKeysTests {
         let a = Person(name: "Amy")
         #expect(Project.teamKey(lead: lead, team: [a]) == "zoe, amy")
     }
+
+    @Test func tasksReviewedKey_isStampOrDistantPast() {
+        let p = Project(name: "P")
+        #expect(p.tasksReviewedKey == .distantPast)   // never reviewed
+        p.tasksReviewedAt = FixedDates.reference
+        #expect(p.tasksReviewedKey == FixedDates.reference)
+    }
+
+    @Test func lastActivityAt_isLatestWorkOnOwnTasksOrDistantPast() {
+        let p = Project(name: "P")
+        #expect(p.lastActivityAt == .distantPast)   // no work logged
+
+        let early = FixedDates.reference
+        let late = FixedDates.reference.addingTimeInterval(2 * 86400)   // two days later
+
+        let task = Task(summary: "t")
+        task.timeEntries = [TaskTimeEntry(date: early, duration: Duration(value: 1, unit: .h))]
+        let block = FocusBlock(duration: Duration(value: 1, unit: .h))
+        block.dayRecord = DayRecord(date: late)
+        task.focusBlocks = [block]
+        p.tasks = [task]
+
+        // DayRecord snaps its date to start-of-day, so compare against that.
+        #expect(p.lastActivityAt == Calendar.current.startOfDay(for: late))
+    }
 }

@@ -91,11 +91,13 @@ struct WorkspaceView: View {
         }
         .environment(workspace.active.diaryState)
         .kanagawaAppBackground()
-        .background { TaskRecurrenceDriver() } // spawn recurring tasks + auto-cancel past-until tasks
-        .background { EmailFetchDriver() }     // global auto-ingest (last few days, 5-min cadence)
-        .background { EmailSummaryDriver() }   // global on-device email summarisation
-        .background { EmailThreadSummaryDriver() } // global on-device whole-thread day summaries
-        .background { ChatIndexDriver() }      // rebuildable local semantic index + stale-source removal
+        // Skipped under XCTest: unit tests run inside this app, and these drivers would hit Mail /
+        // rebuild the semantic index during a test run. See TestEnvironment for the deadlock.
+        .background { if !TestEnvironment.isRunningUnitTests { TaskRecurrenceDriver() } } // spawn recurring tasks + auto-cancel past-until tasks
+        .background { if !TestEnvironment.isRunningUnitTests { EmailFetchDriver() } }     // global auto-ingest (last few days, 5-min cadence)
+        .background { if !TestEnvironment.isRunningUnitTests { EmailSummaryDriver() } }   // global on-device email summarisation
+        .background { if !TestEnvironment.isRunningUnitTests { EmailThreadSummaryDriver() } } // global on-device whole-thread day summaries
+        .background { if !TestEnvironment.isRunningUnitTests { ChatIndexDriver() } }      // rebuildable local semantic index + stale-source removal
         .sheet(isPresented: $showingNewContent) { ContentNoteEditorSheet(note: nil) }
         .onAppear {
             if !hasRestored {
@@ -117,7 +119,7 @@ struct WorkspaceView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             workspace.save(using: modelContext)
         }
-        .background(WindowAccessor { hostWindow = $0 })
+        .background(WindowAccessor { if hostWindow !== $0 { hostWindow = $0 } })
         .onAppear {
             closeTabMonitor.action = { workspace.closeActiveTab() }
             closeTabMonitor.targetWindow = hostWindow
@@ -292,6 +294,7 @@ struct WorkspaceView: View {
         case .chat:         ChatView(state: workspace.active.chatState)
         case .triage:       EmailTriageView()
         case .tasks:        TasksView()
+        case .board:        BoardView()
         case .projects:     ProjectsView()
         case .people:       PeopleView()
         case .institutions: InstitutionsView()
@@ -316,12 +319,13 @@ struct WorkspaceView: View {
             if let d = model(pid, as: Document.self) { DocumentDetailView(document: d) } else { missing }
         case .task(let pid):
             if let t = model(pid, as: Task.self) { TaskDetailView(task: t) } else { missing }
+        case .curation(let pid):
+            if let p = model(pid, as: Project.self) { CurationView(root: p) } else { missing }
         }
     }
 
     private var missing: some View {
-        ContentUnavailableView("Not available", systemImage: "questionmark.folder",
-                               description: Text("This item may have been deleted."))
+        DeletedEntityPlaceholder(noun: "item")
     }
 
     // Deleted-aware: a model deleted this session resolves via `model(for:)` as a tombstone whose property
@@ -345,7 +349,10 @@ private struct WindowAccessor: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        onResolve(nsView.window)
+        // updateNSView runs INSIDE SwiftUI's update pass and `onResolve` writes @State, so calling it
+        // synchronously here is "Modifying state during view update" — undefined behaviour. Defer to the
+        // next runloop tick, exactly as makeNSView already does.
+        DispatchQueue.main.async { [weak nsView] in onResolve(nsView?.window) }
     }
 }
 #endif

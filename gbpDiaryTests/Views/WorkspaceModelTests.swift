@@ -83,6 +83,100 @@ struct WorkspaceModelTests {
         #expect(secondChat.chatState.mode == .emailExplorerLab)
     }
 
+    // MARK: - Curation sessions
+
+    /// The curation tab is an entity tab keyed by its ROOT project, so it reuses/closes like the others
+    /// and lives under the Projects sidebar category.
+    @Test func curationTab_focusOrOpenReusesAndCloseEntityCloses() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let project = Project(name: "Apollo")
+        context.insert(project)
+        try context.save()
+        let pid = project.persistentModelID
+
+        let ws = WorkspaceModel()
+        ws.focusOrOpen(.curation(pid))
+        #expect(ws.active.current == .curation(pid))
+        #expect(ws.active.current.category == .projects)
+        let count = ws.tabs.count
+
+        ws.focusOrOpen(.curation(pid))
+        #expect(ws.tabs.count == count)          // reused, not duplicated
+
+        #expect(ws.references(pid))
+        ws.closeEntity(pid)
+        #expect(!ws.tabs.contains { $0.current == .curation(pid) })
+    }
+
+    /// A curation tab survives a session save/restore by the root project's stable UUID.
+    @Test func snapshot_capturesCurationEntity_andRestoresIt() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let project = Project(name: "Apollo")
+        context.insert(project)
+        try context.save()
+
+        let ws = WorkspaceModel()
+        ws.focusOrOpen(.curation(project.persistentModelID))
+        let snapshot = ws.snapshot(using: context)
+
+        let restored = WorkspaceModel()
+        restored.restore(snapshot, using: context)
+        #expect(restored.tabs.contains { $0.current == .curation(project.persistentModelID) })
+    }
+
+    /// Walk position is per tab, so switching away and back resumes where the session was.
+    @Test func curationIndex_isHeldPerTab() {
+        let ws = WorkspaceModel()
+        let first = ws.active
+        first.curationIndex = 3
+        ws.openInNewTab(.projects)
+        #expect(ws.active.curationIndex == 0)    // the new tab has its own position
+        ws.selectTab(at: 0)
+        #expect(ws.active.curationIndex == 3)
+    }
+
+    // MARK: - Subtask breakdown drafts
+
+    /// A half-typed breakdown outline must survive switching tabs: the tab's content view is torn down
+    /// and rebuilt, so the draft is held on the tab state rather than in @State.
+    @Test func breakdownDraft_survivesSwitchingTabsAndComingBack() {
+        let ws = WorkspaceModel()
+        let taskID = UUID()
+        let taskTab = ws.active
+        taskTab.breakdownDrafts[taskID] = "Write changelog\n    Collect PRs"
+
+        ws.openInNewTab(.projects)
+        #expect(ws.active !== taskTab)
+        ws.selectTab(at: 0)
+
+        #expect(ws.active === taskTab)
+        #expect(ws.active.breakdownDrafts[taskID] == "Write changelog\n    Collect PRs")
+    }
+
+    /// Drafts are per task, so two tasks open in one tab don't share an outline.
+    @Test func breakdownDrafts_areKeyedPerTask() {
+        let state = WorkspaceTabState(.diary)
+        let a = UUID(), b = UUID()
+        state.breakdownDrafts[a] = "alpha"
+        state.breakdownDrafts[b] = "beta"
+        #expect(state.breakdownDrafts[a] == "alpha")
+        #expect(state.breakdownDrafts[b] == "beta")
+        #expect(state.breakdownDrafts[UUID()] == nil)
+    }
+
+    /// Session-only, like chatState: a draft is working state, not something to restore at launch.
+    @Test func breakdownDraft_isNotPersistedInTheSnapshot() throws {
+        let ws = WorkspaceModel()
+        ws.active.breakdownDrafts[UUID()] = "unsaved outline"
+        let container = try TestModelContainer.make()
+        let snapshot = ws.snapshot(using: ModelContext(container))
+        let json = try JSONEncoder().encode(snapshot)
+        let text = String(decoding: json, as: UTF8.self)
+        #expect(!text.contains("unsaved outline"))
+    }
+
     @Test func chatState_survivesNavigationWithinItsWorkspaceTab() {
         let ws = WorkspaceModel()
         ws.navigate(to: .chat)

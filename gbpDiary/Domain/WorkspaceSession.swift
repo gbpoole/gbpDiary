@@ -58,6 +58,7 @@ enum WorkspaceTabCoding {
         case .chat:         "chat"
         case .triage:       "triage"
         case .tasks:        "tasks"
+        case .board:        "board"
         case .projects:     "projects"
         case .people:       "people"
         case .institutions: "institutions"
@@ -77,6 +78,7 @@ enum WorkspaceTabCoding {
         case "chat":         .chat
         case "triage":       .triage
         case "tasks":        .tasks
+        case "board":        .board
         case "projects":     .projects
         case "people":       .people
         case "institutions": .institutions
@@ -100,6 +102,7 @@ enum WorkspaceTabCoding {
         case .document:    "document"
         case .contentNote: "contentNote"
         case .task:        "task"
+        case .curation:    "curation"
         default:           nil
         }
     }

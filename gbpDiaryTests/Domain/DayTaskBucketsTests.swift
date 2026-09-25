@@ -1,4 +1,5 @@
 import Foundation
+import SwiftData
 import Testing
 @testable import gbpDiary
 
@@ -85,5 +86,23 @@ struct DayTaskBucketsTests {
         child.dueAt = dayStart.addingTimeInterval(-86_400)   // would be overdue if top-level
         let b = DayTaskBuckets.partition(allTasks: [completed, child], date: day)
         #expect(b.isEmpty)
+    }
+
+    /// Standing tasks are perpetual and logged from the diary strip, so they never reach the panel's
+    /// buckets — not even the To Do catch-all, which would otherwise collect them forever.
+    @Test func standingTasks_excludedFromEveryBucket() throws {
+        let container = try TestModelContainer.make()
+        let context = ModelContext(container)
+        let standing = Task(summary: "Keep inbox at zero")
+        let ordinary = Task(summary: "Write changelog")
+        context.insert(standing); context.insert(ordinary)
+        standing.makeStanding()
+        ordinary.markReviewed()
+        try context.save()
+
+        let b = DayTaskBuckets.partition(allTasks: [standing, ordinary], date: FixedDates.reference)
+        let everywhere = b.inbox + b.overdue + b.dueToday + b.inProgress + b.scheduled + b.todo
+        #expect(!everywhere.contains { $0.id == standing.id })
+        #expect(everywhere.contains { $0.id == ordinary.id })
     }
 }

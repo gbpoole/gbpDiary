@@ -18,6 +18,7 @@ struct ProjectsView: View {
         SortColumn("name", \.nameKey), SortColumn("stream", \.streamKey),
         SortColumn("devTeam", \.devTeamKey), SortColumn("sciTeam", \.sciTeamKey),
         SortColumn("subprojects", \.subprojectCount), SortColumn("lastMeeting", \.lastMeetingAt),
+        SortColumn("lastActivity", \.lastActivityAt), SortColumn("tasksReviewed", \.tasksReviewedKey),
     ]
     private var sortOrderBinding: Binding<[KeyPathComparator<Project>]> {
         let f = filter
@@ -187,10 +188,41 @@ struct ProjectsView: View {
                 }
             }
             .width(min: 90, ideal: 110)
+            TableColumn("Last Activity", value: \.lastActivityAt) { project in
+                neglectCell(project.lastActivityAt, opacity: rowOpacity(project))
+            }
+            .width(min: 90, ideal: 110)
+            TableColumn("Reviewed", value: \.tasksReviewedKey) { project in
+                neglectCell(project.tasksReviewedKey, opacity: rowOpacity(project))
+            }
+            .width(min: 90, ideal: 110)
+        }
+        .contextMenu(forSelectionType: UUID.self) { ids in
+            if ids.count == 1, let p = projects.first(where: { $0.id == ids.first }) {
+                Button("Curate tasks…") { startCuration(p) }
+            }
         }
         .scrollContentBackground(.hidden)
         .background(AppTheme.background)
         .onTableRowDoubleClick { open(rows[$0]) }
+    }
+
+    /// A date that may never have happened — `.distantPast` is the "never" sentinel from the sort keys.
+    @ViewBuilder private func neglectCell(_ date: Date, opacity: Double) -> some View {
+        if date == .distantPast {
+            Text("Never")
+                .foregroundStyle(AppTheme.mutedText.opacity(0.7))
+                .opacity(opacity)
+        } else {
+            Text(date, format: .dateTime.day().month(.abbreviated).year())
+                .foregroundStyle(AppTheme.mutedText)
+                .opacity(opacity)
+        }
+    }
+
+    /// Walk this project and its active subprojects in a curation session tab.
+    private func startCuration(_ project: Project) {
+        workspace.openInNewTab(.curation(project.persistentModelID))
     }
     #else
     private var projectTable: some View {

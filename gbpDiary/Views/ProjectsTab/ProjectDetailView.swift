@@ -21,8 +21,11 @@ struct ProjectDetailView: View {
     @State private var showCompleted = false
     @State private var tagsText = ""
 
+    // Standing tasks have their own section below — they never complete, so listing them among the
+    // open tasks would leave them there permanently.
     private var openTasks: [Task] {
-        allTasks.filter { $0.project?.id == project.id && ($0.status == .todo || $0.status == .started) }
+        allTasks.filter { $0.project?.id == project.id && !$0.isStanding
+                          && ($0.status == .todo || $0.status == .started) }
     }
     private var completedTasks: [Task] {
         allTasks.filter { $0.project?.id == project.id && $0.status == .completed }
@@ -35,7 +38,12 @@ struct ProjectDetailView: View {
     }
 
     var body: some View {
-        if asSheet {
+        // The model can be deleted while this view is still mounted (its tab is closed, but
+        // the view renders once more in the same pass; a sheet is not a tab at all). Reading a
+        // deleted model's stored properties traps, so bail out before the content is built.
+        if project.isDeletedOrDetached {
+            DeletedEntityPlaceholder(noun: "project")
+        } else if asSheet {
             NavigationStack { coreContent }
             #if os(macOS)
             .frame(minWidth: 520, minHeight: 520)
@@ -57,6 +65,7 @@ struct ProjectDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     section("Open Tasks (\(openTasks.count))") { openTasksContent }
+                    StandingTasksSection(project: project)
                     section("Meetings (\(project.meetings.count))") { meetingsContent }
                     section("Documents (\(project.documents.count))") { documentsContent }
                     if !project.subprojects.isEmpty {

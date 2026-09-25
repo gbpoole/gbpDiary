@@ -2,8 +2,15 @@ import Foundation
 
 // Reads the day's Inbox + Sent messages from Mail.app via AppleScript (Apple events). No credentials
 // or network — piggybacks on Mail's already-authenticated accounts. Completion-handler based (no
-// Swift.Task); the AppleScript runs on a background queue since the Mail query can take a second or
-// two, and results are delivered on the main actor. The intricate text handling is in MailScriptParsing.
+// Swift.Task); the AppleScript runs on `MailScriptRunner`'s dedicated run-loop thread since the Mail
+// query can take a second or two, and results are delivered on the main actor. The intricate text
+// handling is in MailScriptParsing.
+//
+// WHY A DEDICATED THREAD AND NOT A GCD QUEUE: Mail's Apple Event reply is delivered through the
+// calling thread's run loop, so executing on a plain background queue (which has none) silently
+// returns nothing. WHY NOT THE MAIN THREAD: while NSAppleScript waits it spins a nested Carbon event
+// loop, which re-enters whatever else that run loop is servicing — under XCTest that re-entrancy
+// deadlocks the test host outright, and in the app it blocks the UI for the length of the query.
 
 enum MailScriptError: Error, Equatable {
     case permissionDenied
@@ -23,17 +30,11 @@ enum MailScriptError: Error, Equatable {
     func fetchDay(_ day: Date, settings: EmailSettings,
                   completion: @escaping (Result<[MailMessageDraft], MailScriptError>) -> Void) {
         #if os(macOS)
-        // Apple events (and the one-time Automation prompt) only work reliably on the main thread —
-        // background execution silently returns nothing. Targeting one account's Inbox/Sent keeps the
-        // query fast (~seconds), so the brief main-thread block is acceptable. The async hop lets the UI
-        // paint the "Fetching…" state before the (blocking) script runs.
+        // Targeting one account's Inbox/Sent keeps the query fast (~seconds). It still runs off the
+        // main thread (see the file header), so the UI stays live while Mail answers.
         let source = MailScriptParsing.script(forDay: day, accountName: settings.accountName,
                                               inboxMailbox: settings.inboxMailbox, sentMailbox: settings.sentMailbox)
-        DispatchQueue.main.async {
-            MainActor.assumeIsolated {
-                completion(Self.run(source).map { MailScriptParsing.parseOutput($0) })
-            }
-        }
+        runScript(source) { completion($0.map { MailScriptParsing.parseOutput($0) }) }
         #else
         completion(.failure(.mailUnavailable))
         #endif
@@ -47,11 +48,7 @@ enum MailScriptError: Error, Equatable {
         let source = MailScriptParsing.script(rangeStart: rangeStart, rangeEnd: rangeEnd,
                                               accountName: settings.accountName,
                                               inboxMailbox: settings.inboxMailbox, sentMailbox: settings.sentMailbox)
-        DispatchQueue.main.async {
-            MainActor.assumeIsolated {
-                completion(Self.run(source).map { MailScriptParsing.parseOutput($0) })
-            }
-        }
+        runScript(source) { completion($0.map { MailScriptParsing.parseOutput($0) }) }
         #else
         completion(.failure(.mailUnavailable))
         #endif
@@ -84,9 +81,7 @@ enum MailScriptError: Error, Equatable {
         }
         #if os(macOS)
         let source = MailScriptParsing.messageContentScript(account: account, mailbox: mailbox, id: id)
-        DispatchQueue.main.async {
-            MainActor.assumeIsolated { completion(Self.run(source)) }
-        }
+        runScript(source, completion)
         #else
         completion(.failure(.mailUnavailable))
         #endif
@@ -97,11 +92,7 @@ enum MailScriptError: Error, Equatable {
                      completion: @escaping (Result<Void, MailScriptError>) -> Void) {
         #if os(macOS)
         let source = MailScriptParsing.openMessageScript(account: account, mailbox: mailbox, id: id)
-        DispatchQueue.main.async {
-            MainActor.assumeIsolated {
-                completion(Self.run(source).map { _ in () })
-            }
-        }
+        runScript(source) { completion($0.map { _ in () }) }
         #else
         completion(.failure(.mailUnavailable))
         #endif
@@ -119,19 +110,22 @@ enum MailScriptError: Error, Equatable {
 
     private func runList(_ source: String, _ completion: @escaping (Result<[String], MailScriptError>) -> Void) {
         #if os(macOS)
-        DispatchQueue.main.async {
-            MainActor.assumeIsolated {
-                completion(Self.run(source).map { MailScriptParsing.parseNameList($0) })
-            }
-        }
+        runScript(source) { completion($0.map { MailScriptParsing.parseNameList($0) }) }
         #else
         completion(.failure(.mailUnavailable))
         #endif
     }
 
     #if os(macOS)
-    /// Runs the AppleScript synchronously (off the main thread) and returns its output text or a mapped error.
-    private nonisolated static func run(_ source: String) -> Result<String, MailScriptError> {
+    /// Runs `source` on the dedicated script thread and delivers the result on the main actor.
+    fileprivate func runScript(_ source: String,
+                               _ completion: @escaping (Result<String, MailScriptError>) -> Void) {
+        MailScriptRunner.shared.run(source, completion: completion)
+    }
+
+    /// Runs the AppleScript synchronously on the calling thread (must be one with a live run loop —
+    /// see `MailScriptRunner`) and returns its output text or a mapped error.
+    fileprivate nonisolated static func run(_ source: String) -> Result<String, MailScriptError> {
         guard let script = NSAppleScript(source: source) else { return .failure(.scriptError("could not compile script")) }
         var errorInfo: NSDictionary?
         let descriptor = script.executeAndReturnError(&errorInfo)
@@ -145,3 +139,59 @@ enum MailScriptError: Error, Equatable {
     }
     #endif
 }
+
+#if os(macOS)
+/// Owns the one background thread that every Mail AppleScript runs on.
+///
+/// The thread keeps a live run loop (parked on a permanent `NSMachPort` source) because that is how
+/// Mail's Apple Event reply reaches `NSAppleScript` — on a plain GCD queue, with no run loop, the
+/// call silently returns nothing. Being a single thread it is also serial, which `NSAppleScript`
+/// requires: it is not thread-safe. Completions are hopped back to the main actor.
+private final class MailScriptRunner: NSObject, @unchecked Sendable {
+    static let shared = MailScriptRunner()
+
+    private var thread: Thread!
+
+    private override init() {
+        super.init()
+        thread = Thread(target: self, selector: #selector(serviceRunLoop), object: nil)
+        thread.name = "io.github.gbpoole.gbpDiary.mailscript"
+        thread.qualityOfService = .userInitiated
+        thread.start()
+    }
+
+    @objc private func serviceRunLoop() {
+        let runLoop = RunLoop.current
+        // A permanent source keeps `run(mode:before:)` from returning immediately with no input.
+        runLoop.add(NSMachPort(), forMode: .default)
+        while !Thread.current.isCancelled {
+            runLoop.run(mode: .default, before: .distantFuture)
+        }
+    }
+
+    /// Executes `source` on the script thread; `completion` is called on the main actor.
+    func run(_ source: String, completion: @escaping (Result<String, MailScriptError>) -> Void) {
+        let request = MailScriptRequest(source: source, completion: completion)
+        perform(#selector(execute(_:)), on: thread, with: request, waitUntilDone: false)
+    }
+
+    @objc private func execute(_ request: MailScriptRequest) {
+        let result = MailScriptService.run(request.source)
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { request.completion(result) }
+        }
+    }
+}
+
+/// Carries one script + its completion across to the script thread (`perform(_:on:with:)` takes an
+/// object). The completion is only ever invoked back on the main actor.
+private final class MailScriptRequest: NSObject, @unchecked Sendable {
+    let source: String
+    let completion: (Result<String, MailScriptError>) -> Void
+
+    init(source: String, completion: @escaping (Result<String, MailScriptError>) -> Void) {
+        self.source = source
+        self.completion = completion
+    }
+}
+#endif

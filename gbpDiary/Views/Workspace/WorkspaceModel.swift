@@ -8,6 +8,7 @@ enum WorkspaceTab: Hashable, Identifiable {
     case chat
     case triage
     case tasks
+    case board
     case projects
     case people
     case institutions
@@ -25,6 +26,8 @@ enum WorkspaceTab: Hashable, Identifiable {
     case document(PersistentIdentifier)
     case contentNote(PersistentIdentifier)
     case task(PersistentIdentifier)
+    // A curation session, identified by the root project it walks.
+    case curation(PersistentIdentifier)
 
     var id: Self { self }
 
@@ -35,6 +38,8 @@ enum WorkspaceTab: Hashable, Identifiable {
         case .chat:                      .chat
         case .triage:                    .triage
         case .tasks, .task:              .tasks
+        case .board:                     .board
+        case .curation:                  .projects
         case .projects, .project:        .projects
         case .people, .person:           .people
         case .institutions, .institution: .institutions
@@ -54,6 +59,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
     case chat         = "Chat"
     case triage       = "Triage"
     case tasks        = "Tasks"
+    case board        = "Board"
     case timesheet    = "Timesheet"
     case projects     = "Projects"
     case meetings     = "Meetings"
@@ -76,7 +82,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
 
     // The browse sidebar's grouping: ordered groups, each with a heading, for visual separation.
     static let sidebarGroups: [(title: String, categories: [WorkspaceCategory])] = [
-        ("Workspace", [.diary, .tasks, .timesheet, .triage, .chat]),
+        ("Workspace", [.diary, .tasks, .board, .timesheet, .triage, .chat]),
         ("Records",   [.projects, .meetings, .people, .institutions]),
         ("Library",   [.documents, .content, .images, .tags]),
     ]
@@ -87,6 +93,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         case .chat:         "bubble.left.and.bubble.right"
         case .triage:       "tray.and.arrow.down"
         case .tasks:        "checkmark.square"
+        case .board:        "rectangle.split.3x1"
         case .projects:     "folder"
         case .people:       "person.2"
         case .institutions: "building.2"
@@ -106,6 +113,7 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         case .chat:         .chat
         case .triage:       .triage
         case .tasks:        .tasks
+        case .board:        .board
         case .projects:     .projects
         case .people:       .people
         case .institutions: .institutions
@@ -301,7 +309,7 @@ enum TaskViewMode: String, CaseIterable {
         case .institutions: ListPageFilter(sortColumnID: "name", sortAscending: true)
         case .tags:         ListPageFilter(sortColumnID: "tag", sortAscending: true)
         case .images:       ListPageFilter(sortColumnID: "name", sortAscending: true)
-        case .diary, .chat, .triage, .tasks, .timesheet:
+        case .diary, .chat, .triage, .tasks, .board, .timesheet:
             ListPageFilter(sortColumnID: "name", sortAscending: true)  // unused (not list pages)
         }
     }
@@ -315,8 +323,20 @@ enum TaskViewMode: String, CaseIterable {
     let chatState = ChatState()
     // Per-tab Tasks-page filter state (remembered across in-tab navigation).
     let tasksFilter = TasksFilterState()
+    // Unsaved subtask-breakdown text, keyed by the task being broken down. Held on the tab (not in the
+    // view) so a half-typed outline survives navigating away and back. Session-only, like chatState.
+    var breakdownDrafts: [UUID: String] = [:]
+    // How far through a curation walk this tab is. Session-only: the walk itself is recomputed from
+    // live project data, and resuming mid-session after a relaunch would be more surprising than useful.
+    var curationIndex: Int = 0
     // Per-tab filter state for the other shared-style list pages, created lazily with page defaults.
-    private var pageFilters: [WorkspaceCategory: ListPageFilter] = [:]
+    //
+    // @ObservationIgnored because `pageFilter(for:)` is called from list-page bodies, so the lazy insert
+    // below is a write during a view update. Measurement showed this was NOT the source of the app's
+    // "Modifying state during view update" faults (that was WindowAccessor) — this is defensive only.
+    // Nothing observes the cache itself: views observe the returned ListPageFilter, which is @Observable,
+    // so identity stays stable and filter edits still publish.
+    @ObservationIgnored private var pageFilters: [WorkspaceCategory: ListPageFilter] = [:]
     func pageFilter(for category: WorkspaceCategory) -> ListPageFilter {
         if let existing = pageFilters[category] { return existing }
         let created = ListPageFilter.makeDefault(for: category)
@@ -360,7 +380,8 @@ enum TaskViewMode: String, CaseIterable {
         history.contains { tab in
             switch tab {
             case .project(let x), .person(let x), .institution(let x),
-                 .minutes(let x), .document(let x), .contentNote(let x), .task(let x):
+                 .minutes(let x), .document(let x), .contentNote(let x), .task(let x),
+                 .curation(let x):
                 return x == id
             default:
                 return false
@@ -578,6 +599,7 @@ enum TaskViewMode: String, CaseIterable {
         case .document(let pid):    (ctx.model(for: pid) as? Document)?.id
         case .contentNote(let pid): (ctx.model(for: pid) as? Note)?.id
         case .task(let pid):        (ctx.model(for: pid) as? Task)?.id
+        case .curation(let pid):    (ctx.model(for: pid) as? Project)?.id
         default:                    nil
         }
     }
@@ -602,6 +624,8 @@ enum TaskViewMode: String, CaseIterable {
                 return first(FetchDescriptor<Note>(predicate: #Predicate { $0.id == id }), ctx).map { .contentNote($0.persistentModelID) }
             case "task":
                 return first(FetchDescriptor<Task>(predicate: #Predicate { $0.id == id }), ctx).map { .task($0.persistentModelID) }
+            case "curation":
+                return first(FetchDescriptor<Project>(predicate: #Predicate { $0.id == id }), ctx).map { .curation($0.persistentModelID) }
             default:
                 return nil
             }
