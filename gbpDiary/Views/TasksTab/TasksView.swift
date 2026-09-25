@@ -26,6 +26,13 @@ struct TasksView: View {
     @State private var autoHidden = false
     /// Last known window width, from WindowWidthReader — drives both auto-hide and the panel's width.
     @State private var windowWidth: CGFloat = 0
+    /// Board cards currently selected. Owned here (not in BoardPanel) so the remove target can appear
+    /// over this pane exactly when there is something to drop on it.
+    @State private var boardSelection: Set<UUID> = []
+    @State private var unplanTargeted = false
+    /// True while a board card is in flight — what reveals the remove target.
+    @State private var boardDragging = false
+    @State private var boardDragMonitor = BoardDragMonitor()
     /// Transient note about tasks a bulk add couldn't place (closed ones).
     @State private var lastSkippedMessage: String? = nil
     @State private var triageSelection: Set<UUID> = []
@@ -46,7 +53,9 @@ struct TasksView: View {
             PickerFilter<Task>(id: "source.email", label: "From email", chipColor: AppTheme.person, group: "Source") { $0.originEmail != nil }
         ]
         let state = [
-            PickerFilter<Task>(id: "preset.incomplete", label: "Incomplete", chipColor: AppTheme.accent, group: "State") { $0.isOpen }
+            PickerFilter<Task>(id: "preset.incomplete", label: "Incomplete", chipColor: AppTheme.accent, group: "State") { $0.isOpen },
+            // The board is the view of what IS planned, so the table only needs the complement.
+            PickerFilter<Task>(id: "preset.notOnBoard", label: "Not on board", chipColor: AppTheme.today, group: "State") { !$0.isOnBoard }
         ]
         // "Mine"/"Others" live in the Assignee group so they OR with the per-person assignee filters.
         let me = AppSettingsStore.myPersonID
@@ -188,6 +197,60 @@ struct TasksView: View {
         workspace.active.boardPanelShown = true   // show where the tasks just went
     }
 
+    /// Shown only while board cards are selected, so it costs no space the rest of the time. An
+    /// overlay rather than a destination on the pane itself: the pane contains the table's draggable
+    /// rows, and making a container of drag sources accept drops wedges AppKit in a dragging-update
+    /// loop. This view contains nothing draggable.
+    @ViewBuilder private var removeDropTarget: some View {
+        if boardDragging {
+            VStack(spacing: 8) {
+                Image(systemName: "tray.and.arrow.down")
+                    .font(.system(size: 24))
+                Text("Drop here to remove")
+                    .font(AppTheme.bodyFont(size: 13).weight(.semibold))
+                Text(boardSelection.count > 1 ? "\(boardSelection.count) selected" : "from the board")
+                    .font(AppTheme.bodyFont(size: 11))
+                    .foregroundStyle(AppTheme.mutedText)
+            }
+            .padding(22)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+            .overlay {
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(unplanTargeted ? AppTheme.destructive : AppTheme.mutedText.opacity(0.5),
+                                  style: StrokeStyle(lineWidth: unplanTargeted ? 2 : 1, dash: [6, 4]))
+            }
+            .foregroundStyle(unplanTargeted ? AppTheme.destructive : AppTheme.mutedText)
+            .shadow(radius: 8)
+            .dropDestination(for: String.self) { payloads, _ in
+                unplan(BoardDragPayload.decode(payloads))
+            } isTargeted: { unplanTargeted = $0 }
+            .transition(.opacity)
+        }
+    }
+
+    /// Clears the horizon of every dragged task and its descendants — the same subtree rule as the
+    /// card's "Remove from board", so the two paths agree.
+    @discardableResult
+    private func unplan(_ ids: [UUID]) -> Bool {
+        let dragged = allTasks.filter { ids.contains($0.id) }
+        guard !dragged.isEmpty else { return false }
+        var childrenByParent: [UUID: [UUID]] = [:]
+        for task in allTasks {
+            if let pid = task.parent?.id { childrenByParent[pid, default: []].append(task.id) }
+        }
+        var targets: Set<UUID> = []
+        for task in dragged {
+            targets.formUnion(TaskParenting.subtree(of: task.id, childrenByParent: childrenByParent))
+        }
+        for task in allTasks where targets.contains(task.id) && task.isOnBoard {
+            task.place(on: nil)
+            task.updatedAt = Date()
+        }
+        boardSelection.removeAll()
+        boardDragging = false
+        return true
+    }
+
     private func clearSelection() { selection.removeAll(); stashedSelection.removeAll() }
 
     private func bulkComplete() { for t in selectedTasks { t.markCompleted() }; clearSelection() }
@@ -238,10 +301,15 @@ struct TasksView: View {
             }
             .frame(minWidth: 360, maxWidth: .infinity)
             .background(AppTheme.background)
+            .overlay { removeDropTarget }
+            // NOTE: deliberately NOT a drop destination. The table's own rows drag `String`, so
+            // accepting drops here made a row-drag enter its own destination and wedge AppKit in a
+            // dragging-update loop — an unrecoverable stuck drag. Removal by drag lives on
+            // BoardPanel's remove strip, which contains no drag sources.
 
             if workspace.active.boardPanelShown {
                 Divider()
-                BoardPanel()
+                BoardPanel(selection: $boardSelection, isDragging: $boardDragging)
                     .frame(width: boardPanelWidth)
             }
         }
@@ -281,6 +349,12 @@ struct TasksView: View {
             Button("Cancel", role: .cancel) {}
         } message: { Text("This permanently deletes the selected task\(selection.count == 1 ? "" : "s").") }
         .onChange(of: filterState.activeFilterIds) { pendingStatusIds.removeAll() }
+        .onAppear {
+            // Mouse-up ends every drag, however it finished, so the target never gets stranded on screen.
+            boardDragMonitor.onEnded = { boardDragging = false }
+            boardDragMonitor.start()
+        }
+        .onDisappear { boardDragMonitor.stop() }
         .onChange(of: filterState.dateRange) { pendingStatusIds.removeAll() }
         // Keep the selection in sync with filtering: drop now-hidden tasks (restorable later), restore
         // reappearing ones. Keyed on the visible id set, so pure re-sorts and manual selection changes
@@ -499,7 +573,9 @@ struct TasksView: View {
                     Text(row.task.summary)
                         .lineLimit(1)
                         .font(AppTheme.bodyFont(size: 13))
-                        .foregroundStyle(pendingStatusIds.contains(row.id) ? AppTheme.mutedText : AppTheme.text)
+                        .italic(row.task.isOnBoard)
+                        .foregroundStyle(row.task.isOnBoard || pendingStatusIds.contains(row.id)
+                                         ? AppTheme.mutedText : AppTheme.text)
                 }
                 .padding(.leading, CGFloat(level(row)) * 16)
                 .opacity(dim(row))

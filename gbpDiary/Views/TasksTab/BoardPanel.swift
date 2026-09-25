@@ -12,6 +12,13 @@ struct BoardPanel: View {
     @Query(sort: \Task.createdAt) private var allTasks: [Task]
 
     @State private var dropTarget: PlanHorizon?
+    /// Cards picked out for a bulk move or removal. Spans lanes, so stragglers from Today and Maybe
+    /// can be swept off together. Owned by TasksView, which shows its drop target only while this is
+    /// non-empty.
+    @Binding var selection: Set<UUID>
+    /// Set the moment a card drag starts, so TasksView can reveal its remove target. Cleared on
+    /// mouse-up by BoardDragMonitor — SwiftUI reports no drag end.
+    @Binding var isDragging: Bool
 
     private var buckets: BoardBuckets<Task> {
         BoardPartition.partition(allTasks, isOpen: \.isOpen,
@@ -83,11 +90,16 @@ struct BoardPanel: View {
                             .padding(.horizontal, 10).padding(.vertical, 6)
                     }
                     ForEach(laneRows(tasks), id: \.item.id) { row in
-                        BoardCard(task: row.item, depth: row.depth, isContext: row.isContext)
-                            .draggable(row.item.id.uuidString)
+                        BoardCard(task: row.item, depth: row.depth, isContext: row.isContext,
+                                  isSelected: selection.contains(row.item.id))
+                            .onDrag {
+                                isDragging = true
+                                return NSItemProvider(object: dragPayload(for: row.item) as NSString)
+                            }
                             .onTapGesture(count: 2) {
                                 workspace.focusOrOpen(.task(row.item.persistentModelID))
                             }
+                            .onTapGesture { toggleSelection(row.item, isContext: row.isContext) }
                             .contextMenu { cardMenu(row.item, isContext: row.isContext) }
                     }
                 }
@@ -96,6 +108,8 @@ struct BoardPanel: View {
             }
         }
         .frame(minWidth: 180, maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .contentShape(Rectangle())
+        .onTapGesture { selection.removeAll() }
         .background(dropTarget == horizon ? AppTheme.chipBackground(tint) : Color.clear)
         .dropDestination(for: String.self) { items, _ in
             place(ids: items, on: horizon)
@@ -129,6 +143,27 @@ struct BoardPanel: View {
         }
     }
 
+    // MARK: - Selection
+
+    /// Click selects, ⌘/⇧ extends — the Tasks table's conventions. Context rows aren't selectable:
+    /// they hold no horizon, so they can't be moved or removed.
+    private func toggleSelection(_ task: Task, isContext: Bool) {
+        guard !isContext else { return }
+        let extending = NSEvent.modifierFlags.contains(.command) || NSEvent.modifierFlags.contains(.shift)
+        if extending {
+            if selection.contains(task.id) { selection.remove(task.id) } else { selection.insert(task.id) }
+        } else {
+            selection = [task.id]
+        }
+    }
+
+    /// Dragging a selected card takes the whole selection; dragging an unselected one takes just it.
+    private func dragPayload(for task: Task) -> String {
+        selection.contains(task.id)
+            ? BoardDragPayload.encode(Array(selection))
+            : BoardDragPayload.encode([task.id])
+    }
+
     // MARK: - Layout
 
     /// The lane's members laid out as nested rows, with the ancestors needed to place them.
@@ -150,10 +185,12 @@ struct BoardPanel: View {
 
     @discardableResult
     private func place(ids: [String], on horizon: PlanHorizon) -> Bool {
-        let uuids = Set(ids.compactMap(UUID.init(uuidString:)))
+        let uuids = Set(BoardDragPayload.decode(ids))
         let moved = allTasks.filter { uuids.contains($0.id) }
         guard !moved.isEmpty else { return false }
         for task in moved { place(task, on: horizon) }
+        selection.removeAll()
+        isDragging = false
         return true
     }
 
@@ -199,6 +236,7 @@ private struct BoardCard: View {
     var isContext: Bool = false
     /// A date-driven suggestion rather than something you planned: accented, and not draggable.
     var isDerived: Bool = false
+    var isSelected: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
@@ -235,6 +273,11 @@ private struct BoardCard: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(AppTheme.cardRaised.opacity(isContext ? 0.15 : 0.35),
                     in: RoundedRectangle(cornerRadius: 6))
+        .overlay {
+            if isSelected {
+                RoundedRectangle(cornerRadius: 6).strokeBorder(AppTheme.accent, lineWidth: 2)
+            }
+        }
         .overlay(alignment: .leading) {
             // A stripe in the due colour marks a card you cannot drag, so it doesn't look like the
             // planned cards below it.

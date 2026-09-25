@@ -9,7 +9,8 @@ struct TasksToolbar: View {
 
     // Preset chips that toggle a single `activeFilterId`.
     private let filterPresets: [(label: String, id: String)] = [
-        ("Incomplete", "preset.incomplete"),
+        ("Incomplete",   "preset.incomplete"),
+        ("Not on board", "preset.notOnBoard"),
         ("From email", "source.email"),
         ("Overdue",    "flag.overdue"),
         ("Due today",  "flag.dueToday"),

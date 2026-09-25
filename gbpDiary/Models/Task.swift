@@ -177,6 +177,10 @@ extension Task {
         updatedAt = Date()
     }
 
+    /// On the planning board. The single rule shared by the board itself, the Tasks table's styling
+    /// and its "Not on board" filter — so those three can never disagree about what "planned" means.
+    var isOnBoard: Bool { planHorizon != nil }
+
     /// Place (or clear) the task on the planning board.
     ///
     /// Standing tasks ARE placeable: perpetual work such as "Triage Emails" is legitimately planned
