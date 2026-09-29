@@ -161,7 +161,10 @@ struct ObsidianBundleImporter {
             task.completedAt = parseDate(imported.completedAt)
             task.cancelledAt = parseDate(imported.cancelledAt)
             task.followUpAt = parseDate(imported.followUpAt)
-            task.followedUpHistory = imported.followedUpHistory?.compactMap(parseDate) ?? []
+            // Imported bundles carry dates only; the note is what the app records going forward.
+            task.followedUpHistory = imported.followedUpHistory?
+                .compactMap(parseDate)
+                .map { FollowUpEntry(date: $0, note: "") } ?? []
             task.sourceContext = SourceContext(imported: imported.sourceContext)
             task.project = imported.projectId.flatMap { projects[$0] }
             task.assignee = imported.assigneePersonId.flatMap { people[$0] }

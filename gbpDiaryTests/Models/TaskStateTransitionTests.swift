@@ -67,7 +67,7 @@ struct TaskStateTransitionTests {
     @Test func cycling_preservesOriginalCompletedAt() {
         let task = Task(summary: "a", status: .completed)
         task.completedAt = FixedDates.reference
-        task.setFollowUp(date: FixedDates.dayStart(offsetDays: 1))
+        task.setFollowUp(date: FixedDates.dayStart(offsetDays: 1), note: "chasing")
         task.markCancelled()
         task.unmarkCancelled()
         task.status = .started; task.updatedAt = Date()
@@ -104,16 +104,6 @@ struct TaskStateTransitionTests {
         #expect(task.followUpAt == nil)
     }
 
-    @Test func clearFollowUp_revertsToCompleted() {
-        let task = Task(summary: "a", status: .followUpPending)
-        task.followUpAt = FixedDates.dayStart(offsetDays: 1)
-
-        task.clearFollowUp()
-
-        #expect(task.followUpAt == nil)
-        #expect(task.status == .completed)
-    }
-
     @Test func clearFollowUp_noOpWhenNotFollowUpPending() {
         let task = Task(summary: "a", status: .completed)
         task.completedAt = FixedDates.reference
@@ -124,26 +114,144 @@ struct TaskStateTransitionTests {
         #expect(task.completedAt == FixedDates.reference)
     }
 
-    @Test func setFollowUp_setsPendingStateAndDate() {
+    @Test func setFollowUp_setsPendingStateDateAndRecordsTheNote() {
         let task = Task(summary: "a", status: .completed)
         let due = FixedDates.dayStart(offsetDays: 1)
 
-        task.setFollowUp(date: due)
+        task.setFollowUp(date: due, note: "waiting on Sam")
 
         #expect(task.status == .followUpPending)
         #expect(task.followUpAt == due)
+        // History is written when the follow-up is SET — that is the moment you know why.
+        #expect(task.followedUpHistory.map(\.date) == [due])
+        #expect(task.followedUpHistory.map(\.note) == ["waiting on Sam"])
     }
 
-    @Test func markFollowUpDone_appendsHistoryAndCompletes() {
-        let due = FixedDates.dayStart(offsetDays: 1)
-        let task = Task(summary: "a", status: .followUpPending)
-        task.followUpAt = due
+    /// Setting successive follow-ups builds the list; entries are never rewritten or removed.
+    @Test func setFollowUp_appendsToHistory() {
+        let task = Task(summary: "a")
+        let first = FixedDates.dayStart(offsetDays: 1)
+        let second = FixedDates.dayStart(offsetDays: 8)
 
-        task.markFollowUpDone()
+        task.setFollowUp(date: first, note: "chased")
+        task.clearFollowUp()
+        task.setFollowUp(date: second, note: "chased again")
+
+        #expect(task.followedUpHistory.map(\.note) == ["chased", "chased again"])
+        #expect(task.followedUpHistory.map(\.date) == [first, second])
+    }
+
+    /// The pending entry is the LAST one recorded, and only while a follow-up is actually live.
+    @Test func pendingFollowUpEntry_isTheLastOneAndOnlyWhilePending() {
+        let task = Task(summary: "a")
+        #expect(task.pendingFollowUpEntry == nil)
+
+        task.setFollowUp(date: FixedDates.dayStart(offsetDays: 1), note: "first")
+        task.setFollowUp(date: FixedDates.dayStart(offsetDays: 8), note: "second")
+        #expect(task.pendingFollowUpEntry?.note == "second")
+
+        task.clearFollowUp()                       // no live follow-up any more
+        #expect(task.pendingFollowUpEntry == nil)
+        #expect(task.followedUpHistory.count == 2, "the record survives")
+    }
+
+    /// Correcting the pending entry edits it in place and drags `followUpAt` with it — the two mirror each
+    /// other, so they must never drift apart.
+    @Test func updateFollowUp_onThePendingEntry_movesFollowUpAt() {
+        let task = Task(summary: "a")
+        task.setFollowUp(date: FixedDates.dayStart(offsetDays: 1), note: "typo")
+        let entry = task.pendingFollowUpEntry!
+        let moved = FixedDates.dayStart(offsetDays: 5)
+
+        task.updateFollowUp(entryID: entry.id, date: moved, note: "waiting on Sam")
+
+        #expect(task.followedUpHistory.count == 1, "a correction never appends")
+        #expect(task.followUpAt == moved)
+        #expect(task.followedUpHistory.first?.note == "waiting on Sam")
+        #expect(task.followedUpHistory.first?.id == entry.id, "identity is kept")
+    }
+
+    /// Editing an older entry is a correction of the record only — the live follow-up is untouched.
+    @Test func updateFollowUp_onAnOlderEntry_leavesFollowUpAtAlone() {
+        let task = Task(summary: "a")
+        task.setFollowUp(date: FixedDates.dayStart(offsetDays: 1), note: "first")
+        let older = task.followedUpHistory[0]
+        task.setFollowUp(date: FixedDates.dayStart(offsetDays: 8), note: "second")
+        let pendingDate = task.followUpAt
+
+        task.updateFollowUp(entryID: older.id, date: FixedDates.dayStart(offsetDays: -3), note: "fixed")
+
+        #expect(task.followUpAt == pendingDate)
+        #expect(task.followedUpHistory.map(\.note) == ["fixed", "second"], "append order is preserved")
+    }
+
+    /// Removing the pending entry ENDS the follow-up: the date goes and the task drops to To do, so it can
+    /// never be stranded in `.followUpPending` with no date.
+    @Test func removeFollowUp_ofThePendingEntry_endsTheFollowUp() {
+        let task = Task(summary: "a")
+        task.setFollowUp(date: FixedDates.dayStart(offsetDays: 1), note: "waiting")
+        let entry = task.pendingFollowUpEntry!
+
+        task.removeFollowUp(entryID: entry.id)
+
+        #expect(task.followedUpHistory.isEmpty)
+        #expect(task.followUpAt == nil)
+        #expect(task.status == .todo)
+    }
+
+    /// Removing an older entry is pure housekeeping — the live follow-up stays exactly as it was.
+    @Test func removeFollowUp_ofAnOlderEntry_keepsTheFollowUpRunning() {
+        let task = Task(summary: "a")
+        task.setFollowUp(date: FixedDates.dayStart(offsetDays: 1), note: "mistake")
+        let older = task.followedUpHistory[0]
+        let live = FixedDates.dayStart(offsetDays: 8)
+        task.setFollowUp(date: live, note: "real")
+
+        task.removeFollowUp(entryID: older.id)
+
+        #expect(task.followedUpHistory.map(\.note) == ["real"])
+        #expect(task.followUpAt == live)
+        #expect(task.status == .followUpPending)
+    }
+
+    /// A follow-up is a DAY: the stored date never carries a time of day, so "today" means today.
+    @Test func setFollowUp_storesTheDayNotTheTime() {
+        let task = Task(summary: "a")
+        let afternoon = FixedDates.dayStart(offsetDays: 2).addingTimeInterval(14 * 3_600)
+
+        task.setFollowUp(date: afternoon, note: "why")
+
+        #expect(task.followUpAt == FixedDates.dayStart(offsetDays: 2))
+        #expect(task.followedUpHistory.first?.date == FixedDates.dayStart(offsetDays: 2))
+    }
+
+    /// Follow-up implies IN PROGRESS, so ending one must not decide the task is finished. This
+    /// reverses the old behaviour, where clearFollowUp() completed the task.
+    @Test func clearFollowUp_leavesStatusAlone() {
+        let task = Task(summary: "a")
+        task.setFollowUp(date: FixedDates.dayStart(offsetDays: 1), note: "waiting")
+        #expect(task.status == .followUpPending)
+
+        task.clearFollowUp()
+
+        #expect(task.followUpAt == nil)
+        #expect(task.status == .followUpPending, "clearing the date must not complete the task")
+        #expect(task.followedUpHistory.count == 1, "history is append-only")
+    }
+
+    /// Ending a follow-up is choosing another status — the same path any other task takes — and it leaves
+    /// the history alone. (The old `markFollowUpDone()` did this and nothing called it; it was deleted.)
+    @Test func completingAFollowUp_clearsTheDateAndKeepsTheHistory() {
+        let due = FixedDates.dayStart(offsetDays: 1)
+        let task = Task(summary: "a")
+        task.setFollowUp(date: due, note: "chased")
+
+        task.followUpAt = nil          // what TaskStatusMenu.setStatus(.completed) does
+        task.markCompleted()
 
         #expect(task.status == .completed)
         #expect(task.followUpAt == nil)
-        #expect(task.followedUpHistory == [due])
+        #expect(task.followedUpHistory.map(\.note) == ["chased"])
         #expect(task.completedAt != nil)
     }
 

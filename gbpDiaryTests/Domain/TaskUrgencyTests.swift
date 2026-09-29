@@ -8,7 +8,7 @@ struct TaskUrgencyTests {
     private func base() -> UrgencyInputs {
         UrgencyInputs(dueAt: nil, priorityWeight: 0, ageDays: 0, isActive: false,
                       isScheduledNow: false, hasTags: false, hasProject: false,
-                      isBlocked: false, isBlocking: false, isWaiting: false)
+                      isBlocked: false, isBlocking: false)
     }
 
     @Test func dueUrgency_rampsAndClamps() {
@@ -41,9 +41,23 @@ struct TaskUrgencyTests {
         #expect(TaskUrgency.score(sched, now: now) == TaskUrgency.score(base(), now: now) + TaskUrgency.cScheduled)
     }
 
-    @Test func waiting_penalises() {
-        var waiting = base(); waiting.isWaiting = true
-        #expect(TaskUrgency.score(waiting, now: now) < TaskUrgency.score(base(), now: now))
+    /// A parked follow-up means "as done as I can do for now": zero, not merely reduced. The old
+    /// waiting rule applied a penalty, and the old follow-up rule actually RAMPED urgency toward the
+    /// date — both are replaced by this.
+    @Test func parkedFollowUp_scoresZero() {
+        var parked = base()
+        parked.isFollowUpParked = true
+        parked.priorityWeight = 1            // would otherwise score highly
+        parked.dueAt = now.addingTimeInterval(-10 * 86400)
+        #expect(TaskUrgency.score(parked, now: now) == 0)
+    }
+
+    /// Once the date arrives the task is ordinary again, ranked by its (effective) due date.
+    @Test func followUpAfterItsDate_ranksNormally() {
+        var due = base()
+        due.isFollowUpParked = false
+        due.dueAt = now.addingTimeInterval(-1 * 86400)
+        #expect(TaskUrgency.score(due, now: now) > 0)
     }
 
     @Test func notOpen_scoresZero() {

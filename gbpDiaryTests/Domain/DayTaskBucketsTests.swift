@@ -56,11 +56,13 @@ struct DayTaskBucketsTests {
         #expect(b.inProgress.isEmpty)
     }
 
-    @Test func waitingTasks_excludedFromActionBuckets() {
-        let waiting = reviewed("waiting", status: .started)
-        waiting.waitUntil = dayStart.addingTimeInterval(5 * 86_400)   // deferred past the day
-        let b = DayTaskBuckets.partition(allTasks: [waiting], date: day)
-        #expect(b.isEmpty)   // waiting tasks aren't shown anywhere (not even To Do)
+    /// A parked follow-up is ranked last (urgency 0) but never hidden — the old `waitUntil` rule that
+    /// removed deferred tasks from every bucket is gone.
+    @Test func parkedFollowUpTasks_stayVisibleInToDo() {
+        let parked = reviewed("parked")
+        parked.setFollowUp(date: dayStart.addingTimeInterval(5 * 86_400), note: "waiting on Sam")
+        let b = DayTaskBuckets.partition(allTasks: [parked], date: day)
+        #expect(b.todo.map(\.id) == [parked.id])
     }
 
     @Test func mondayWindow_absorbsWeekendDueAndScheduled() {

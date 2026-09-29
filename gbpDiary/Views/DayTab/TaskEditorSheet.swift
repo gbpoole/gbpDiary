@@ -36,7 +36,6 @@ struct TaskEditorSheet: View {
     @State private var selectedBlockers: [Task] = []
     @State private var selectedParent: Task?
     @State private var repeatsText = ""
-    @State private var waitDate: Date?
     @State private var untilDate: Date?
     @State private var tagsText = ""
     @State private var showingLogTime = false
@@ -368,18 +367,11 @@ struct TaskEditorSheet: View {
     }
 
     private var recurrenceSection: some View {
-        GroupBox("Repeat & defer") {
+        GroupBox("Repeat & auto-cancel") {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text("Repeats").frame(width: 64, alignment: .leading).font(.callout).foregroundStyle(.secondary)
                     TextField("e.g. 1w, 2mo (blank = none)", text: $repeatsText).textFieldStyle(.roundedBorder)
-                }
-                Toggle("Wait until (hide until a date)", isOn: Binding(
-                    get: { waitDate != nil },
-                    set: { waitDate = $0 ? (waitDate ?? defaultDate) : nil }))
-                if waitDate != nil {
-                    DatePicker("", selection: Binding(get: { waitDate ?? defaultDate }, set: { waitDate = $0 }),
-                               displayedComponents: .date).labelsHidden()
                 }
                 Toggle("Until (auto-cancel after a date)", isOn: Binding(
                     get: { untilDate != nil },
@@ -512,7 +504,6 @@ struct TaskEditorSheet: View {
         selectedBlockers = t.dependsOn
         selectedParent = t.parent
         repeatsText = t.recurrenceRule ?? ""
-        waitDate = t.waitUntil
         untilDate = t.until
         tagsText = t.tags.joined(separator: ", ")
     }
@@ -565,7 +556,6 @@ struct TaskEditorSheet: View {
                 }
             }
             t.recurrenceRule = RecurrenceRule.parse(repeatsText)?.normalized
-            t.waitUntil = waitDate
             t.until = untilDate
             t.project = selectedProject
             t.assignee = selectedAssignee
@@ -581,7 +571,6 @@ struct TaskEditorSheet: View {
             newTask.dependsOn = selectedBlockers
             newTask.parent = selectedParent
             newTask.recurrenceRule = RecurrenceRule.parse(repeatsText)?.normalized
-            newTask.waitUntil = waitDate
             newTask.until = untilDate
             newTask.project = selectedProject
             newTask.assignee = selectedAssignee

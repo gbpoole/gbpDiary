@@ -8,9 +8,9 @@ struct BoardDueGroupTests {
     private var cal: Calendar { .current }
 
     private func inputs(due: Date?, isOpen: Bool = true, needsTriage: Bool = false,
-                        isWaiting: Bool = false, isStanding: Bool = false,
+                        isStanding: Bool = false,
                         hasHorizon: Bool = false) -> BoardDueGroup.Inputs {
-        .init(isOpen: isOpen, needsTriage: needsTriage, isWaiting: isWaiting,
+        .init(isOpen: isOpen, needsTriage: needsTriage,
               isStanding: isStanding, hasHorizon: hasHorizon, dueAt: due)
     }
 
@@ -40,10 +40,6 @@ struct BoardDueGroupTests {
         #expect(!includes(inputs(due: day(-1), needsTriage: true)))
     }
 
-    /// waitUntil is a deliberate "not before this date" and outranks the due date.
-    @Test func waitingTasksAreExcluded() {
-        #expect(!includes(inputs(due: day(-1), isWaiting: true)))
-    }
 
     /// Standing work carries no deadline; this also guards the isOverdue/isDueToday asymmetry.
     @Test func standingTasksAreExcluded() {

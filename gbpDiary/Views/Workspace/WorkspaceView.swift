@@ -109,6 +109,7 @@ struct WorkspaceView: View {
             migrateFocusBlockProjectsOnce()
             migrateFocusBlockDescriptionsOnce()
             migrateTaskSourcesOnce()
+            migrateFollowUpDaysOnce()
             purgeOldDismissedEmail()
         }
         // Persist the session when the app deactivates/backgrounds (covers ⌘Q and app switches).
@@ -269,6 +270,28 @@ struct WorkspaceView: View {
             task.source = source
         }
         if !needing.isEmpty { try? modelContext.save() }
+        UserDefaults.standard.set(true, forKey: key)
+    }
+
+    // One-time (flag-guarded): a follow-up is a DAY, never a time, but rows written before that rule
+    // carry whatever time-of-day the old date-only picker inherited from its seed — so a follow-up dated
+    // "today" would read as parked all morning and only go due mid-afternoon. Normalise every
+    // `followUpAt` and every history entry to the start of its day. The write also persists the ids that
+    // decoding synthesises for legacy, id-less entries (see `FollowUpEntry.init(from:)`).
+    private func migrateFollowUpDaysOnce() {
+        let key = "task.followUpDays.v1"
+        guard !UserDefaults.standard.bool(forKey: key) else { return }
+        let tasks = (try? modelContext.fetch(FetchDescriptor<Task>())) ?? []
+        var changed = false
+        for task in tasks {
+            let history = task.followedUpHistory
+            guard task.followUpAt != nil || !history.isEmpty else { continue }
+            let fixed = FollowUpHistory.normalized(followUpAt: task.followUpAt, entries: history)
+            task.followUpAt = fixed.followUpAt
+            task.followedUpHistory = fixed.entries      // also stamps any synthesised ids
+            changed = true
+        }
+        if changed { try? modelContext.save() }
         UserDefaults.standard.set(true, forKey: key)
     }
 

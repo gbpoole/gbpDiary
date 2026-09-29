@@ -14,7 +14,7 @@ struct UrgencyInputs: Equatable {
     var hasProject: Bool
     var isBlocked: Bool           // has an incomplete blocker (Stage 3)
     var isBlocking: Bool          // blocks another open task (Stage 3)
-    var isWaiting: Bool           // wait-until in the future (Stage 4)
+    var isFollowUpParked: Bool = false  // follow-up set, date not yet arrived → score 0
     var isStanding: Bool = false  // stateless perpetual task → never ranked (score 0)
 }
 
@@ -29,11 +29,12 @@ enum TaskUrgency {
     static let cProject = 1.0
     static let cBlocked = -5.0
     static let cBlocking = 8.0
-    static let cWaiting = -3.0
     static let ageMaxDays = 365.0
 
     static func score(_ i: UrgencyInputs, now: Date = Date()) -> Double {
-        guard i.isOpen, !i.isStanding else { return 0 }   // done/cancelled/standing tasks aren't ranked
+        // Parked follow-ups join the not-ranked cases: "as done as I can do for now" means zero
+        // urgency until the date, not a reduced score — which is what the old waiting penalty gave.
+        guard i.isOpen, !i.isStanding, !i.isFollowUpParked else { return 0 }
         var u = 0.0
         u += cDue * dueUrgency(i.dueAt, now: now)
         u += cPriority * i.priorityWeight
@@ -44,7 +45,6 @@ enum TaskUrgency {
         if i.hasProject { u += cProject }
         if i.isBlocked { u += cBlocked }
         if i.isBlocking { u += cBlocking }
-        if i.isWaiting { u += cWaiting }
         return u
     }
 
@@ -81,7 +81,7 @@ extension TaskUrgency {
             hasProject: task.project != nil,
             isBlocked: task.isBlocked,
             isBlocking: task.isBlocking,
-            isWaiting: task.isWaiting,
+            isFollowUpParked: task.isFollowUpParked,
             isStanding: task.isStanding
         )
         return score(inputs, now: now)

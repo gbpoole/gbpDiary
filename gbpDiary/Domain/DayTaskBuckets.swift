@@ -2,7 +2,7 @@ import Foundation
 
 // Partitions tasks into the diary task-panel's mutually-exclusive buckets for a reference day.
 // `inbox` = untriaged, open, top-level tasks (awaiting Review). The action buckets hold **triaged**
-// (`!needsTriage`), open, top-level, non-waiting tasks, each assigned to exactly one bucket by priority:
+// (`!needsTriage`), open, top-level tasks, each assigned to exactly one bucket by priority:
 //   Overdue → Due today → In-progress (`.started`) → Scheduled (scheduledAt falls on the day) → To Do.
 // `todo` is the catch-all so every open task is visible somewhere. Pure/testable; reuses `TaskFlags`.
 enum DayTaskBuckets {
@@ -32,7 +32,6 @@ enum DayTaskBuckets {
             // strip, not worked through the action buckets, so they never appear here.
             guard task.parent == nil, task.isOpen, !task.isStanding else { continue }
             if task.needsTriage { b.inbox.append(task); continue }
-            if TaskFlags.isWaiting(waitUntil: task.waitUntil, now: date) { continue }
 
             if let due = task.dueAt, due < window.lowerBound {
                 b.overdue.append(task)

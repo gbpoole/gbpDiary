@@ -8,19 +8,15 @@ import Foundation
 //    never hidden for this reason, since there is no point triaging something already done. The
 //    "Needs triage" flag filter reveals them, which is how a freshly captured task reaches the
 //    planning board: placing it there marks it reviewed, so planning doubles as triage.
-//  • **Waiting** tasks are deferred until a date; the "Waiting" flag filter reveals them.
 //  • **Standing** tasks are perpetual and never complete, so they would otherwise sit in the table
 //    forever; the "Standing" flag filter reveals them.
 enum TaskTableVisibility {
     static func isHidden(isOpen: Bool,
                          needsTriage: Bool,
-                         isWaiting: Bool,
                          isStanding: Bool,
-                         showWaiting: Bool,
                          showStanding: Bool,
                          showNeedsTriage: Bool) -> Bool {
         if isOpen && needsTriage && !showNeedsTriage { return true }
-        if isWaiting && !showWaiting { return true }
         if isStanding && !showStanding { return true }
         return false
     }
