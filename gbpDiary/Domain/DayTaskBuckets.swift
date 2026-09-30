@@ -3,10 +3,20 @@ import Foundation
 // Partitions tasks into the diary task-panel's mutually-exclusive buckets for a reference day.
 // `inbox` = untriaged, open, top-level tasks (awaiting Review). The action buckets hold **triaged**
 // (`!needsTriage`), open, top-level tasks, each assigned to exactly one bucket by priority:
-//   Overdue → Due today → In-progress (`.started`) → Scheduled (scheduledAt falls on the day) → To Do.
+//   **Board lane** (`planHorizon`) → Overdue → Due today → In-progress (`.started`)
+//   → Scheduled (scheduledAt falls on the day) → To Do.
 // `todo` is the catch-all so every open task is visible somewhere. Pure/testable; reuses `TaskFlags`.
+//
+// **The board wins.** A planned task is a decision you have already made, so it appears once — in the lane
+// you put it in — and never also under a date-derived heading. Nothing is lost by that: the row's own due
+// chip still carries the overdue/due-today warning. Lanes order by `planSortOrder`, the same as the board,
+// so the panel and the board read in the same sequence.
 enum DayTaskBuckets {
     struct Buckets {
+        // The board's three lanes, in urgency order — rendered above the date-derived buckets.
+        var today: [Task] = []
+        var thisWeek: [Task] = []
+        var maybe: [Task] = []
         var overdue: [Task] = []
         var dueToday: [Task] = []
         var inProgress: [Task] = []
@@ -15,7 +25,8 @@ enum DayTaskBuckets {
         var inbox: [Task] = []
 
         var isEmpty: Bool {
-            overdue.isEmpty && dueToday.isEmpty && inProgress.isEmpty
+            today.isEmpty && thisWeek.isEmpty && maybe.isEmpty
+                && overdue.isEmpty && dueToday.isEmpty && inProgress.isEmpty
                 && scheduled.isEmpty && todo.isEmpty && inbox.isEmpty
         }
     }
@@ -33,6 +44,16 @@ enum DayTaskBuckets {
             guard task.parent == nil, task.isOpen, !task.isStanding else { continue }
             if task.needsTriage { b.inbox.append(task); continue }
 
+            // Planned work goes to its lane and nowhere else (see the note above).
+            if let horizon = task.planHorizon {
+                switch horizon {
+                case .today:    b.today.append(task)
+                case .thisWeek: b.thisWeek.append(task)
+                case .maybe:    b.maybe.append(task)
+                }
+                continue
+            }
+
             if let due = task.dueAt, due < window.lowerBound {
                 b.overdue.append(task)
             } else if let due = task.dueAt, window.contains(due) {
@@ -45,6 +66,20 @@ enum DayTaskBuckets {
                 b.todo.append(task)   // catch-all: any other open, triaged, top-level task
             }
         }
+        b.today = byPlanOrder(b.today)
+        b.thisWeek = byPlanOrder(b.thisWeek)
+        b.maybe = byPlanOrder(b.maybe)
         return b
+    }
+
+    /// Lane order, matching the board. Stable on ties so equal `planSortOrder`s keep their input order.
+    private static func byPlanOrder(_ tasks: [Task]) -> [Task] {
+        tasks.enumerated()
+            .sorted { l, r in
+                l.element.planSortOrder == r.element.planSortOrder
+                    ? l.offset < r.offset
+                    : l.element.planSortOrder < r.element.planSortOrder
+            }
+            .map(\.element)
     }
 }

@@ -65,6 +65,47 @@ struct DayTaskBucketsTests {
         #expect(b.todo.map(\.id) == [parked.id])
     }
 
+    /// A board placement is a decision already made, so it wins over every date-derived bucket: the task
+    /// shows once, in its lane. (Its row still carries the due chip, so the overdue warning isn't lost.)
+    @Test func boardLanes_takePriorityOverDateBuckets() {
+        let overduePlanned = reviewed("overdue but planned")
+        overduePlanned.dueAt = dayStart.addingTimeInterval(-3 * 86_400)
+        overduePlanned.place(on: .today)
+
+        let startedPlanned = reviewed("started but parked", status: .started)
+        startedPlanned.place(on: .maybe)
+
+        let weekPlanned = reviewed("this week")
+        weekPlanned.scheduledAt = dayStart.addingTimeInterval(9 * 3_600)
+        weekPlanned.place(on: .thisWeek)
+
+        let b = DayTaskBuckets.partition(allTasks: [overduePlanned, startedPlanned, weekPlanned], date: day)
+        #expect(b.today.map(\.id) == [overduePlanned.id])
+        #expect(b.thisWeek.map(\.id) == [weekPlanned.id])
+        #expect(b.maybe.map(\.id) == [startedPlanned.id])
+        #expect(b.overdue.isEmpty && b.inProgress.isEmpty && b.scheduled.isEmpty && b.todo.isEmpty)
+    }
+
+    /// Lanes read in the board's own order, so the panel and the board agree.
+    @Test func lanes_orderByPlanSortOrder_stableOnTies() {
+        let third = reviewed("third");  third.place(on: .today);  third.planSortOrder = 9
+        let first = reviewed("first");  first.place(on: .today);  first.planSortOrder = 1
+        let tieA = reviewed("tieA");    tieA.place(on: .today);   tieA.planSortOrder = 5
+        let tieB = reviewed("tieB");    tieB.place(on: .today);   tieB.planSortOrder = 5
+
+        let b = DayTaskBuckets.partition(allTasks: [third, first, tieA, tieB], date: day)
+        #expect(b.today.map(\.summary) == ["first", "tieA", "tieB", "third"])
+    }
+
+    /// Standing tasks stay out of every bucket even when placed on the board — they are logged from the
+    /// diary's own standing strip, so showing them in a lane too would list them twice in one panel.
+    @Test func placedStandingTask_isStillExcluded() {
+        let standing = reviewed("triage emails")
+        standing.makeStanding()
+        standing.place(on: .today)
+        #expect(DayTaskBuckets.partition(allTasks: [standing], date: day).isEmpty)
+    }
+
     @Test func mondayWindow_absorbsWeekendDueAndScheduled() {
         // On a Monday the "today window" spans the preceding weekend, so Sat/Sun due/scheduled tasks
         // are due-today/scheduled (not overdue); a Friday due date is overdue. (2024-01-08 is a Monday.)
