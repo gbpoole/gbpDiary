@@ -533,7 +533,16 @@ struct TaskDetailView: View {
                 onEdit: { workspace.focusOrOpen(.task($0.persistentModelID)) },
                 onMakeSubtask: { dragged, target in dragged.parent = target },
                 onPromote: { [task] child in child.parent = task },
-                onDelete: { modelContext.delete($0) }
+                onDelete: { modelContext.delete($0) },
+                // This page's own task is the floor: Shift-Tab can restructure within the subtree but
+                // never promote a row out of the list you are looking at.
+                editing: SubtaskEditing(
+                    floorParentID: task.id,
+                    setParent: { [task] child, newParent in
+                        child.parent = newParent ?? task
+                        child.updatedAt = Date()
+                    },
+                    openTask: { workspace.focusOrOpen(.task($0.persistentModelID)) })
             )
         }
         TaskBreakdownField(parent: task, text: breakdownDraft)

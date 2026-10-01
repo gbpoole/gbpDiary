@@ -32,6 +32,9 @@ struct TaskSubtreeView: View {
     var onNavigatePrev: (() -> Void)? = nil
     // Called when ↓ is pressed on the last task (navigate to parent context below).
     var onNavigateNext: (() -> Void)? = nil
+    // Row-editing powers (Tab/Shift-Tab depth changes, double-click to the task page). Nil = the subtree
+    // renders exactly as it always has, which is how surfaces that haven't adopted it stay unaffected.
+    var editing: SubtaskEditing? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var activeDropZone: Int?
@@ -115,6 +118,56 @@ struct TaskSubtreeView: View {
             return nil
         }
         return search(sortedRoots)
+    }
+
+    // Every task in the subtree, collapse ignored — restructuring must see rows that aren't on screen.
+    private var allTasksInSubtree: [Task] {
+        var result: [Task] = []
+        func collect(_ list: [Task]) {
+            for task in list {
+                result.append(task)
+                collect(task.children)
+            }
+        }
+        collect(sortedRoots)
+        return result
+    }
+
+    /// The subtree reduced to what `SubtaskOutlineEdit` needs.
+    private var outlineRows: [OutlineRow] {
+        allTasksInSubtree.map {
+            OutlineRow(id: $0.id, parentID: $0.parent?.id, sortOrder: $0.sortOrder)
+        }
+    }
+
+    /// Tab: become a child of the preceding sibling, landing at the end of its children — directly below
+    /// where the row already sat, so the move reads as an indent rather than a jump.
+    private func indentRow(_ task: Task) {
+        guard let editing else { return }
+        let rows = outlineRows
+        guard case .to(let newParentID) = SubtaskOutlineEdit.indent(task.id, in: rows) else { return }
+        let all = allTasksInSubtree
+        let order = SubtaskOutlineEdit.appendSortOrder(parentID: newParentID, in: rows)
+        // A nil id means the container's root; the caller resolves what that is for its surface.
+        editing.setParent(task, newParentID.flatMap { id in all.first { $0.id == id } })
+        task.sortOrder = order
+    }
+
+    /// Shift-Tab: promote to the grandparent, landing immediately after the parent just left.
+    private func outdentRow(_ task: Task) {
+        guard let editing, let oldParentID = task.parent?.id else { return }
+        let rows = outlineRows
+        guard case .to(let newParentID) = SubtaskOutlineEdit.outdent(task.id, in: rows,
+                                                                    floorParentID: editing.floorParentID)
+        else { return }
+        let all = allTasksInSubtree
+        let placement = SubtaskOutlineEdit.placeAfter(anchorID: oldParentID, parentID: newParentID,
+                                                      moving: task.id, in: rows)
+        editing.setParent(task, newParentID.flatMap { id in all.first { $0.id == id } })
+        task.sortOrder = placement.order
+        for (id, order) in placement.shifted {
+            all.first { $0.id == id }?.sortOrder = order
+        }
     }
 
     private func isDescendant(_ potentialDescendant: Task, of ancestor: Task) -> Bool {
@@ -242,11 +295,15 @@ struct TaskSubtreeView: View {
                 focusId: task.id,
                 struckThrough: task.status == .completed || task.status == .cancelled,
                 foregroundColor: task.status == .cancelled ? .secondary : .primary,
+                onIndent: editing == nil ? nil : { indentRow(task) },
+                onOutdent: editing == nil ? nil : { outdentRow(task) },
                 onMoveToPrevious: prevMove(for: task),
                 onMoveToNext: nextMove(for: task)
             )
 
-            InlineRowEditButton(action: { editingTask = task })
+            // No pencil: double-click opens the task's page (the row-tap rule for a rich entity), and the
+            // context menu keeps the editor sheet.
+            if editing == nil { InlineRowEditButton(action: { editingTask = task }) }
             if focusedId.wrappedValue != task.id {
                 Spacer(minLength: 0)
             }
@@ -254,6 +311,7 @@ struct TaskSubtreeView: View {
         .contentShape(Rectangle())
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
+        .onTapGesture(count: 2) { editing?.openTask(task) }
         .dropDestination(for: String.self) { items, _ in
             guard let uuidString = items.first,
                   let id = UUID(uuidString: uuidString),
@@ -275,6 +333,9 @@ struct TaskSubtreeView: View {
             }
         }
         .contextMenu {
+            if let editing {
+                Button("Open Task Page") { editing.openTask(task) }
+            }
             Button("Edit Task") { editingTask = task }
             Divider()
             if task.parent != nil {

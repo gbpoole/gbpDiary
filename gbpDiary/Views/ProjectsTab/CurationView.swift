@@ -186,7 +186,15 @@ struct CurationView: View {
                     onEdit: { workspace.focusOrOpen(.task($0.persistentModelID)) },
                     onMakeSubtask: { dragged, target in dragged.parent = target },
                     onPromote: { child in child.parent = nil },
-                    onDelete: { modelContext.delete($0) }
+                    onDelete: { modelContext.delete($0) },
+                    // These rows are the project's top-level tasks, so nil IS the floor.
+                    editing: SubtaskEditing(
+                        floorParentID: nil,
+                        setParent: { child, newParent in
+                            child.parent = newParent
+                            child.updatedAt = Date()
+                        },
+                        openTask: { workspace.focusOrOpen(.task($0.persistentModelID)) })
                 )
             }
             TaskBreakdownField(parent: nil, project: project, text: breakdownDraft(for: project))
