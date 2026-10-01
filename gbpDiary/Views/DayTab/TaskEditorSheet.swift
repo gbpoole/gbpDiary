@@ -172,8 +172,20 @@ struct TaskEditorSheet: View {
         }
     }
 
-    // Subtasks typed as an indented outline. They are created on save (a new task does not exist yet),
-    // through the same TaskOutlineParser + TaskBreakdown path as the detail page's breakdown field.
+    /// Total tasks the typed outline would create, so the field can say what Save is about to do.
+    private var breakdownCount: Int {
+        func count(_ nodes: [OutlineNode]) -> Int { nodes.reduce(0) { $0 + 1 + count($1.children) } }
+        return count(TaskOutlineParser.parse(breakdownText))
+    }
+
+    // Subtasks typed as an indented outline, created on save (for a new task there is nothing to hang
+    // them off until then) through the same TaskOutlineParser + TaskBreakdown path as the detail page's
+    // breakdown field.
+    //
+    // The editor is drawn with a border and a filled background because a bare `TextEditor` on this theme
+    // is invisible — it read as static help text rather than a field you can type in (the same reason the
+    // sheet's other controls use `.roundedBorder`). And since nothing here commits on its own, the caption
+    // states the count Save will create: without it there is no feedback that the outline was understood.
     private var subtasksSection: some View {
         GroupBox(task == nil ? "Subtasks" : "Add subtasks") {
             VStack(alignment: .leading, spacing: 6) {
@@ -182,15 +194,26 @@ struct TaskEditorSheet: View {
                         Text("One per line; indent to nest…")
                             .foregroundStyle(.tertiary)
                             .allowsHitTesting(false)
-                            .padding(.top, 2)
+                            .padding(.horizontal, 9).padding(.top, 10)
                     }
                     TextEditor(text: $breakdownText)
                         .scrollContentBackground(.hidden)
                         .frame(minHeight: 54)
+                        .padding(4)
                 }
-                Text("Indent with Tab or four spaces to make a subtask of the line above.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .background(AppTheme.cardRaised.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(AppTheme.mutedText.opacity(0.35)))
+
+                if breakdownCount == 0 {
+                    Text("Indent with Tab or four spaces to make a subtask of the line above.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("\(breakdownCount) subtask\(breakdownCount == 1 ? "" : "s") will be created when "
+                         + "you \(isNew ? "add" : "save") this task.")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.accent)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
         }

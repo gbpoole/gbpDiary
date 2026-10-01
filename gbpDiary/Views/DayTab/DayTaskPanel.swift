@@ -239,13 +239,16 @@ struct DayTaskPanel: View {
 
 // A compact two-line task row for the diary panel (email-list style): status icon + metadata chips
 // (project / assignee / priority / dates / flags) on the first line, the summary on the second.
-// No inline edit button — double-click opens the editor; status/log-time/delete live in the context menu.
+// No inline edit button — **double-click opens the task's page** (the row-tap rule: a rich entity opens in
+// a workspace tab, where every field is editable in place); status/log-time/delete live in the context
+// menu, which also keeps an "Edit…" route to `TaskEditorSheet`.
 private struct DayTaskPanelRow: View {
     @Bindable var task: Task
     var date: Date
     var onEdit: () -> Void
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(WorkspaceModel.self) private var workspace
     @State private var showingLogTime = false
 
     var body: some View {
@@ -270,7 +273,7 @@ private struct DayTaskPanelRow: View {
         }
         .padding(.horizontal).padding(.vertical, 4)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { onEdit() }
+        .onTapGesture(count: 2) { workspace.focusOrOpen(.task(task.persistentModelID)) }
         .contextMenu {
             Button("Edit…", action: onEdit)
             Button("Log time today…") { showingLogTime = true }
