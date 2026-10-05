@@ -34,13 +34,9 @@ enum TaskBreakdown {
             var order = start
             var created: [Task] = []
             for node in nodes {
-                let task = Task(summary: node.summary)
-                context.insert(task)
-                task.parent = parent
-                task.project = inheritedProject
-                task.assignee = inheritedAssignee
-                task.sortOrder = order
-                if !inheritedTriage { task.markReviewed() }
+                let task = makeRow(summary: node.summary, under: parent, project: inheritedProject,
+                                   assignee: inheritedAssignee, inheritTriageFrom: inheritedTriage,
+                                   sortOrder: order, in: context)
                 order += 1
                 created.append(task)
                 if !node.children.isEmpty {
@@ -53,6 +49,29 @@ enum TaskBreakdown {
         let roots = build(outline, parent: parent, startingAt: nextSortOrder)
         nextSortOrder += roots.count
         return roots
+    }
+
+    /// Creates **one** task row, applying the same inheritance as a whole breakdown. The row editor's
+    /// **+** and Enter-continuation both land here, so project/assignee/triage inheritance is defined once
+    /// and cannot drift between the batch path and the row path.
+    @discardableResult
+    static func makeRow(summary: String = "",
+                        under parent: Task?,
+                        project: Project? = nil,
+                        assignee: Person? = nil,
+                        inheritTriageFrom parentNeedsTriage: Bool? = nil,
+                        sortOrder: Int,
+                        in context: ModelContext) -> Task {
+        let task = Task(summary: summary)
+        context.insert(task)
+        task.parent = parent
+        task.project = project ?? parent?.project
+        task.assignee = assignee ?? parent?.assignee
+        task.sortOrder = sortOrder
+        // A breakdown of reviewed work is reviewed; a parentless row is fresh capture and stays in the Inbox.
+        let needsTriage = parentNeedsTriage ?? parent?.needsTriage ?? true
+        if !needsTriage { task.markReviewed() }
+        return task
     }
 
     /// Convenience: parse `text` and create it in one step. Returns the new root tasks (empty if the

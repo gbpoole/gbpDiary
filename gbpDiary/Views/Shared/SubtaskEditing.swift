@@ -15,6 +15,14 @@ struct SubtaskEditing {
     /// makes it a top-level project task. The closure also owns stamping `updatedAt`.
     var setParent: (Task, Task?) -> Void
 
+    /// Rows selected by clicking (⌘/⇧ to extend), shared with the caller so it can clear the selection
+    /// when the surface is left. A selected row is *not* being edited — Return starts that.
+    var selection: Binding<Set<UUID>>
+
+    /// Create an empty row under `parent` (`nil` = a root of this container) at `sortOrder` and return it
+    /// so the editor can focus it. Live surfaces insert; the creation modal appends to its buffer.
+    var createRow: (Task?, Int) -> Task?
+
     /// Double-click: open the task's own page. The caller picks `focusOrOpen` or `openInNewTab` — the
     /// diary and meeting surfaces want a new tab so the day or meeting they were in survives.
     var openTask: (Task) -> Void

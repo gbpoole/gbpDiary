@@ -13,6 +13,13 @@ struct InlineEditableSingleLineText: View {
     var onOutdent: (() -> Void)? = nil
     var onMoveToPrevious: (() -> Void)? = nil
     var onMoveToNext: (() -> Void)? = nil
+    /// Replaces the default tap-to-edit. Supplied where a click means *select* rather than edit, so the
+    /// row behaves like a table row (and Return is what starts editing).
+    var onTap: (() -> Void)? = nil
+    /// Return pressed while editing, given the field's **live** draft — the caller decides what "done"
+    /// means (commit, continue the list). The draft is passed because the model copy lags behind on a
+    /// debounce, so reading `task.summary` here would see stale text.
+    var onCommit: ((String) -> Void)? = nil
 
     @State private var draft: String = ""
     @State private var debouncer = Debouncer()
@@ -35,6 +42,7 @@ struct InlineEditableSingleLineText: View {
                 .clipped()
                 .opacity(isFocused ? 1 : 0)
                 .allowsHitTesting(isFocused)
+                .onSubmit { onCommit?(draft) }
                 .entryInlineKeyHandling(
                     onIndent: onIndent,
                     onOutdent: onOutdent,
@@ -44,7 +52,7 @@ struct InlineEditableSingleLineText: View {
         }
         .frame(maxWidth: isFocused ? .infinity : nil)
         .contentShape(Rectangle())
-        .onTapGesture { focusBinding.wrappedValue = focusId }
+        .onTapGesture { onTap?() ?? (focusBinding.wrappedValue = focusId) }
         .onAppear { draft = text }
         .onChange(of: draft) { _, newValue in
             debouncer.schedule(delay: 2.0) { text = newValue }

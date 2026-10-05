@@ -118,13 +118,17 @@ enum SubtaskOutlineEdit {
         var descendantCount: Int
         /// All affected ids, deletion roots included.
         var ids: Set<UUID>
+        /// The rows to actually hand to `modelContext.delete` — SwiftData cascades the rest.
+        var roots: Set<UUID>
 
         /// Confirm only when the damage exceeds what was selected.
         var needsConfirmation: Bool { descendantCount > 0 }
     }
 
     static func deletionScope(selected: Set<UUID>, in rows: [OutlineRow]) -> DeletionScope {
-        guard !selected.isEmpty else { return DeletionScope(directCount: 0, descendantCount: 0, ids: []) }
+        guard !selected.isEmpty else {
+            return DeletionScope(directCount: 0, descendantCount: 0, ids: [], roots: [])
+        }
         let byID = Dictionary(rows.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
 
         // A selected row nested inside another selected row isn't a deletion root — it would go anyway.
@@ -152,6 +156,7 @@ enum SubtaskOutlineEdit {
         }
         return DeletionScope(directCount: roots.count,
                              descendantCount: affected.count - roots.count,
-                             ids: affected)
+                             ids: affected,
+                             roots: roots)
     }
 }

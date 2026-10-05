@@ -25,6 +25,7 @@ struct TaskDetailView: View {
     @Query(sort: \Person.name) private var allPeople: [Person]
 
     @State private var subtreeCollapsedIds: Set<UUID> = []
+    @State private var subtaskSelection: Set<UUID> = []
     /// Set while confirming the removal of the *pending* follow-up, which also ends the follow-up.
     @State private var followUpDeleteID: UUID?
     @State private var tagsText: String = ""
@@ -304,13 +305,6 @@ struct TaskDetailView: View {
         }
     }
 
-    /// The unsaved breakdown outline is stored on the workspace tab, not in this view: the tab's content
-    /// is torn down and rebuilt when you switch tabs, which would otherwise discard whatever was typed.
-    private var breakdownDraft: Binding<String> {
-        Binding(get: { workspace.active.breakdownDrafts[task.id] ?? "" },
-                set: { workspace.active.breakdownDrafts[task.id] = $0 })
-    }
-
     private var summaryBinding: Binding<String> {
         Binding(get: { task.summary }, set: { task.summary = $0; touch() })
     }
@@ -518,33 +512,32 @@ struct TaskDetailView: View {
                 })
     }
 
+    /// Rendered **unconditionally**, even with no subtasks. Two reasons: the row editor's "Add subtask"
+    /// button lives inside it, so branching on `children.isEmpty` made adding the *first* subtask
+    /// impossible; and the branch gave the subtree view an identity that appeared and disappeared as the
+    /// count crossed zero, re-running its `onAppear` against live models mid-update.
     @ViewBuilder private var subtasksContent: some View {
-        if task.children.isEmpty {
-            Text("No subtasks yet.")
-                .font(AppTheme.bodyFont(size: 12))
-                .foregroundStyle(AppTheme.mutedText)
-                .padding(.horizontal)
-                .padding(.bottom, 2)
-        } else {
-            TaskSubtreeView(
-                tasks: task.children,
-                collapsedIds: $subtreeCollapsedIds,
-                focusedId: $focusedSubtaskId,
-                onEdit: { workspace.focusOrOpen(.task($0.persistentModelID)) },
-                onMakeSubtask: { dragged, target in dragged.parent = target },
-                onPromote: { [task] child in child.parent = task },
-                onDelete: { modelContext.delete($0) },
-                // This page's own task is the floor: Shift-Tab can restructure within the subtree but
-                // never promote a row out of the list you are looking at.
-                editing: SubtaskEditing(
-                    floorParentID: task.id,
-                    setParent: { [task] child, newParent in
-                        child.parent = newParent ?? task
-                        child.updatedAt = Date()
-                    },
-                    openTask: { workspace.focusOrOpen(.task($0.persistentModelID)) })
-            )
-        }
-        TaskBreakdownField(parent: task, text: breakdownDraft)
+        TaskSubtreeView(
+            tasks: task.children,
+            collapsedIds: $subtreeCollapsedIds,
+            focusedId: $focusedSubtaskId,
+            onEdit: { workspace.focusOrOpen(.task($0.persistentModelID)) },
+            onMakeSubtask: { dragged, target in dragged.parent = target },
+            onPromote: { [task] child in child.parent = task },
+            onDelete: { modelContext.delete($0) },
+            // This page's own task is the floor: Shift-Tab can restructure within the subtree but never
+            // promote a row out of the list you are looking at.
+            editing: SubtaskEditing(
+                floorParentID: task.id,
+                setParent: { [task] child, newParent in
+                    child.parent = newParent ?? task
+                    child.updatedAt = Date()
+                },
+                selection: $subtaskSelection,
+                createRow: { [task] parent, order in
+                    TaskBreakdown.makeRow(under: parent ?? task, sortOrder: order, in: modelContext)
+                },
+                openTask: { workspace.focusOrOpen(.task($0.persistentModelID)) })
+        )
     }
 }
