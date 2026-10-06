@@ -17,7 +17,7 @@ struct MinutesListView: View {
 
     // Filter/search/sort live on the active tab (persisted + remembered across tab switches).
     // The Date and Time columns both sort by `meetingAt`, so they share the "date" id.
-    private var filter: ListPageFilter { workspace.active.pageFilter(for: .meetings) }
+    private var filter: ListPageFilter { workspace.pageFilter(for: .meetings) }
     private static let sortColumns: [SortColumn<Minutes>] = [
         SortColumn("date", \.meetingAt), SortColumn("summary", \.summaryKey),
         SortColumn("projects", \.projectsKey), SortColumn("attendees", \.attendeeCount),

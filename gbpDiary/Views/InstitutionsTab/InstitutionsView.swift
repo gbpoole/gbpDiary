@@ -15,7 +15,7 @@ struct InstitutionsView: View {
 
     // Search/sort live on the active tab (persisted + remembered across tab switches). Institutions
     // have no discrete filter dimension — the toolbar collapses to search-only (Light tier).
-    private var filter: ListPageFilter { workspace.active.pageFilter(for: .institutions) }
+    private var filter: ListPageFilter { workspace.pageFilter(for: .institutions) }
     private static let sortColumns: [SortColumn<Institution>] = [
         SortColumn("name", \.nameKey), SortColumn("members", \.memberCount),
         SortColumn("projects", \.projectCount),

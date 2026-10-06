@@ -1,23 +1,10 @@
 import Foundation
 import SwiftData
 
-// A single open tab in the workspace. Category tabs are singletons; entity tabs carry the
-// entity's stable `PersistentIdentifier` so the same entity re-opens/activates one tab.
+// A single open tab in the workspace. **Tabs hold entities only** — the browse categories are fixed
+// panes selected in the sidebar, not tabs (see `WorkspaceModel.selectedCategory`). Each case carries the
+// entity's stable `PersistentIdentifier`, so the same entity re-opens/activates one tab.
 enum WorkspaceTab: Hashable, Identifiable {
-    case diary
-    case chat
-    case triage
-    case tasks
-    case projects
-    case people
-    case institutions
-    case meetings
-    case documents
-    case images
-    case tags
-    case timesheet
-    case content
-
     case project(PersistentIdentifier)
     case person(PersistentIdentifier)
     case institution(PersistentIdentifier)
@@ -27,26 +14,35 @@ enum WorkspaceTab: Hashable, Identifiable {
     case task(PersistentIdentifier)
     // A curation session, identified by the root project it walks.
     case curation(PersistentIdentifier)
+    // An Email Summary Lab session for one email. Its own tab (not a Chat mode) because experiments are
+    // transient, per-email and deliberately parallel — the Chat *pane* is a singleton, so it cannot hold
+    // one experiment per email the way the old per-tab ChatState did.
+    case emailExplorer(PersistentIdentifier)
 
     var id: Self { self }
 
-    // The sidebar category this tab belongs to (used to highlight the sidebar selection).
+    /// The kind of thing this tab shows — drives the chip's icon. It is **not** a sidebar selection:
+    /// opening a tab clears the sidebar highlight, because a tab and a category pane are alternatives.
     var category: WorkspaceCategory {
         switch self {
-        case .diary:                     .diary
-        case .chat:                      .chat
-        case .triage:                    .triage
-        case .tasks, .task:              .tasks
-        case .curation:                  .projects
-        case .projects, .project:        .projects
-        case .people, .person:           .people
-        case .institutions, .institution: .institutions
-        case .meetings, .minutes:        .meetings
-        case .documents, .document:      .documents
-        case .images:                    .images
-        case .tags:                      .tags
-        case .timesheet:                 .timesheet
-        case .content, .contentNote:     .content
+        case .task:                 .tasks
+        case .curation, .project:   .projects
+        case .person:               .people
+        case .institution:          .institutions
+        case .minutes:              .meetings
+        case .document:             .documents
+        case .contentNote:          .content
+        case .emailExplorer:        .chat
+        }
+    }
+
+    /// The model id this tab is keyed on.
+    var entityID: PersistentIdentifier {
+        switch self {
+        case .project(let x), .person(let x), .institution(let x), .minutes(let x),
+             .document(let x), .contentNote(let x), .task(let x), .curation(let x),
+             .emailExplorer(let x):
+            return x
         }
     }
 }
@@ -102,24 +98,6 @@ enum WorkspaceCategory: String, CaseIterable, Identifiable {
         }
     }
 
-    // The list/tool tab opened when the category is selected in the sidebar.
-    var tab: WorkspaceTab {
-        switch self {
-        case .diary:        .diary
-        case .chat:         .chat
-        case .triage:       .triage
-        case .tasks:        .tasks
-        case .projects:     .projects
-        case .people:       .people
-        case .institutions: .institutions
-        case .meetings:     .meetings
-        case .documents:    .documents
-        case .content:      .content
-        case .images:       .images
-        case .tags:         .tags
-        case .timesheet:    .timesheet
-        }
-    }
 }
 
 enum ChatMode {
@@ -310,27 +288,55 @@ enum TaskViewMode: String, CaseIterable {
 
 @Observable final class WorkspaceTabState: Identifiable {
     let id = UUID()
-    // Per-tab Diary browsing state so two tabs showing the Diary can be on different dates.
-    let diaryState = DiaryState()
-    // Per-tab Chat state is session-only and starts fresh after workspace restoration.
+    /// What this tab shows. A tab is **one entity** — there is no per-tab history or back/forward, because
+    /// entity→entity moves open tabs (`focusOrOpen`) and category→entity moves are now a sidebar click.
+    let tab: WorkspaceTab
+    /// Only an `.emailExplorer` tab uses this: each experiment owns its transient body/candidates/ratings.
     let chatState = ChatState()
-    // Per-tab Tasks-page filter state (remembered across in-tab navigation).
-    let tasksFilter = TasksFilterState()
-    // How far through a curation walk this tab is. Session-only: the walk itself is recomputed from
-    // live project data, and resuming mid-session after a relaunch would be more surprising than useful.
+    /// How far through a curation walk this tab is. Session-only: the walk itself is recomputed from
+    /// live project data, and resuming mid-session after a relaunch would be more surprising than useful.
     var curationIndex: Int = 0
-    // Whether this tab's planning-board panel is open. Per tab (like tasksFilter) so one tab can be
-    // a planning surface while another stays a full-width table; persisted in WorkspaceSnapshot.
+
+    init(_ tab: WorkspaceTab) {
+        self.tab = tab
+        if case .emailExplorer(let id) = tab {
+            chatState.mode = .emailExplorerLab
+            chatState.selectEmail(id)
+        }
+    }
+
+    func references(_ id: PersistentIdentifier) -> Bool { tab.entityID == id }
+}
+
+// The workspace shell's state: **one** selected browse category (a fixed pane) plus the open **entity**
+// tabs. Exactly one of the two is showing — picking a sidebar category clears the active tab, and
+// activating a tab clears nothing but hides the pane behind it. `activeId == nil` means the pane is up.
+//
+// Because a category is now a singleton pane rather than a tab, the state that used to be per tab
+// (`DiaryState`, `TasksFilterState`, the Database-mode `ChatState`, the list-page filters and the board
+// panel's visibility) is held **once, here**. The cost, accepted deliberately: no two Diary pages on
+// different dates, and one Database Chat — the Email Summary Lab keeps its parallelism as `.emailExplorer`
+// tabs instead.
+@Observable final class WorkspaceModel {
+    /// The sidebar selection — the pane shown whenever no entity tab is active.
+    private(set) var selectedCategory: WorkspaceCategory = .diary
+    private(set) var tabs: [WorkspaceTabState]
+    /// The active entity tab, or nil while the selected category's pane is showing.
+    private(set) var activeId: UUID?
+
+    // MARK: - Single-instance page state (was per tab)
+
+    let diaryState = DiaryState()
+    let tasksFilter = TasksFilterState()
+    /// The Chat pane's Database-mode state. Email-Explorer state lives on its own tab.
+    let chatState = ChatState()
+    /// Whether the Tasks page's planning-board panel is open, and whether it fills the width.
     var boardPanelShown: Bool = false
-    /// Board fills the detail area, collapsing the task table. Per tab, like `boardPanelShown`.
     var boardFullWidth: Bool = false
-    // Per-tab filter state for the other shared-style list pages, created lazily with page defaults.
-    //
+
     // @ObservationIgnored because `pageFilter(for:)` is called from list-page bodies, so the lazy insert
-    // below is a write during a view update. Measurement showed this was NOT the source of the app's
-    // "Modifying state during view update" faults (that was WindowAccessor) — this is defensive only.
-    // Nothing observes the cache itself: views observe the returned ListPageFilter, which is @Observable,
-    // so identity stays stable and filter edits still publish.
+    // is a write during a view update. Nothing observes the cache itself: views observe the returned
+    // ListPageFilter, which is @Observable, so identity stays stable and filter edits still publish.
     @ObservationIgnored private var pageFilters: [WorkspaceCategory: ListPageFilter] = [:]
     func pageFilter(for category: WorkspaceCategory) -> ListPageFilter {
         if let existing = pageFilters[category] { return existing }
@@ -338,58 +344,8 @@ enum TaskViewMode: String, CaseIterable {
         pageFilters[category] = created
         return created
     }
-    private(set) var history: [WorkspaceTab]
-    private(set) var index: Int
-
-    var current: WorkspaceTab { history[index] }
-    var canGoBack: Bool { index > 0 }
-    var canGoForward: Bool { index < history.count - 1 }
-
-    init(_ tab: WorkspaceTab) {
-        history = [tab]
-        index = 0
-    }
-
-    /// Rebuild a tab from a persisted history (used at session restore). Falls back to a Diary tab
-    /// when the history is empty; clamps `index` into range.
-    init(history: [WorkspaceTab], index: Int) {
-        let safe = history.isEmpty ? [.diary] : history
-        self.history = safe
-        self.index = min(max(0, index), safe.count - 1)
-    }
-
-    /// The page-filter objects that have actually been created on this tab (for session save).
+    /// The page-filter objects actually created so far (for session save).
     var touchedPageFilters: [WorkspaceCategory: ListPageFilter] { pageFilters }
-
-    func navigate(to tab: WorkspaceTab) {
-        guard current != tab else { return }
-        if index < history.count - 1 { history.removeSubrange((index + 1)...) }
-        history.append(tab)
-        index = history.count - 1
-    }
-
-    func goBack() { if canGoBack { index -= 1 } }
-    func goForward() { if canGoForward { index += 1 } }
-
-    func references(_ id: PersistentIdentifier) -> Bool {
-        history.contains { tab in
-            switch tab {
-            case .project(let x), .person(let x), .institution(let x),
-                 .minutes(let x), .document(let x), .contentNote(let x), .task(let x),
-                 .curation(let x):
-                return x == id
-            default:
-                return false
-            }
-        }
-    }
-}
-
-// Holds the open tabs (each a browsing history) and the active tab. Replaces the old
-// MinutesEditorContext — minutes now open as a new tab rather than a side inspector.
-@Observable final class WorkspaceModel {
-    private(set) var tabs: [WorkspaceTabState]
-    private(set) var activeId: UUID
     /// MRU back-stack of *previously* active tab ids (most-recent first). Powers `returnToPreviousTab()`.
     /// Session-only (not persisted); reset on `restore`.
     private(set) var recentTabs: [UUID] = []
@@ -399,17 +355,24 @@ enum TaskViewMode: String, CaseIterable {
     var autoEditContentId: PersistentIdentifier?
 
     init() {
-        let first = WorkspaceTabState(.diary)
-        tabs = [first]
-        activeId = first.id
+        tabs = []
+        activeId = nil
     }
 
-    var active: WorkspaceTabState { tabs.first { $0.id == activeId } ?? tabs[0] }
+    /// The active entity tab, or nil when the category pane is showing.
+    var activeTab: WorkspaceTabState? {
+        guard let activeId else { return nil }
+        return tabs.first { $0.id == activeId }
+    }
 
-    /// Navigate the active tab in place (sidebar selection, list drilldowns).
-    func navigate(to tab: WorkspaceTab) { active.navigate(to: tab) }
+    /// Show a browse category's pane. Clears the active tab — a pane and a tab are alternatives, so there
+    /// is only ever one "what am I looking at".
+    func select(_ category: WorkspaceCategory) {
+        selectedCategory = category
+        setActive(nil)
+    }
 
-    /// Open a destination in a brand-new tab and focus it (e.g. meeting minutes).
+    /// Open an entity in a brand-new tab and focus it (e.g. meeting minutes).
     func openInNewTab(_ tab: WorkspaceTab) {
         let state = WorkspaceTabState(tab)
         tabs.append(state)
@@ -419,14 +382,14 @@ enum TaskViewMode: String, CaseIterable {
     /// The single choke point for changing the active tab. When `record` is true it pushes the tab we're
     /// leaving onto the MRU back-stack (deduped, capped) — unless it no longer exists (e.g. it was just
     /// closed). `returnToPreviousTab()` passes `record: false` so a back jump stays progressive.
-    private func setActive(_ id: UUID, record: Bool = true) {
+    private func setActive(_ id: UUID?, record: Bool = true) {
         let old = activeId
         guard old != id else { return }
-        if record, tabs.contains(where: { $0.id == old }) {
+        if record, let old, tabs.contains(where: { $0.id == old }) {
             recentTabs.removeAll { $0 == old || $0 == id }
             recentTabs.insert(old, at: 0)
             recentTabs = Array(recentTabs.prefix(max(1, tabs.count)))
-        } else {
+        } else if let id {
             recentTabs.removeAll { $0 == id }
         }
         activeId = id
@@ -448,27 +411,21 @@ enum TaskViewMode: String, CaseIterable {
         tabs = newOrder.compactMap { tid in tabs.first { $0.id == tid } }
     }
 
-    /// Always open a fresh Chat tab configured for exploring the selected email.
+    /// Open an Email Summary Lab tab for this email. **Always a fresh tab** (never reuses another), so
+    /// experiments on different emails stay side by side; `WorkspaceTabState.init` configures its mode.
     func openEmailExplorerInNewTab(for email: EmailMessage) {
-        let state = WorkspaceTabState(.chat)
-        state.chatState.mode = .emailExplorerLab
-        state.chatState.selectEmail(email.persistentModelID)
-        tabs.append(state)
-        setActive(state.id)
+        openInNewTab(.emailExplorer(email.persistentModelID))
     }
 
     func activate(_ id: UUID) { setActive(id) }
 
     // MARK: - Safari-like tab shortcuts
 
-    /// Index of the active tab in `tabs` (0 if somehow not found).
+    /// Index of the active tab in `tabs` (0 if somehow not found / pane showing).
     var activeIndex: Int { tabs.firstIndex { $0.id == activeId } ?? 0 }
 
-    /// ⌘T — open a fresh Diary tab and focus it.
-    func newTab() { openInNewTab(.diary) }
-
-    /// ⌘W — close the active tab (recreates a Diary tab if it was the last one, via `closeTab`).
-    func closeActiveTab() { closeTab(activeId) }
+    /// ⌘W — close the active tab. No-op while the category pane is showing: a pane cannot be closed.
+    func closeActiveTab() { if let activeId { closeTab(activeId) } }
 
     /// ⌘⇧] — focus the next tab, wrapping around to the first.
     func selectNextTab() {
@@ -493,6 +450,16 @@ enum TaskViewMode: String, CaseIterable {
         if let last = tabs.last { setActive(last.id) }
     }
 
+    /// Show the category pane again, leaving every tab open.
+    func showSelectedPane() { setActive(nil) }
+
+    /// How far through its walk the active curation tab is. Lives on the tab (each session is its own
+    /// tab) but is read and written from `CurationView`, which only knows the model.
+    var curationIndex: Int {
+        get { activeTab?.curationIndex ?? 0 }
+        set { activeTab?.curationIndex = newValue }
+    }
+
     // MARK: - Session persistence
 
     /// Save the current session (tabs, active tab, diary state, all list-page filters) to UserDefaults.
@@ -505,70 +472,81 @@ enum TaskViewMode: String, CaseIterable {
         restore(WorkspaceSessionStore.snapshot, using: ctx)
     }
 
-    /// Restore a session snapshot, resolving entity tabs by UUID and dropping any whose entity was
-    /// deleted. No-op (keeps the current tabs) when the snapshot is nil/empty or nothing resolves.
+    /// Restore a session snapshot: the selected category, the page state, and the entity tabs (resolved by
+    /// UUID, dropping any whose entity is gone). A legacy payload is folded first by `migrated()`.
+    /// No-op on a nil snapshot.
     func restore(_ snapshot: WorkspaceSnapshot?, using ctx: ModelContext) {
-        guard let snap = snapshot, !snap.tabs.isEmpty else { return }
-        var restored: [WorkspaceTabState] = []
-        for tabSnap in snap.tabs {
-            let destinations = tabSnap.history.compactMap { workspaceTab(for: $0, using: ctx) }
-            guard !destinations.isEmpty else { continue }
-            let state = WorkspaceTabState(history: destinations, index: tabSnap.index)
-            state.diaryState.currentDate = tabSnap.diary.date
-            state.diaryState.mode = DiaryMode(rawValue: tabSnap.diary.mode) ?? .day
-            state.diaryState.tracksToday = tabSnap.diary.tracksToday
-            apply(tabSnap.tasksFilter, to: state.tasksFilter)
-            // Absent in sessions saved before the board became a panel — treat as closed.
-            state.boardPanelShown = tabSnap.boardPanelShown ?? false
-            state.boardFullWidth = tabSnap.boardFullWidth ?? false
-            for (rawCategory, fs) in tabSnap.pageFilters {
-                guard let category = WorkspaceCategory(rawValue: rawCategory) else { continue }
-                let pf = state.pageFilter(for: category)
-                pf.activeFilterIds = Set(fs.activeFilterIds)
-                pf.searchText = fs.searchText
-                pf.sortColumnID = fs.sortColumnID
-                pf.sortAscending = fs.sortAscending
-            }
-            restored.append(state)
+        guard let raw = snapshot else { return }
+        let snap = raw.migrated()
+
+        if let category = snap.selectedCategory.flatMap(WorkspaceCategory.init(rawValue:)) {
+            selectedCategory = category
         }
-        guard !restored.isEmpty else { return }
+        if let d = snap.diary {
+            diaryState.currentDate = d.date
+            diaryState.mode = DiaryMode(rawValue: d.mode) ?? .day
+            diaryState.tracksToday = d.tracksToday
+        }
+        if let t = snap.tasksFilter { apply(t, to: tasksFilter) }
+        for (rawCategory, fs) in snap.pageFilters ?? [:] {
+            guard let category = WorkspaceCategory(rawValue: rawCategory) else { continue }
+            let pf = pageFilter(for: category)
+            pf.activeFilterIds = Set(fs.activeFilterIds)
+            pf.searchText = fs.searchText
+            pf.sortColumnID = fs.sortColumnID
+            pf.sortAscending = fs.sortAscending
+        }
+        // Absent in sessions written before the board became a panel — treat as closed.
+        boardPanelShown = snap.boardPanelShown ?? false
+        boardFullWidth = snap.boardFullWidth ?? false
+
+        var restored: [WorkspaceTabState] = []
+        var activeIndexAfterDrops: Int?
+        for (offset, e) in (snap.entityTabs ?? []).enumerated() {
+            guard let tab = workspaceTab(kind: e.kind, id: e.id, using: ctx) else { continue }
+            if offset == snap.activeTabIndex { activeIndexAfterDrops = restored.count }
+            restored.append(WorkspaceTabState(tab))
+        }
         tabs = restored
         recentTabs = []   // fresh session — the MRU back-stack isn't persisted
-        activeId = restored[min(max(0, snap.activeIndex), restored.count - 1)].id
+        // Falling back to the pane is right when the tab that was active has gone: there is always a pane.
+        activeId = activeIndexAfterDrops.flatMap { restored.indices.contains($0) ? restored[$0].id : nil }
     }
 
     func snapshot(using ctx: ModelContext) -> WorkspaceSnapshot {
-        let tabSnaps = tabs.map { tab -> TabSnapshot in
-            let history = tab.history.compactMap { destination(for: $0, using: ctx) }
-            let index = min(max(0, tab.index), max(0, history.count - 1))
-            let d = tab.tasksFilter.sortDescriptor
-            let tasks = TasksFilterSnapshot(
-                activeFilterIds: Array(tab.tasksFilter.activeFilterIds),
-                searchText: tab.tasksFilter.searchText,
-                sortColumnID: d.id, sortAscending: d.ascending,
-                dateRangeStart: tab.tasksFilter.dateRange?.lowerBound,
-                dateRangeEnd: tab.tasksFilter.dateRange?.upperBound,
-                datePreset: tab.tasksFilter.datePreset?.rawValue)
-            var pageFilters: [String: ListFilterSnapshot] = [:]
-            for (category, pf) in tab.touchedPageFilters {
-                pageFilters[category.rawValue] = ListFilterSnapshot(
-                    activeFilterIds: Array(pf.activeFilterIds), searchText: pf.searchText,
-                    sortColumnID: pf.sortColumnID, sortAscending: pf.sortAscending)
-            }
-            return TabSnapshot(
-                history: history, index: index,
-                diary: DiarySnapshot(date: tab.diaryState.currentDate,
-                                     mode: tab.diaryState.mode.rawValue,
-                                     tracksToday: tab.diaryState.tracksToday),
-                tasksFilter: tasks, pageFilters: pageFilters,
-                boardPanelShown: tab.boardPanelShown,
-                boardFullWidth: tab.boardFullWidth)
+        var entityTabs: [EntityTabSnapshot] = []
+        var activeTabIndex: Int?
+        for tab in tabs {
+            // An entity deleted out from under an open tab simply isn't saved.
+            guard let uuid = entityUUID(for: tab.tab, using: ctx) else { continue }
+            if tab.id == activeId { activeTabIndex = entityTabs.count }
+            entityTabs.append(EntityTabSnapshot(kind: WorkspaceTabCoding.entityKind(for: tab.tab), id: uuid))
         }
-        // Keep active index valid even if some tabs produced empty histories (rare; entity gone).
-        let validTabs = tabSnaps.enumerated().filter { !$0.element.history.isEmpty }
-        let snapshotTabs = validTabs.map(\.element)
-        let newActive = validTabs.firstIndex { $0.offset == activeIndex } ?? 0
-        return WorkspaceSnapshot(tabs: snapshotTabs, activeIndex: newActive)
+        let d = tasksFilter.sortDescriptor
+        let tasks = TasksFilterSnapshot(
+            activeFilterIds: Array(tasksFilter.activeFilterIds),
+            searchText: tasksFilter.searchText,
+            sortColumnID: d.id, sortAscending: d.ascending,
+            dateRangeStart: tasksFilter.dateRange?.lowerBound,
+            dateRangeEnd: tasksFilter.dateRange?.upperBound,
+            datePreset: tasksFilter.datePreset?.rawValue)
+        var filters: [String: ListFilterSnapshot] = [:]
+        for (category, pf) in touchedPageFilters {
+            filters[category.rawValue] = ListFilterSnapshot(
+                activeFilterIds: Array(pf.activeFilterIds), searchText: pf.searchText,
+                sortColumnID: pf.sortColumnID, sortAscending: pf.sortAscending)
+        }
+        return WorkspaceSnapshot(
+            selectedCategory: selectedCategory.rawValue,
+            entityTabs: entityTabs,
+            activeTabIndex: activeTabIndex,
+            diary: DiarySnapshot(date: diaryState.currentDate,
+                                 mode: diaryState.mode.rawValue,
+                                 tracksToday: diaryState.tracksToday),
+            tasksFilter: tasks,
+            pageFilters: filters,
+            boardPanelShown: boardPanelShown,
+            boardFullWidth: boardFullWidth)
     }
 
     private func apply(_ snap: TasksFilterSnapshot, to state: TasksFilterState) {
@@ -583,52 +561,44 @@ enum TaskViewMode: String, CaseIterable {
         state.datePreset = snap.datePreset.flatMap(DateWindow.init(rawValue:))
     }
 
-    private func destination(for tab: WorkspaceTab, using ctx: ModelContext) -> TabDestination? {
-        if let token = WorkspaceTabCoding.token(forCategoryTab: tab) { return .page(token) }
-        guard let kind = WorkspaceTabCoding.entityKind(for: tab),
-              let uuid = entityUUID(for: tab, using: ctx) else { return nil }
-        return .entity(kind: kind, id: uuid)
-    }
-
     private func entityUUID(for tab: WorkspaceTab, using ctx: ModelContext) -> UUID? {
         switch tab {
-        case .project(let pid):     (ctx.model(for: pid) as? Project)?.id
-        case .person(let pid):      (ctx.model(for: pid) as? Person)?.id
-        case .institution(let pid): (ctx.model(for: pid) as? Institution)?.id
-        case .minutes(let pid):     (ctx.model(for: pid) as? Minutes)?.id
-        case .document(let pid):    (ctx.model(for: pid) as? Document)?.id
-        case .contentNote(let pid): (ctx.model(for: pid) as? Note)?.id
-        case .task(let pid):        (ctx.model(for: pid) as? Task)?.id
-        case .curation(let pid):    (ctx.model(for: pid) as? Project)?.id
-        default:                    nil
+        case .project(let pid):       (ctx.model(for: pid) as? Project)?.id
+        case .person(let pid):        (ctx.model(for: pid) as? Person)?.id
+        case .institution(let pid):   (ctx.model(for: pid) as? Institution)?.id
+        case .minutes(let pid):       (ctx.model(for: pid) as? Minutes)?.id
+        case .document(let pid):      (ctx.model(for: pid) as? Document)?.id
+        case .contentNote(let pid):   (ctx.model(for: pid) as? Note)?.id
+        case .task(let pid):          (ctx.model(for: pid) as? Task)?.id
+        case .curation(let pid):      (ctx.model(for: pid) as? Project)?.id
+        case .emailExplorer(let pid): (ctx.model(for: pid) as? EmailMessage)?.id
         }
     }
 
-    private func workspaceTab(for dest: TabDestination, using ctx: ModelContext) -> WorkspaceTab? {
-        switch dest {
-        case .page(let token):
-            return WorkspaceTabCoding.categoryTab(forToken: token)
-        case .entity(let kind, let id):
-            switch kind {
-            case "project":
-                return first(FetchDescriptor<Project>(predicate: #Predicate { $0.id == id }), ctx).map { .project($0.persistentModelID) }
-            case "person":
-                return first(FetchDescriptor<Person>(predicate: #Predicate { $0.id == id }), ctx).map { .person($0.persistentModelID) }
-            case "institution":
-                return first(FetchDescriptor<Institution>(predicate: #Predicate { $0.id == id }), ctx).map { .institution($0.persistentModelID) }
-            case "minutes":
-                return first(FetchDescriptor<Minutes>(predicate: #Predicate { $0.id == id }), ctx).map { .minutes($0.persistentModelID) }
-            case "document":
-                return first(FetchDescriptor<Document>(predicate: #Predicate { $0.id == id }), ctx).map { .document($0.persistentModelID) }
-            case "contentNote":
-                return first(FetchDescriptor<Note>(predicate: #Predicate { $0.id == id }), ctx).map { .contentNote($0.persistentModelID) }
-            case "task":
-                return first(FetchDescriptor<Task>(predicate: #Predicate { $0.id == id }), ctx).map { .task($0.persistentModelID) }
-            case "curation":
-                return first(FetchDescriptor<Project>(predicate: #Predicate { $0.id == id }), ctx).map { .curation($0.persistentModelID) }
-            default:
-                return nil
-            }
+    private func workspaceTab(kind: String, id: UUID, using ctx: ModelContext) -> WorkspaceTab? {
+        switch kind {
+        case "project":
+            return first(FetchDescriptor<Project>(predicate: #Predicate { $0.id == id }), ctx).map { .project($0.persistentModelID) }
+        case "person":
+            return first(FetchDescriptor<Person>(predicate: #Predicate { $0.id == id }), ctx).map { .person($0.persistentModelID) }
+        case "institution":
+            return first(FetchDescriptor<Institution>(predicate: #Predicate { $0.id == id }), ctx).map { .institution($0.persistentModelID) }
+        case "minutes":
+            return first(FetchDescriptor<Minutes>(predicate: #Predicate { $0.id == id }), ctx).map { .minutes($0.persistentModelID) }
+        case "document":
+            return first(FetchDescriptor<Document>(predicate: #Predicate { $0.id == id }), ctx).map { .document($0.persistentModelID) }
+        case "contentNote":
+            return first(FetchDescriptor<Note>(predicate: #Predicate { $0.id == id }), ctx).map { .contentNote($0.persistentModelID) }
+        case "task":
+            return first(FetchDescriptor<Task>(predicate: #Predicate { $0.id == id }), ctx).map { .task($0.persistentModelID) }
+        case "curation":
+            return first(FetchDescriptor<Project>(predicate: #Predicate { $0.id == id }), ctx).map { .curation($0.persistentModelID) }
+        case "emailExplorer":
+            // Deliberately NOT restored: a lab session holds only transient, unsaved experiment state, so
+            // reopening the tab would present an empty shell. Dropping it is the honest outcome.
+            return nil
+        default:
+            return nil
         }
     }
 
@@ -650,27 +620,25 @@ enum TaskViewMode: String, CaseIterable {
         openInNewTab(.contentNote(id))
     }
 
-    /// Activate an existing tab already showing this destination, else open it in a new tab.
+    /// Activate an existing tab already showing this entity, else open it in a new tab.
     func focusOrOpen(_ tab: WorkspaceTab) {
-        if let existing = tabs.first(where: { $0.current == tab }) {
+        if let existing = tabs.first(where: { $0.tab == tab }) {
             setActive(existing.id)
         } else {
             openInNewTab(tab)
         }
     }
 
-    /// Focus a Diary tab on the given date and request a scroll to `noteId`. Reuses an existing
-    /// Diary tab if one is open, otherwise navigates the active tab to the Diary.
+    /// Show the Diary pane on the given date and request a scroll to `noteId`. There is one Diary, so
+    /// this is a sidebar selection plus a date — no tab hunting.
     func focusDiary(date: Date, scrollTo noteId: UUID? = nil, scrollToEntry entryId: UUID? = nil,
                     scrollToBlock blockId: UUID? = nil) {
-        let target = tabs.first { $0.current == .diary } ?? active
-        if target.current != .diary { target.navigate(to: .diary) }
-        setActive(target.id)
-        target.diaryState.mode = .day
-        target.diaryState.goTo(date)
-        target.diaryState.scrollTargetNoteId = noteId
-        target.diaryState.scrollTargetEntryId = entryId
-        target.diaryState.scrollTargetBlockId = blockId
+        select(.diary)
+        diaryState.mode = .day
+        diaryState.goTo(date)
+        diaryState.scrollTargetNoteId = noteId
+        diaryState.scrollTargetEntryId = entryId
+        diaryState.scrollTargetBlockId = blockId
     }
 
     /// Navigate to the diary day where a logged time entry lives, and request a scroll to it.
@@ -702,10 +670,9 @@ enum TaskViewMode: String, CaseIterable {
         tabs.remove(at: idx)
         recentTabs.removeAll { $0 == id }   // a closed tab is never a back target
         if tabs.isEmpty {
-            let fallback = WorkspaceTabState(.diary)
-            tabs = [fallback]
+            // Nothing to fall back *to* any more — the selected category's pane is always there.
             recentTabs = []
-            activeId = fallback.id
+            activeId = nil
         } else if activeId == id {
             // Fall back to the tab this one was opened from (the most-recently-active tab), not the
             // positional neighbour; only use the neighbour when there's no recency history.
@@ -718,12 +685,12 @@ enum TaskViewMode: String, CaseIterable {
         }
     }
 
-    /// Close any tab whose history references a now-deleted model id (call before deleting it).
+    /// Close any tab showing a now-deleted model id (call before deleting it).
     func closeEntity(_ id: PersistentIdentifier) {
         tabs.filter { $0.references(id) }.forEach { closeTab($0.id) }
     }
 
-    /// Whether any open tab's history references this model id (e.g. a meeting shown in a tab).
+    /// Whether any open tab shows this model id (e.g. a meeting shown in a tab).
     func references(_ id: PersistentIdentifier) -> Bool {
         tabs.contains { $0.references(id) }
     }

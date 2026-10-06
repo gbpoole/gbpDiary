@@ -248,10 +248,10 @@ struct DayPageContent: View {
     // MARK: - Email
 
     @ViewBuilder private var emailsSection: some View {
-        DaySectionHeader(title: "Email", systemImage: "tray.full", onAction: { workspace.focusOrOpen(.triage) })
+        DaySectionHeader(title: "Email", systemImage: "tray.full", onAction: { workspace.select(.triage) })
         // Hidden (non-accepted) emails for this day — tap to open the central triage page.
         if let hidden = hiddenEmailSummary {
-            Button { workspace.focusOrOpen(.triage) } label: {
+            Button { workspace.select(.triage) } label: {
                 Label(hidden, systemImage: "tray.full")
                     .font(.caption).foregroundStyle(AppTheme.accent)
             }

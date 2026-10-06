@@ -1,8 +1,10 @@
 import SwiftUI
 import SwiftData
 
-// Back/forward controls for the active tab, plus the strip of open tabs. Each tab shows the
-// title of its current history location.
+// The strip of open **entity** tabs. Browse categories are fixed panes chosen in the sidebar, not tabs,
+// so the strip holds only entities — and it hides itself entirely when none are open, rather than leaving
+// empty chrome above a category page. There is no back/forward: a tab shows one entity, and getting back
+// to a list is a sidebar click.
 struct WorkspaceTabStrip: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(WorkspaceModel.self) private var workspace
@@ -11,21 +13,31 @@ struct WorkspaceTabStrip: View {
     @State private var dropTargetIndex: Int?
 
     var body: some View {
-        HStack(spacing: 8) {
-            navButtons
-            Divider().frame(height: 16)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 4) {
-                    ForEach(Array(workspace.tabs.enumerated()), id: \.element.id) { index, tab in
-                        tabChip(tab, index: index)
+        if !workspace.tabs.isEmpty {
+            HStack(spacing: 8) {
+                // Returns to the selected category's pane, which is what a tab is covering up.
+                Button { workspace.showSelectedPane() } label: {
+                    Label(workspace.selectedCategory.title, systemImage: workspace.selectedCategory.systemImage)
+                        .font(AppTheme.interfaceFont(size: 12, weight: .regular))
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(workspace.activeTab == nil ? AppTheme.text : AppTheme.mutedText)
+                .help("Back to \(workspace.selectedCategory.title)")
+                Divider().frame(height: 16)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 4) {
+                        ForEach(Array(workspace.tabs.enumerated()), id: \.element.id) { index, tab in
+                            tabChip(tab, index: index)
+                        }
+                        trailingDropZone
                     }
-                    trailingDropZone
                 }
             }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(AppTheme.background)
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(AppTheme.background)
     }
 
     // Drops here append the dragged tab to the end of the strip.
@@ -56,31 +68,11 @@ struct WorkspaceTabStrip: View {
         return true
     }
 
-    private var navButtons: some View {
-        let active = workspace.active
-        return HStack(spacing: 2) {
-            Button { active.goBack() } label: {
-                Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-            .disabled(!active.canGoBack)
-            .foregroundStyle(active.canGoBack ? AppTheme.text : AppTheme.mutedText)
-            .help("Back")
-
-            Button { active.goForward() } label: {
-                Image(systemName: "chevron.right").font(.system(size: 12, weight: .semibold))
-            }
-            .buttonStyle(.plain)
-            .disabled(!active.canGoForward)
-            .foregroundStyle(active.canGoForward ? AppTheme.text : AppTheme.mutedText)
-            .help("Forward")
-        }
-    }
-
     private func tabChip(_ tab: WorkspaceTabState, index: Int) -> some View {
         let isActive = workspace.activeId == tab.id
-        let info = describe(tab.current)
-        let showClose = workspace.tabs.count > 1
+        let info = describe(tab.tab)
+        // Every tab is closable now: closing the last one just reveals the category pane behind it.
+        let showClose = true
         return HStack(spacing: 5) {
             Image(systemName: info.icon).font(.system(size: 10))
             Text(info.title).font(AppTheme.interfaceFont(size: 12, weight: isActive ? .semibold : .regular))
@@ -113,10 +105,9 @@ struct WorkspaceTabStrip: View {
 
     private func describe(_ tab: WorkspaceTab) -> (title: String, icon: String) {
         switch tab {
-        case .diary, .chat, .triage, .tasks, .projects, .people, .institutions,
-             .meetings, .documents, .content, .images, .tags, .timesheet:
-            let cat = tab.category
-            return (cat.title, cat.systemImage)
+        case .emailExplorer(let pid):
+            let subject = model(pid, as: EmailMessage.self)?.subject ?? ""
+            return (subject.isEmpty ? "Email Lab" : "Lab: \(subject)", "sparkles")
         case .contentNote(let pid):
             let title = model(pid, as: Note.self)?.title ?? ""
             return (title.isEmpty ? "Note" : title, "note.text")

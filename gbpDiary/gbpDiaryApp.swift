@@ -179,13 +179,11 @@ struct AppCommands: Commands {
     let hotkeys: HotkeySettings
 
     var body: some Commands {
-        // Remove the default File ▸ New Window (⌘N): this is a single-window, tabbed app, so a new
-        // window (which macOS shows as a native window-tab) is not wanted. ⌘N instead opens a new
-        // in-app tab via the "New Tab" command below.
+        // Remove the default File ▸ New Window (⌘N): this is a single-window app, so a new window (which
+        // macOS shows as a native window-tab) is not wanted. There is no New Tab command either — tabs
+        // only ever open by opening an entity — so ⌘N is deliberately unbound.
         CommandGroup(replacing: .newItem) { }
         CommandMenu("Tabs") {
-            Button("New Tab") { workspace.newTab() }
-                .keyboardShortcut(hotkeys.hotkey(for: .newTab).keyboardShortcut)
             // Close Tab is handled by CloseTabKeyMonitor (WorkspaceView), not a menu shortcut: a menu
             // shortcut on the default ⌘W would collide with the standard File ▸ Close and lose to it.
             Button("Close Tab") { workspace.closeActiveTab() }

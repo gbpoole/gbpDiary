@@ -46,30 +46,30 @@ struct HotkeysTests {
             #expect(!action.section.isEmpty)
         }
         #expect(HotkeyAction.sections == ["Tabs"])                 // current headings
-        #expect(HotkeyAction.actions(in: "Tabs").contains(.newTab))
+        #expect(HotkeyAction.actions(in: "Tabs").contains(.closeTab))
     }
 
     @Test func resolver_overrideElseDefault() {
-        let custom = Hotkey.combo("n", command: true)
-        let overrides = ["newTab": custom]
-        #expect(HotkeyResolver.hotkey(for: .newTab, overrides: overrides) == custom)
-        #expect(HotkeyResolver.hotkey(for: .closeTab, overrides: overrides) == HotkeyAction.closeTab.defaultHotkey)
+        let custom = Hotkey.combo("k", command: true)
+        let overrides = ["closeTab": custom]
+        #expect(HotkeyResolver.hotkey(for: .closeTab, overrides: overrides) == custom)
+        #expect(HotkeyResolver.hotkey(for: .nextTab, overrides: overrides) == HotkeyAction.nextTab.defaultHotkey)
     }
 
     @Test func resolver_conflict_findsOtherActionSharingCombo() {
-        // Bind Next Tab to ⌘N, which collides with New Tab's default.
-        let overrides = ["nextTab": Hotkey.combo("n", command: true)]
-        let newTabHK = HotkeyResolver.hotkey(for: .newTab, overrides: overrides)
-        #expect(HotkeyResolver.conflict(for: newTabHK, excluding: .newTab, overrides: overrides) == .nextTab)
+        // Bind Next Tab to Close Tab's default (⌘W) so the two collide.
+        let overrides = ["nextTab": HotkeyAction.closeTab.defaultHotkey]
+        let closeHK = HotkeyResolver.hotkey(for: .closeTab, overrides: overrides)
+        #expect(HotkeyResolver.conflict(for: closeHK, excluding: .closeTab, overrides: overrides) == .nextTab)
         // No conflict for a unique combo.
-        #expect(HotkeyResolver.conflict(for: .combo("x", command: true), excluding: .newTab, overrides: overrides) == nil)
+        #expect(HotkeyResolver.conflict(for: .combo("x", command: true), excluding: .closeTab, overrides: overrides) == nil)
     }
 
     // MARK: - Store + settings
 
     @Test func store_setGetClear() {
-        HotkeyStore.overrides = ["newTab": .combo("n", command: true)]
-        #expect(HotkeyStore.overrides["newTab"] == .combo("n", command: true))
+        HotkeyStore.overrides = ["closeTab": .combo("k", command: true)]
+        #expect(HotkeyStore.overrides["closeTab"] == .combo("k", command: true))
         HotkeyStore.overrides = [:]
         #expect(HotkeyStore.overrides.isEmpty)
     }
@@ -77,17 +77,17 @@ struct HotkeysTests {
     @Test func settings_setResetAndCustomisedFlag() {
         HotkeyStore.overrides = [:]                 // clean slate
         let settings = HotkeySettings()
-        #expect(settings.hotkey(for: .newTab) == HotkeyAction.newTab.defaultHotkey)
-        #expect(!settings.isCustomised(.newTab))
+        #expect(settings.hotkey(for: .closeTab) == HotkeyAction.closeTab.defaultHotkey)
+        #expect(!settings.isCustomised(.closeTab))
 
         let custom = Hotkey.combo("n", command: true, option: true)
-        settings.setHotkey(custom, for: .newTab)
-        #expect(settings.hotkey(for: .newTab) == custom)
-        #expect(settings.isCustomised(.newTab))
+        settings.setHotkey(custom, for: .closeTab)
+        #expect(settings.hotkey(for: .closeTab) == custom)
+        #expect(settings.isCustomised(.closeTab))
 
-        settings.reset(.newTab)
-        #expect(settings.hotkey(for: .newTab) == HotkeyAction.newTab.defaultHotkey)
-        #expect(!settings.isCustomised(.newTab))
+        settings.reset(.closeTab)
+        #expect(settings.hotkey(for: .closeTab) == HotkeyAction.closeTab.defaultHotkey)
+        #expect(!settings.isCustomised(.closeTab))
         HotkeyStore.overrides = [:]                 // don't leak into other tests
     }
 }

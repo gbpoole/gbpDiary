@@ -21,7 +21,7 @@ struct ContentListView: View {
     @State private var confirmingBulkDelete = false
 
     // Filter/search/sort live on the active tab (persisted + remembered across tab switches).
-    private var filter: ListPageFilter { workspace.active.pageFilter(for: .content) }
+    private var filter: ListPageFilter { workspace.pageFilter(for: .content) }
     private static let sortColumns: [SortColumn<Note>] = [
         SortColumn("title", \.titleKey), SortColumn("tags", \.tagsKey),
         SortColumn("project", \.projectKey), SortColumn("updated", \.updatedAt),
