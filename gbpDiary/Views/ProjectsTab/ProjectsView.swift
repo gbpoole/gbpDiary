@@ -13,7 +13,7 @@ struct ProjectsView: View {
     @State private var confirmingBulkDelete = false
 
     // Filter/search/sort live on the active tab (persisted + remembered across tab switches).
-    private var filter: ListPageFilter { workspace.active.pageFilter(for: .projects) }
+    private var filter: ListPageFilter { workspace.pageFilter(for: .projects) }
     private static let sortColumns: [SortColumn<Project>] = [
         SortColumn("name", \.nameKey), SortColumn("stream", \.streamKey),
         SortColumn("devTeam", \.devTeamKey), SortColumn("sciTeam", \.sciTeamKey),

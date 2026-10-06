@@ -6,155 +6,388 @@ import Testing
 @MainActor
 struct WorkspaceModelTests {
 
-    // MARK: - Per-tab history navigation
+    // MARK: - Fixture
+    //
+    // Tabs are entity-only now, so every tab test needs real models to key them on. `save()` matters:
+    // `persistentModelID` is only permanent afterwards, and restore fetches by the model's UUID.
 
-    @Test func tabState_navigate_pushesHistoryAndEnablesBack() {
-        let state = WorkspaceTabState(.diary)
-        #expect(state.current == .diary)
-        #expect(!state.canGoBack)
+    private struct Fixture {
+        let ctx: ModelContext
+        let projectA: Project
+        let projectB: Project
+        let task: Task
 
-        state.navigate(to: .projects)
-        #expect(state.current == .projects)
-        #expect(state.canGoBack)
-        #expect(!state.canGoForward)
+        init() throws {
+            ctx = ModelContext(try TestModelContainer.make())
+            projectA = Project(name: "Apollo")
+            projectB = Project(name: "Borealis")
+            task = Task(summary: "T")
+            ctx.insert(projectA); ctx.insert(projectB); ctx.insert(task)
+            try ctx.save()
+        }
+        var a: WorkspaceTab { .project(projectA.persistentModelID) }
+        var b: WorkspaceTab { .project(projectB.persistentModelID) }
+        var t: WorkspaceTab { .task(task.persistentModelID) }
     }
 
-    @Test func tabState_navigate_toCurrentIsNoOp() {
-        let state = WorkspaceTabState(.diary)
-        state.navigate(to: .diary)
-        #expect(!state.canGoBack)  // no duplicate history entry
+    // MARK: - Panes vs tabs
+
+    /// A workspace starts with no tabs at all: the Diary *pane* is what you see.
+    @Test func freshWorkspace_showsTheDiaryPaneWithNoTabs() {
+        let ws = WorkspaceModel()
+        #expect(ws.tabs.isEmpty)
+        #expect(ws.activeTab == nil)
+        #expect(ws.selectedCategory == .diary)
     }
 
-    @Test func tabState_backForward_traversesHistory() {
-        let state = WorkspaceTabState(.diary)
-        state.navigate(to: .projects)
-        state.navigate(to: .tasks)
+    /// Picking a sidebar category shows its pane and clears the active tab — a pane and a tab are
+    /// alternatives, so there is only ever one "what am I looking at".
+    @Test func select_showsThePaneAndClearsTheActiveTab() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        #expect(ws.activeTab != nil)
 
-        state.goBack()
-        #expect(state.current == .projects)
-        #expect(state.canGoForward)
-
-        state.goForward()
-        #expect(state.current == .tasks)
-        #expect(!state.canGoForward)
+        ws.select(.tasks)
+        #expect(ws.selectedCategory == .tasks)
+        #expect(ws.activeTab == nil, "the pane is showing")
+        #expect(ws.tabs.count == 1, "the tab stays open behind it")
     }
 
-    @Test func tabState_navigateAfterBack_truncatesForwardHistory() {
-        let state = WorkspaceTabState(.diary)
-        state.navigate(to: .projects)
-        state.goBack()               // back to diary
-        state.navigate(to: .tasks)   // should drop the forward (.projects) entry
-        #expect(state.current == .tasks)
-        #expect(!state.canGoForward)
-        state.goBack()
-        #expect(state.current == .diary)
+    /// …and activating a tab hides the pane again without disturbing the sidebar's remembered category.
+    @Test func activatingATab_hidesThePaneButKeepsTheCategory() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        ws.select(.projects)
+        ws.activate(ws.tabs[0].id)
+        #expect(ws.activeTab?.tab == f.a)
+        #expect(ws.selectedCategory == .projects, "returning to the pane lands where you left it")
+        ws.showSelectedPane()
+        #expect(ws.activeTab == nil)
+    }
+
+    /// Page state is single-instance now: one Diary, one Tasks filter, one Database Chat.
+    @Test func pageState_isOnePerWorkspace() {
+        let ws = WorkspaceModel()
+        ws.tasksFilter.searchText = "urgent"
+        ws.diaryState.mode = .week
+        #expect(ws.tasksFilter.searchText == "urgent")
+        #expect(ws.diaryState.mode == .week)
+        // The same object every time, so edits on one surface are visible on the next.
+        #expect(ws.pageFilter(for: .projects) === ws.pageFilter(for: .projects))
+        #expect(ws.pageFilter(for: .projects) !== ws.pageFilter(for: .people))
     }
 
     // MARK: - Multi-tab model
 
-    @Test func openInNewTab_addsAndActivates() {
+    @Test func openInNewTab_addsAndActivates() throws {
+        let f = try Fixture()
         let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
         #expect(ws.tabs.count == 1)
-        ws.openInNewTab(.tasks)
-        #expect(ws.tabs.count == 2)
-        #expect(ws.active.current == .tasks)
+        #expect(ws.activeTab?.tab == f.a)
     }
 
-    @Test func openEmailExplorerInNewTab_alwaysCreatesConfiguredIndependentChatTab() {
+    @Test func focusOrOpen_activatesExistingTabShowingEntity() throws {
+        let f = try Fixture()
         let ws = WorkspaceModel()
-        let firstEmail = email(id: "1")
-        let secondEmail = email(id: "2")
+        ws.openInNewTab(f.a)
+        ws.openInNewTab(f.b)
+        ws.focusOrOpen(f.a)
+        #expect(ws.tabs.count == 2, "reused, not duplicated")
+        #expect(ws.activeTab?.tab == f.a)
+    }
 
-        ws.openEmailExplorerInNewTab(for: firstEmail)
-        let firstChat = ws.active
-        ws.openEmailExplorerInNewTab(for: secondEmail)
-        let secondChat = ws.active
+    @Test func focusOrOpen_opensNewTabWhenNoneShowsEntity() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.focusOrOpen(f.t)
+        #expect(ws.tabs.count == 1)
+        #expect(ws.activeTab?.tab == f.t)
+    }
 
-        #expect(ws.tabs.count == 3)
-        #expect(firstChat.current == .chat)
-        #expect(secondChat.current == .chat)
-        #expect(firstChat.id != secondChat.id)
-        #expect(firstChat.chatState !== secondChat.chatState)
-        #expect(firstChat.chatState.mode == .emailExplorerLab)
-        #expect(firstChat.chatState.selectedEmailID == firstEmail.persistentModelID)
-        #expect(secondChat.chatState.selectedEmailID == secondEmail.persistentModelID)
+    @Test func closeTab_reassignsActive() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        ws.openInNewTab(f.b)
+        ws.closeTab(ws.activeTab!.id)
+        #expect(ws.tabs.count == 1)
+        #expect(ws.activeTab?.tab == f.a)
+    }
 
-        firstChat.chatState.mode = .database
-        #expect(secondChat.chatState.mode == .emailExplorerLab)
+    /// Closing the last tab reveals the pane rather than manufacturing a replacement tab — there is
+    /// always a category pane behind the strip, so nothing has to be invented.
+    @Test func closeTab_lastTab_revealsThePane() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.select(.tasks)
+        ws.openInNewTab(f.a)
+        ws.closeTab(ws.activeTab!.id)
+        #expect(ws.tabs.isEmpty)
+        #expect(ws.activeTab == nil)
+        #expect(ws.selectedCategory == .tasks)
+    }
+
+    @Test func moveTab_reordersAndPreservesActive() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        ws.openInNewTab(f.b)
+        ws.openInNewTab(f.t)
+        let taskId = ws.activeTab!.id
+
+        ws.moveTab(id: taskId, toIndex: 0)
+        #expect(ws.tabs.map(\.tab) == [f.t, f.a, f.b])
+        #expect(ws.activeId == taskId, "active tab unchanged by reordering")
+    }
+
+    // MARK: - Safari-like tab shortcuts (entity tabs only)
+
+    @Test func closeActiveTab_closesCurrentAndReassigns() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        ws.openInNewTab(f.b)
+        ws.closeActiveTab()
+        #expect(ws.tabs.count == 1)
+        #expect(ws.activeTab?.tab == f.a)
+    }
+
+    /// ⌘W while a pane is showing does nothing: a pane isn't closable.
+    @Test func closeActiveTab_whilePaneShowing_isNoOp() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        ws.select(.tasks)
+        ws.closeActiveTab()
+        #expect(ws.tabs.count == 1)
+    }
+
+    @Test func selectNextTab_wrapsAround() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        ws.openInNewTab(f.b)
+        ws.openInNewTab(f.t)     // active, index 2
+        ws.selectNextTab()       // wraps 2 → 0
+        #expect(ws.activeIndex == 0)
+    }
+
+    @Test func selectPreviousTab_wrapsAround() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        ws.openInNewTab(f.b)
+        ws.selectTab(at: 0)
+        ws.selectPreviousTab()   // wraps 0 → 1
+        #expect(ws.activeIndex == 1)
+    }
+
+    @Test func selectNextPrevious_singleTab_isNoOp() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        let id = ws.activeId
+        ws.selectNextTab()
+        ws.selectPreviousTab()
+        #expect(ws.activeId == id)
+    }
+
+    @Test func selectTabAtIndex_activatesOrIgnoresOutOfRange() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        ws.openInNewTab(f.b)
+        ws.selectTab(at: 0)
+        #expect(ws.activeTab?.tab == f.a)
+        ws.selectTab(at: 9)
+        #expect(ws.activeTab?.tab == f.a, "out of range is a no-op")
+    }
+
+    @Test func selectLastTab_activatesFinalTab() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        ws.openInNewTab(f.b)
+        ws.selectTab(at: 0)
+        ws.selectLastTab()
+        #expect(ws.activeIndex == 1)
+        #expect(ws.activeTab?.tab == f.b)
+    }
+
+    // MARK: - Return to previous tab (MRU back-stack)
+
+    @Test func returnToPreviousTab_progressivelyWalksBack() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        let aId = ws.activeId
+        ws.openInNewTab(f.b)
+        let bId = ws.activeId
+        ws.openInNewTab(f.t)
+        ws.returnToPreviousTab()
+        #expect(ws.activeId == bId)
+        ws.returnToPreviousTab()
+        #expect(ws.activeId == aId)
+    }
+
+    @Test func returnToPreviousTab_emptyStack_isNoOp() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        let id = ws.activeId
+        ws.returnToPreviousTab()
+        #expect(ws.activeId == id)
+    }
+
+    @Test func returnToPreviousTab_recordsPositionalAndSelectionMoves() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        ws.openInNewTab(f.b)
+        ws.openInNewTab(f.t)
+        let tId = ws.activeId
+        ws.selectTab(at: 0)          // pushes the task tab
+        ws.returnToPreviousTab()
+        #expect(ws.activeId == tId)
+    }
+
+    @Test func returnToPreviousTab_mruDedups_noRepeatEntries() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        let aId = ws.activeId
+        ws.openInNewTab(f.b)
+        let bId = ws.activeId
+        ws.activate(aId!)
+        ws.activate(bId!)
+        ws.returnToPreviousTab()
+        #expect(ws.activeId == aId)
+        ws.returnToPreviousTab()     // stack empty → stays
+        #expect(ws.activeId == aId)
+    }
+
+    @Test func closeTab_returnsToTabItWasOpenedFrom_notPositionalNeighbour() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        let aId = ws.activeId
+        ws.openInNewTab(f.b)
+        ws.activate(aId!)
+        ws.openInNewTab(f.t)         // opened from A
+        ws.closeActiveTab()
+        #expect(ws.activeId == aId, "returns to the opener, not the neighbour")
+    }
+
+    @Test func returnToPreviousTab_skipsAndPurgesClosedTabs() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        let aId = ws.activeId
+        ws.openInNewTab(f.b)
+        let bId = ws.activeId
+        ws.openInNewTab(f.t)
+        ws.closeTab(bId!)
+        ws.returnToPreviousTab()
+        #expect(ws.activeId == aId)
     }
 
     // MARK: - Curation sessions
 
-    /// The curation tab is an entity tab keyed by its ROOT project, so it reuses/closes like the others
-    /// and lives under the Projects sidebar category.
     @Test func curationTab_focusOrOpenReusesAndCloseEntityCloses() throws {
-        let container = try TestModelContainer.make()
-        let context = ModelContext(container)
-        let project = Project(name: "Apollo")
-        context.insert(project)
-        try context.save()
-        let pid = project.persistentModelID
-
+        let f = try Fixture()
+        let pid = f.projectA.persistentModelID
         let ws = WorkspaceModel()
         ws.focusOrOpen(.curation(pid))
-        #expect(ws.active.current == .curation(pid))
-        #expect(ws.active.current.category == .projects)
-        let count = ws.tabs.count
+        #expect(ws.activeTab?.tab == .curation(pid))
+        #expect(WorkspaceTab.curation(pid).category == .projects)
 
         ws.focusOrOpen(.curation(pid))
-        #expect(ws.tabs.count == count)          // reused, not duplicated
-
+        #expect(ws.tabs.count == 1, "reused, not duplicated")
         #expect(ws.references(pid))
         ws.closeEntity(pid)
-        #expect(!ws.tabs.contains { $0.current == .curation(pid) })
+        #expect(!ws.tabs.contains { $0.tab == .curation(pid) })
     }
 
-    /// A curation tab survives a session save/restore by the root project's stable UUID.
     @Test func snapshot_capturesCurationEntity_andRestoresIt() throws {
-        let container = try TestModelContainer.make()
-        let context = ModelContext(container)
-        let project = Project(name: "Apollo")
-        context.insert(project)
-        try context.save()
-
+        let f = try Fixture()
         let ws = WorkspaceModel()
-        ws.focusOrOpen(.curation(project.persistentModelID))
-        let snapshot = ws.snapshot(using: context)
+        ws.focusOrOpen(.curation(f.projectA.persistentModelID))
+        let snapshot = ws.snapshot(using: f.ctx)
 
         let restored = WorkspaceModel()
-        restored.restore(snapshot, using: context)
-        #expect(restored.tabs.contains { $0.current == .curation(project.persistentModelID) })
+        restored.restore(snapshot, using: f.ctx)
+        #expect(restored.tabs.contains { $0.tab == .curation(f.projectA.persistentModelID) })
     }
 
-    /// Walk position is per tab, so switching away and back resumes where the session was.
-    @Test func curationIndex_isHeldPerTab() {
+    /// Walk position is per tab — two curation sessions don't share a place in their walks.
+    @Test func curationIndex_isHeldPerTab() throws {
+        let f = try Fixture()
         let ws = WorkspaceModel()
-        let first = ws.active
-        first.curationIndex = 3
-        ws.openInNewTab(.projects)
-        #expect(ws.active.curationIndex == 0)    // the new tab has its own position
+        ws.openInNewTab(.curation(f.projectA.persistentModelID))
+        ws.curationIndex = 3
+        ws.openInNewTab(.curation(f.projectB.persistentModelID))
+        #expect(ws.curationIndex == 0, "the new session has its own position")
         ws.selectTab(at: 0)
-        #expect(ws.active.curationIndex == 3)
+        #expect(ws.curationIndex == 3)
     }
 
-    @Test func chatState_survivesNavigationWithinItsWorkspaceTab() {
+    // MARK: - Email Explorer tabs
+
+    /// The lab is its own tab kind, always fresh, because experiments are per-email and deliberately
+    /// parallel — which the single Chat *pane* could not provide.
+    @Test func openEmailExplorerInNewTab_alwaysCreatesAFreshConfiguredTab() throws {
+        let ctx = ModelContext(try TestModelContainer.make())
+        let first = email(id: "1"), second = email(id: "2")
+        ctx.insert(first); ctx.insert(second)
+        try ctx.save()
+
         let ws = WorkspaceModel()
-        ws.navigate(to: .chat)
-        let state = ws.active.chatState
-        state.draft = "unfinished question"
+        ws.openEmailExplorerInNewTab(for: first)
+        let firstTab = ws.activeTab!
+        ws.openEmailExplorerInNewTab(for: second)
+        let secondTab = ws.activeTab!
 
-        ws.navigate(to: .projects)
-        ws.active.goBack()
+        #expect(ws.tabs.count == 2)
+        #expect(firstTab.id != secondTab.id)
+        #expect(firstTab.chatState !== secondTab.chatState)
+        #expect(firstTab.chatState.mode == .emailExplorerLab)
+        #expect(firstTab.chatState.selectedEmailID == first.persistentModelID)
+        #expect(secondTab.chatState.selectedEmailID == second.persistentModelID)
 
-        #expect(ws.active.current == .chat)
-        #expect(ws.active.chatState === state)
-        #expect(ws.active.chatState.draft == "unfinished question")
+        // Independent: changing one experiment leaves the other alone.
+        firstTab.chatState.mode = .database
+        #expect(secondTab.chatState.mode == .emailExplorerLab)
+        // …and the Chat pane's own state is a third, separate thing.
+        #expect(ws.chatState !== firstTab.chatState)
+        #expect(ws.chatState.mode == .database)
     }
+
+    /// A lab tab holds only transient, unsaved experiment state, so restoring it would present an empty
+    /// shell. It is deliberately dropped.
+    @Test func emailExplorerTab_isNotRestored() throws {
+        let ctx = ModelContext(try TestModelContainer.make())
+        let e = email(id: "1")
+        ctx.insert(e)
+        try ctx.save()
+        let ws = WorkspaceModel()
+        ws.openEmailExplorerInNewTab(for: e)
+        let snap = ws.snapshot(using: ctx)
+        #expect(snap.entityTabs?.contains { $0.kind == "emailExplorer" } == true, "it IS written…")
+
+        let restored = WorkspaceModel()
+        restored.restore(snap, using: ctx)
+        #expect(restored.tabs.isEmpty, "…but not rebuilt")
+        #expect(restored.activeTab == nil)
+    }
+
+    // MARK: - Chat state (pane and lab share one type)
 
     @Test func chatState_changingEmailClearsTransientLabDataButKeepsPrompt() {
         let state = ChatState()
-        let first = email(id: "first")
-        let second = email(id: "second")
+        let first = email(id: "first"), second = email(id: "second")
         state.selectEmail(first.persistentModelID)
         state.lab.instructions = "Keep this experiment prompt"
         state.lab.body = "private transient body"
@@ -170,8 +403,7 @@ struct WorkspaceModelTests {
 
     @Test func chatState_selectionRevision_rejectsOldAAfterAtoBtoA() {
         let state = ChatState()
-        let first = email(id: "first")
-        let second = email(id: "second")
+        let first = email(id: "first"), second = email(id: "second")
         let firstID = first.persistentModelID
 
         state.selectEmail(firstID)
@@ -229,338 +461,148 @@ struct WorkspaceModelTests {
         #expect(state.beginAnswerRequest(3) == nil)
     }
 
-    @Test func focusOrOpen_activatesExistingTabShowingDestination() {
-        let ws = WorkspaceModel()
-        ws.openInNewTab(.tasks)       // tab 2, active
-        ws.openInNewTab(.projects)    // tab 3, active
-        ws.focusOrOpen(.tasks)        // existing tab shows .tasks → activate, no new tab
-        #expect(ws.tabs.count == 3)
-        #expect(ws.active.current == .tasks)
-    }
-
-    @Test func focusOrOpen_opensNewTabWhenNoneShowsDestination() {
-        let ws = WorkspaceModel()
-        ws.focusOrOpen(.people)       // no tab currently shows .people
-        #expect(ws.tabs.count == 2)
-        #expect(ws.active.current == .people)
-    }
-
-    @Test func closeTab_reassignsActive() {
-        let ws = WorkspaceModel()
-        ws.openInNewTab(.tasks)
-        let tasksId = ws.active.id
-        ws.closeTab(tasksId)
-        #expect(ws.tabs.count == 1)
-        #expect(ws.active.current == .diary)
-    }
-
-    @Test func closeTab_lastTab_recreatesDiary() {
-        let ws = WorkspaceModel()
-        ws.closeTab(ws.active.id)
-        #expect(ws.tabs.count == 1)
-        #expect(ws.active.current == .diary)
-    }
-
-    @Test func moveTab_reordersAndPreservesActive() {
-        let ws = WorkspaceModel()      // [diary]
-        ws.openInNewTab(.tasks)        // [diary, tasks]
-        ws.openInNewTab(.projects)     // [diary, tasks, projects], active = projects
-        let projectsId = ws.active.id
-
-        ws.moveTab(id: projectsId, toIndex: 0)   // drag projects to the front
-        #expect(ws.tabs.map(\.current) == [.projects, .diary, .tasks])
-        #expect(ws.activeId == projectsId)       // active tab unchanged by reordering
-        #expect(ws.tabs.first?.id == projectsId)
-    }
-
-    // MARK: - Safari-like tab shortcuts
-
-    @Test func newTab_opensAndActivatesDiaryTab() {
-        let ws = WorkspaceModel()
-        ws.openInNewTab(.tasks)          // 2 tabs, tasks active
-        ws.newTab()
-        #expect(ws.tabs.count == 3)
-        #expect(ws.active.current == .diary)
-        #expect(ws.activeIndex == 2)
-    }
-
-    @Test func closeActiveTab_closesCurrentAndReassigns() {
-        let ws = WorkspaceModel()
-        ws.openInNewTab(.tasks)          // active = tasks (index 1)
-        ws.closeActiveTab()
-        #expect(ws.tabs.count == 1)
-        #expect(ws.active.current == .diary)
-    }
-
-    @Test func selectNextTab_wrapsAround() {
-        let ws = WorkspaceModel()        // diary (0)
-        ws.openInNewTab(.tasks)          // tasks (1)
-        ws.openInNewTab(.projects)       // projects (2), active
-        ws.selectNextTab()               // wraps 2 → 0
-        #expect(ws.activeIndex == 0)
-        ws.selectNextTab()               // 0 → 1
-        #expect(ws.active.current == .tasks)
-    }
-
-    @Test func selectPreviousTab_wrapsAround() {
-        let ws = WorkspaceModel()        // diary (0), active
-        ws.openInNewTab(.tasks)          // tasks (1)
-        ws.openInNewTab(.projects)       // projects (2)
-        ws.selectTab(at: 0)              // back to diary
-        ws.selectPreviousTab()           // wraps 0 → 2
-        #expect(ws.activeIndex == 2)
-        #expect(ws.active.current == .projects)
-    }
-
-    @Test func selectNextPrevious_singleTab_isNoOp() {
-        let ws = WorkspaceModel()
-        ws.selectNextTab()
-        ws.selectPreviousTab()
-        #expect(ws.activeIndex == 0)
-        #expect(ws.tabs.count == 1)
-    }
-
-    @Test func selectTabAtIndex_activatesOrIgnoresOutOfRange() {
-        let ws = WorkspaceModel()
-        ws.openInNewTab(.tasks)          // index 1
-        ws.openInNewTab(.projects)       // index 2, active
-        ws.selectTab(at: 0)
-        #expect(ws.active.current == .diary)
-        ws.selectTab(at: 9)              // out of range → no change
-        #expect(ws.active.current == .diary)
-    }
-
-    @Test func selectLastTab_activatesFinalTab() {
-        let ws = WorkspaceModel()
-        ws.openInNewTab(.tasks)
-        ws.openInNewTab(.projects)       // last
-        ws.selectTab(at: 0)              // move off the last
-        ws.selectLastTab()
-        #expect(ws.activeIndex == 2)
-        #expect(ws.active.current == .projects)
-    }
-
-    // MARK: - Return to previous tab (MRU back-stack)
-
-    @Test func returnToPreviousTab_progressivelyWalksBack() {
-        let ws = WorkspaceModel()            // diary, active
-        let diaryId = ws.activeId
-        ws.openInNewTab(.tasks)              // tasks, active (pushes diary)
-        let tasksId = ws.activeId
-        ws.openInNewTab(.projects)           // projects, active (pushes tasks)
-        ws.returnToPreviousTab()             // → tasks
-        #expect(ws.activeId == tasksId)
-        ws.returnToPreviousTab()             // → diary (progressive)
-        #expect(ws.activeId == diaryId)
-    }
-
-    @Test func returnToPreviousTab_emptyStack_isNoOp() {
-        let ws = WorkspaceModel()            // single tab, nothing to go back to
-        let diaryId = ws.activeId
-        ws.returnToPreviousTab()
-        #expect(ws.activeId == diaryId)
-        #expect(ws.tabs.count == 1)
-    }
-
-    @Test func returnToPreviousTab_recordsPositionalAndSelectionMoves() {
-        let ws = WorkspaceModel()            // diary (0)
-        ws.openInNewTab(.tasks)              // tasks (1)
-        ws.openInNewTab(.projects)           // projects (2), active
-        let projectsId = ws.activeId
-        ws.selectTab(at: 0)                  // → diary (pushes projects)
-        ws.returnToPreviousTab()             // → projects
-        #expect(ws.activeId == projectsId)
-    }
-
-    @Test func returnToPreviousTab_mruDedups_noRepeatEntries() {
-        let ws = WorkspaceModel()            // diary
-        let diaryId = ws.activeId
-        ws.openInNewTab(.tasks)              // tasks
-        let tasksId = ws.activeId
-        ws.activate(diaryId)                 // → diary (pushes tasks)
-        ws.activate(tasksId)                 // → tasks (pushes diary; tasks de-duped)
-        ws.returnToPreviousTab()             // → diary
-        #expect(ws.activeId == diaryId)
-        ws.returnToPreviousTab()             // stack now empty → stays
-        #expect(ws.activeId == diaryId)
-    }
-
-    @Test func closeTab_returnsToTabItWasOpenedFrom_notPositionalNeighbour() {
-        let ws = WorkspaceModel()            // diary (0)
-        let diaryId = ws.activeId
-        ws.openInNewTab(.projects)           // projects (1)
-        ws.activate(diaryId)                 // navigate back to diary (active)
-        ws.openInNewTab(.tasks)              // tasks (2), opened from diary — active third tab
-        ws.closeActiveTab()                  // ⌘W on the third tab
-        #expect(ws.activeId == diaryId)      // returns to diary (the opener), not the neighbour (projects)
-    }
-
-    @Test func returnToPreviousTab_skipsAndPurgesClosedTabs() {
-        let ws = WorkspaceModel()            // diary
-        let diaryId = ws.activeId
-        ws.openInNewTab(.tasks)              // tasks (pushes diary)
-        let tasksId = ws.activeId
-        ws.openInNewTab(.projects)           // projects (pushes tasks); active
-        ws.closeTab(tasksId)                 // remove tasks from the back-stack
-        ws.returnToPreviousTab()             // skips the closed tasks tab → diary
-        #expect(ws.activeId == diaryId)
-    }
-
     // MARK: - Category mapping
 
-    @Test func entityTab_reportsOwningCategory() {
-        #expect(WorkspaceTab.tasks.category == .tasks)
-        #expect(WorkspaceCategory.images.tab == .images)
+    @Test func entityTab_reportsOwningCategory() throws {
+        let f = try Fixture()
+        #expect(f.t.category == .tasks)
+        #expect(f.a.category == .projects)
+        #expect(WorkspaceTab.emailExplorer(f.projectA.persistentModelID).category == .chat)
     }
 
     // MARK: - Session persistence
 
-    private func emptyTasksSnapshot() -> TasksFilterSnapshot {
-        TasksFilterSnapshot(activeFilterIds: [], searchText: "", sortColumnID: "urgency",
-                            sortAscending: false, dateRangeStart: nil, dateRangeEnd: nil, datePreset: nil)
-    }
-    private func defaultDiarySnapshot() -> DiarySnapshot {
-        DiarySnapshot(date: FixedDates.reference, mode: "Day", tracksToday: true)
+    @Test func snapshot_capturesSelectedCategoryActiveTabAndPageState() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.select(.projects)
+        ws.openInNewTab(f.a)
+        ws.openInNewTab(f.t)
+        ws.selectTab(at: 0)
+        ws.tasksFilter.searchText = "urgent"
+        ws.boardPanelShown = true
+        ws.pageFilter(for: .projects).searchText = "apollo"
+
+        let snap = ws.snapshot(using: f.ctx)
+        #expect(snap.selectedCategory == WorkspaceCategory.projects.rawValue)
+        #expect(snap.entityTabs?.map(\.kind) == ["project", "task"])
+        #expect(snap.activeTabIndex == 0)
+        #expect(snap.tasksFilter?.searchText == "urgent")
+        #expect(snap.boardPanelShown == true)
+        #expect(snap.pageFilters?["Projects"]?.searchText == "apollo")
+
+        let restored = WorkspaceModel()
+        restored.restore(snap, using: f.ctx)
+        #expect(restored.selectedCategory == .projects)
+        #expect(restored.tabs.map(\.tab) == [f.a, f.t])
+        #expect(restored.activeTab?.tab == f.a)
+        #expect(restored.tasksFilter.searchText == "urgent")
+        #expect(restored.boardPanelShown)
+        #expect(restored.pageFilter(for: .projects).searchText == "apollo")
     }
 
-    @Test func restore_rebuildsCategoryTabsActiveAndFilters() throws {
-        let ctx = ModelContext(try TestModelContainer.make())
+    /// A pane showing and no tabs is a legitimate session, not an empty one.
+    @Test func snapshot_withNoTabs_restoresThePane() throws {
+        let f = try Fixture()
         let ws = WorkspaceModel()
-        let snap = WorkspaceSnapshot(tabs: [
-            TabSnapshot(history: [.page("diary")], index: 0,
-                        diary: DiarySnapshot(date: FixedDates.reference, mode: "Week", tracksToday: false),
-                        tasksFilter: emptyTasksSnapshot(), pageFilters: [:]),
-            TabSnapshot(history: [.page("projects")], index: 0, diary: defaultDiarySnapshot(),
-                        tasksFilter: emptyTasksSnapshot(),
-                        pageFilters: ["Projects": ListFilterSnapshot(activeFilterIds: ["status.active"],
-                                                                     searchText: "foo", sortColumnID: "stream", sortAscending: false)]),
-        ], activeIndex: 1)
-        ws.restore(snap, using: ctx)
-        #expect(ws.tabs.count == 2)
-        #expect(ws.tabs[0].current == .diary)
-        #expect(ws.tabs[0].diaryState.mode == .week)
-        #expect(ws.tabs[0].diaryState.currentDate == FixedDates.reference)
-        #expect(ws.active.current == .projects)
-        let pf = ws.tabs[1].pageFilter(for: .projects)
-        #expect(pf.searchText == "foo")
-        #expect(pf.sortColumnID == "stream")
-        #expect(pf.sortAscending == false)
+        ws.select(.timesheet)
+        let snap = ws.snapshot(using: f.ctx)
+
+        let restored = WorkspaceModel()
+        restored.restore(snap, using: f.ctx)
+        #expect(restored.selectedCategory == .timesheet)
+        #expect(restored.tabs.isEmpty)
+        #expect(restored.activeTab == nil)
     }
 
-    @Test func restore_chatStartsWithDefaultSessionOnlyState() throws {
-        let ctx = ModelContext(try TestModelContainer.make())
-        let ws = WorkspaceModel()
-        ws.openInNewTab(.chat)
-        ws.active.chatState.mode = .database
-        ws.active.chatState.selectEmail(email(id: "selected").persistentModelID)
-        let snap = WorkspaceSnapshot(tabs: [
-            TabSnapshot(history: [.page("chat")], index: 0, diary: defaultDiarySnapshot(),
-                        tasksFilter: emptyTasksSnapshot(), pageFilters: [:]),
+    /// The migration that matters: a session saved while categories were tabs.
+    @Test func restore_legacySnapshot_foldsIntoAPaneAndEntityTabs() throws {
+        let f = try Fixture()
+        let tasksSnap = TasksFilterSnapshot(activeFilterIds: [], searchText: "legacy",
+                                            sortColumnID: "urgency", sortAscending: false,
+                                            dateRangeStart: nil, dateRangeEnd: nil, datePreset: nil)
+        let diarySnap = DiarySnapshot(date: FixedDates.reference, mode: "Week", tracksToday: false)
+        let legacy = WorkspaceSnapshot(tabs: [
+            TabSnapshot(history: [.page("tasks")], index: 0, diary: diarySnap,
+                        tasksFilter: tasksSnap, pageFilters: [:]),
+            TabSnapshot(history: [.entity(kind: "project", id: f.projectA.id)], index: 0,
+                        diary: diarySnap, tasksFilter: tasksSnap, pageFilters: [:]),
         ], activeIndex: 0)
 
-        ws.restore(snap, using: ctx)
-
-        #expect(ws.active.current == .chat)
-        #expect(ws.active.chatState.mode == .database)
-        #expect(ws.active.chatState.selectedEmailID == nil)
-        #expect(ws.active.chatState.messages.isEmpty)
+        let ws = WorkspaceModel()
+        ws.restore(legacy, using: f.ctx)
+        #expect(ws.selectedCategory == .tasks, "the active legacy tab was the Tasks page")
+        #expect(ws.activeTab == nil, "so the pane is showing")
+        #expect(ws.tabs.map(\.tab) == [f.a], "the other tab's entity survives as a tab")
+        #expect(ws.tasksFilter.searchText == "legacy")
+        #expect(ws.diaryState.mode == .week)
     }
 
     @Test func restore_dropsTabWhoseEntityIsMissing() throws {
-        let ctx = ModelContext(try TestModelContainer.make())
+        let f = try Fixture()
+        let snap = WorkspaceSnapshot(
+            selectedCategory: WorkspaceCategory.tasks.rawValue,
+            entityTabs: [EntityTabSnapshot(kind: "project", id: UUID()),     // gone
+                         EntityTabSnapshot(kind: "task", id: f.task.id)],
+            activeTabIndex: 0)
         let ws = WorkspaceModel()
-        let snap = WorkspaceSnapshot(tabs: [
-            TabSnapshot(history: [.page("tasks")], index: 0, diary: defaultDiarySnapshot(),
-                        tasksFilter: emptyTasksSnapshot(), pageFilters: [:]),
-            TabSnapshot(history: [.entity(kind: "project", id: UUID())], index: 0, diary: defaultDiarySnapshot(),
-                        tasksFilter: emptyTasksSnapshot(), pageFilters: [:]),
-        ], activeIndex: 1)
-        ws.restore(snap, using: ctx)
-        #expect(ws.tabs.count == 1)               // the unresolved entity tab is dropped
-        #expect(ws.tabs[0].current == .tasks)
+        ws.restore(snap, using: f.ctx)
+        #expect(ws.tabs.map(\.tab) == [f.t])
+        #expect(ws.activeTab == nil, "the tab that was active is gone, so the pane shows")
     }
 
-    @Test func restore_nilSnapshot_keepsCurrentTabs() throws {
-        let ctx = ModelContext(try TestModelContainer.make())
+    @Test func restore_nilSnapshot_keepsCurrentState() throws {
+        let f = try Fixture()
         let ws = WorkspaceModel()
-        ws.openInNewTab(.tasks)
-        ws.restore(nil, using: ctx)
-        #expect(ws.tabs.count == 2)               // unchanged
-    }
-
-    @Test func snapshot_capturesEntityUUID_andRestoresIt() throws {
-        let ctx = ModelContext(try TestModelContainer.make())
-        let project = Project(name: "P")
-        ctx.insert(project)
-        try ctx.save()                            // permanent id before using persistentModelID / fetch
-        let ws = WorkspaceModel()
-        ws.openInNewTab(.project(project.persistentModelID))
-        let snap = ws.snapshot(using: ctx)
-        #expect(snap.tabs.contains { $0.history.contains(.entity(kind: "project", id: project.id)) })
-
-        let ws2 = WorkspaceModel()
-        ws2.restore(snap, using: ctx)
-        #expect(ws2.tabs.contains { $0.current == .project(project.persistentModelID) })
+        ws.openInNewTab(f.a)
+        ws.restore(nil, using: f.ctx)
+        #expect(ws.tabs.count == 1)
+        #expect(ws.activeTab?.tab == f.a)
     }
 
     // MARK: - Task detail tab
 
     @Test func task_tab_focusOrOpenReusesAndCloseEntityCloses() throws {
-        let ctx = ModelContext(try TestModelContainer.make())
-        let t = Task(summary: "T")
-        ctx.insert(t)
-        try ctx.save()
+        let f = try Fixture()
         let ws = WorkspaceModel()
-        ws.focusOrOpen(.task(t.persistentModelID))
-        #expect(ws.active.current == .task(t.persistentModelID))
-        let count = ws.tabs.count
-        ws.focusOrOpen(.task(t.persistentModelID))   // already shown → reuse, no new tab
-        #expect(ws.tabs.count == count)
-        #expect(ws.references(t.persistentModelID))
-        ws.closeEntity(t.persistentModelID)
-        #expect(!ws.references(t.persistentModelID))
+        ws.focusOrOpen(f.t)
+        #expect(ws.activeTab?.tab == f.t)
+        ws.focusOrOpen(f.t)
+        #expect(ws.tabs.count == 1)
+        #expect(ws.references(f.task.persistentModelID))
+        ws.closeEntity(f.task.persistentModelID)
+        #expect(!ws.references(f.task.persistentModelID))
     }
 
-    @Test func snapshot_capturesTaskEntity_andRestoresIt() throws {
-        let ctx = ModelContext(try TestModelContainer.make())
-        let t = Task(summary: "T")
-        ctx.insert(t)
-        try ctx.save()
-        let ws = WorkspaceModel()
-        ws.openInNewTab(.task(t.persistentModelID))
-        let snap = ws.snapshot(using: ctx)
-        #expect(snap.tabs.contains { $0.history.contains(.entity(kind: "task", id: t.id)) })
+    // MARK: - Revealing the diary
 
-        let ws2 = WorkspaceModel()
-        ws2.restore(snap, using: ctx)
-        #expect(ws2.tabs.contains { $0.current == .task(t.persistentModelID) })
-    }
-
-    @Test func revealTimeEntry_focusesDiaryOnEntryDayWithScrollTarget() {
+    @Test func revealTimeEntry_focusesDiaryPaneOnEntryDayWithScrollTarget() throws {
+        let f = try Fixture()
         let ws = WorkspaceModel()
-        ws.openInNewTab(.tasks)   // active tab is not the diary
+        ws.openInNewTab(f.a)       // a tab is covering the pane
         let entry = TaskTimeEntry(date: FixedDates.reference, duration: Duration(value: 1, unit: .h))
         ws.revealTimeEntry(entry)
-        #expect(ws.active.current == .diary)
-        #expect(ws.active.diaryState.mode == .day)
-        #expect(ws.active.diaryState.currentDate == WeekendPolicy.weekday(for: FixedDates.reference))
-        #expect(ws.active.diaryState.scrollTargetEntryId == entry.id)
+        #expect(ws.selectedCategory == .diary)
+        #expect(ws.activeTab == nil, "the diary is a pane, so the tab is dismissed")
+        #expect(ws.diaryState.mode == .day)
+        #expect(ws.diaryState.currentDate == WeekendPolicy.weekday(for: FixedDates.reference))
+        #expect(ws.diaryState.scrollTargetEntryId == entry.id)
     }
 
-    @Test func revealFocusBlock_focusesDiaryOnBlockDayWithScrollTarget() {
+    @Test func revealFocusBlock_focusesDiaryPaneOnBlockDayWithScrollTarget() {
         let ws = WorkspaceModel()
-        ws.openInNewTab(.tasks)
         let block = FocusBlock(duration: Duration(value: 7.6, unit: .h))
         block.dayRecord = DayRecord(date: FixedDates.reference)
         ws.revealFocusBlock(block)
-        #expect(ws.active.current == .diary)
-        #expect(ws.active.diaryState.mode == .day)
-        #expect(ws.active.diaryState.currentDate == WeekendPolicy.weekday(for: FixedDates.reference))
-        #expect(ws.active.diaryState.scrollTargetBlockId == block.id)
+        #expect(ws.selectedCategory == .diary)
+        #expect(ws.diaryState.mode == .day)
+        #expect(ws.diaryState.currentDate == WeekendPolicy.weekday(for: FixedDates.reference))
+        #expect(ws.diaryState.scrollTargetBlockId == block.id)
     }
 
     private func email(id: String) -> EmailMessage {
         EmailMessage(messageId: id, account: "account", mailbox: "INBOX", direction: .inbox,
-                     fromAddress: "sender@example.com", fromName: "Sender", subject: "Subject", date: FixedDates.reference)
+                     fromAddress: "sender@example.com", fromName: "Sender", subject: "Subject",
+                     date: FixedDates.reference)
     }
 }

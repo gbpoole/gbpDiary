@@ -52,9 +52,11 @@ struct WorkspaceView: View {
     var body: some View {
         @Bindable var workspace = workspace
         NavigationSplitView {
-            List(selection: Binding(
-                get: { workspace.active.current.category },
-                set: { if let cat = $0 { workspace.navigate(to: cat.tab) } }
+            // The sidebar selection IS the shown category — picking one clears the active entity tab, so
+            // exactly one of "a pane" and "a tab" is up. While a tab is active nothing is highlighted here.
+            List(selection: Binding<WorkspaceCategory?>(
+                get: { workspace.activeTab == nil ? workspace.selectedCategory : nil },
+                set: { if let cat = $0 { workspace.select(cat) } }
             )) {
                 ForEach(WorkspaceCategory.sidebarGroups, id: \.title) { group in
                     Section(group.title) {
@@ -85,11 +87,11 @@ struct WorkspaceView: View {
                 Divider()
                 activeContent
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .id(workspace.active.current)
+                    .id(workspace.activeTab?.tab.hashValue ?? workspace.selectedCategory.hashValue)
             }
             .background(AppTheme.background)
         }
-        .environment(workspace.active.diaryState)
+        .environment(workspace.diaryState)
         .kanagawaAppBackground()
         // Skipped under XCTest: unit tests run inside this app, and these drivers would hit Mail /
         // rebuild the semantic index during a test run. See TestEnvironment for the deadlock.
@@ -312,9 +314,20 @@ struct WorkspaceView: View {
 
     @ViewBuilder
     private var activeContent: some View {
-        switch workspace.active.current {
+        if let tab = workspace.activeTab {
+            entityContent(tab)
+        } else {
+            categoryPane
+        }
+    }
+
+    /// The fixed pane for the selected sidebar category. One instance of each, so their state
+    /// (`diaryState`, `tasksFilter`, the Database `chatState`, the list-page filters) lives on the model.
+    @ViewBuilder
+    private var categoryPane: some View {
+        switch workspace.selectedCategory {
         case .diary:        DiaryView()
-        case .chat:         ChatView(state: workspace.active.chatState)
+        case .chat:         ChatView(state: workspace.chatState)
         case .triage:       EmailTriageView()
         case .tasks:        TasksView()
         case .projects:     ProjectsView()
@@ -326,7 +339,15 @@ struct WorkspaceView: View {
         case .images:       ImageLibraryView()
         case .tags:         TagsView()
         case .timesheet:    TimesheetView()
+        }
+    }
 
+    @ViewBuilder
+    private func entityContent(_ state: WorkspaceTabState) -> some View {
+        switch state.tab {
+        case .emailExplorer:
+            // The lab's transient experiment state belongs to this tab, not to the Chat pane.
+            ChatView(state: state.chatState)
         case .contentNote(let pid):
             if let n = model(pid, as: Note.self) { ContentNoteDetailView(note: n) } else { missing }
         case .project(let pid):

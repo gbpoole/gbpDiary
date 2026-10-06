@@ -15,7 +15,7 @@ struct ImageLibraryView: View {
 
     // Search/sort live on the active tab (persisted + remembered across tab switches). Images have no
     // discrete filter dimension — the toolbar collapses to search-only (Light tier).
-    private var filter: ListPageFilter { workspace.active.pageFilter(for: .images) }
+    private var filter: ListPageFilter { workspace.pageFilter(for: .images) }
     private static let sortColumns: [SortColumn<Attachment>] = [
         SortColumn("name", \.nameKey), SortColumn("description", \.descriptionKey),
         SortColumn("size", \.sizeSortKey),

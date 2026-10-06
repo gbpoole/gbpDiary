@@ -13,7 +13,7 @@ struct TasksView: View {
     @Environment(\.modelContext) private var modelContext
     // Filter state is held on the active workspace tab so it survives navigation and differs per tab.
     @Environment(WorkspaceModel.self) private var workspace
-    private var filterState: TasksFilterState { workspace.active.tasksFilter }
+    private var filterState: TasksFilterState { workspace.tasksFilter }
     @State private var editingTask: Task? = nil
     @State private var showingAddTask = false
     @State private var pendingStatusIds: Set<UUID> = []
@@ -138,8 +138,8 @@ struct TasksView: View {
     private var rows: [TaskRow] { hierarchyRows.map(\.item) }
 
     private var fullWidthBinding: Binding<Bool> {
-        Binding(get: { workspace.active.boardFullWidth },
-                set: { workspace.active.boardFullWidth = $0 })
+        Binding(get: { workspace.boardFullWidth },
+                set: { workspace.boardFullWidth = $0 })
     }
 
     /// Three lanes want ~560–780pt (measured). Give the panel what is left after the sidebar and a
@@ -197,7 +197,7 @@ struct TasksView: View {
         if untriaged > 0 { notes.append("\(untriaged) need\(untriaged == 1 ? "s" : "") triage") }
         if closed > 0 { notes.append("\(closed) completed") }
         lastSkippedMessage = notes.isEmpty ? nil : notes.joined(separator: ", ") + " skipped"
-        workspace.active.boardPanelShown = true   // show where the tasks just went
+        workspace.boardPanelShown = true   // show where the tasks just went
     }
 
     /// Shown only while board cards are selected, so it costs no space the rest of the time. An
@@ -301,7 +301,7 @@ struct TasksView: View {
         // Laid out by hand rather than with `.inspector()`: the inspector draws a translucent chrome
         // band over the top of the page (it presents inside WorkspaceView's NavigationSplitView detail),
         // which covered the view-mode buttons. A plain HStack negotiates width with nobody.
-        let full = workspace.active.boardPanelShown && workspace.active.boardFullWidth
+        let full = workspace.boardPanelShown && workspace.boardFullWidth
         return HStack(spacing: 0) {
             if !full {
                 VStack(spacing: 0) {
@@ -320,7 +320,7 @@ struct TasksView: View {
             // dragging-update loop — an unrecoverable stuck drag. Removal by drag lives on
             // BoardPanel's remove strip, which contains no drag sources.
 
-            if workspace.active.boardPanelShown {
+            if workspace.boardPanelShown {
                 if !full { Divider() }
                 BoardPanel(selection: $boardSelection, isDragging: $boardDragging,
                            isFullWidth: fullWidthBinding)
@@ -337,12 +337,12 @@ struct TasksView: View {
         .background(WindowWidthReader { width in
             windowWidth = width
             // Full width has no table to protect, and the board should not change state on its own.
-            if workspace.active.boardFullWidth { return }
-            if width < 1150, workspace.active.boardPanelShown {
-                workspace.active.boardPanelShown = false
+            if workspace.boardFullWidth { return }
+            if width < 1150, workspace.boardPanelShown {
+                workspace.boardPanelShown = false
                 autoHidden = true
             } else if width > 1250, autoHidden {
-                workspace.active.boardPanelShown = true
+                workspace.boardPanelShown = true
                 autoHidden = false
             }
         })
@@ -370,7 +370,7 @@ struct TasksView: View {
         } message: { Text("This permanently deletes the selected task\(selection.count == 1 ? "" : "s").") }
         .onChange(of: filterState.activeFilterIds) { pendingStatusIds.removeAll() }
         .onExitCommand {
-            if workspace.active.boardFullWidth { workspace.active.boardFullWidth = false }
+            if workspace.boardFullWidth { workspace.boardFullWidth = false }
         }
         .onAppear {
             // Mouse-up ends every drag, however it finished, so the target never gets stranded on screen.
@@ -406,14 +406,14 @@ struct TasksView: View {
             // third mode (the board shows alongside whichever list you are in).
             Button {
                 autoHidden = false          // an explicit choice outranks the width rule
-                workspace.active.boardPanelShown.toggle()
+                workspace.boardPanelShown.toggle()
             } label: {
                 Label("Board", systemImage: "rectangle.split.3x1")
                     .labelStyle(.titleAndIcon)
                     .font(.caption)
             }
             .buttonStyle(.plain)
-            .foregroundStyle(workspace.active.boardPanelShown ? AppTheme.accent : AppTheme.mutedText)
+            .foregroundStyle(workspace.boardPanelShown ? AppTheme.accent : AppTheme.mutedText)
             .help("Show the planning board beside the table")
             if !triageTasks.isEmpty {
                 Text("\(triageTasks.count) to review")

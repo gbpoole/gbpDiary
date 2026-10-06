@@ -19,7 +19,7 @@ struct TagsView: View {
 
     // Search/sort live on the active tab (persisted + remembered across tab switches). Tags have no
     // discrete filter dimension — the toolbar collapses to search-only (Light tier).
-    private var filter: ListPageFilter { workspace.active.pageFilter(for: .tags) }
+    private var filter: ListPageFilter { workspace.pageFilter(for: .tags) }
     private static let sortColumns: [SortColumn<TagEntry>] = [
         SortColumn("tag", \.tag), SortColumn("projects", \.projects.count),
         SortColumn("people", \.people.count), SortColumn("notes", \.notes.count),

@@ -90,7 +90,6 @@ extension Hotkey {
 // ANY new app-specific hotkey MUST be added here (under an appropriate `section`) rather than hardcoded,
 // so it appears in Settings ▸ Shortcuts — see CLAUDE.md.
 enum HotkeyAction: String, CaseIterable, Identifiable {
-    case newTab
     case closeTab
     case nextTab
     case previousTab
@@ -101,7 +100,6 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .newTab:            "New Tab"
         case .closeTab:          "Close Tab"
         case .nextTab:           "Show Next Tab"
         case .previousTab:       "Show Previous Tab"
@@ -113,13 +111,12 @@ enum HotkeyAction: String, CaseIterable, Identifiable {
     /// Section heading under which this shortcut is grouped in Settings.
     var section: String {
         switch self {
-        case .newTab, .closeTab, .nextTab, .previousTab, .previousActiveTab, .lastTab: "Tabs"
+        case .closeTab, .nextTab, .previousTab, .previousActiveTab, .lastTab: "Tabs"
         }
     }
 
     var defaultHotkey: Hotkey {
         switch self {
-        case .newTab:            .combo("n", command: true)
         case .closeTab:          .combo("w", command: true)
         case .nextTab:           .combo("]", command: true, shift: true)
         case .previousTab:       .combo("[", command: true, shift: true)

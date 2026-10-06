@@ -28,7 +28,7 @@ struct CurationView: View {
                            sortSiblings: { $0.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending } })
     }
 
-    private var index: Int { min(max(0, workspace.active.curationIndex), max(0, walk.count - 1)) }
+    private var index: Int { min(max(0, workspace.curationIndex), max(0, walk.count - 1)) }
     private var current: Project? { walk.indices.contains(index) ? walk[index] : nil }
     private var isLast: Bool { index >= walk.count - 1 }
 
@@ -205,7 +205,7 @@ struct CurationView: View {
     // MARK: - Actions
 
     private func step(_ delta: Int) {
-        workspace.active.curationIndex = min(max(0, index + delta), max(0, walk.count - 1))
+        workspace.curationIndex = min(max(0, index + delta), max(0, walk.count - 1))
     }
 
     /// Stamps the project reviewed and moves on. The per-task flags are already clear — the gate above
@@ -214,8 +214,13 @@ struct CurationView: View {
         project.tasksReviewedAt = Date()
         project.updatedAt = Date()
         if isLast {
-            workspace.active.curationIndex = 0
-            workspace.navigate(to: .projects)
+            workspace.curationIndex = 0
+            // The walk is done: close this curation tab, which reveals the pane behind it, and make that
+            // pane the Projects list the session was launched from.
+            workspace.select(.projects)
+            if let id = workspace.tabs.first(where: { $0.tab == .curation(root.persistentModelID) })?.id {
+                workspace.closeTab(id)
+            }
         } else {
             step(1)
         }
