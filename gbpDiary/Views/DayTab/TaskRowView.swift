@@ -20,8 +20,6 @@ struct TaskRowView: View {
     var onLogTime: (() -> Void)? = nil
 
     @Environment(\.modelContext) private var modelContext
-    @State private var showingFollowUpPicker = false
-    @State private var followUpPickerDate = Date()
     @State private var showingLogTime = false
 
     var body: some View {
@@ -34,13 +32,6 @@ struct TaskRowView: View {
         .font(AppTheme.bodyFont(size: 13))
         .contentShape(Rectangle())
         .contextMenu { contextMenuItems }
-        .sheet(isPresented: $showingFollowUpPicker) {
-            FollowUpDateSheet(
-                initialDate: task.followUpAt ?? Calendar.current.date(byAdding: .day, value: 1, to: .now)!,
-                onSave: { date in task.setFollowUp(date: date) },
-                onRemove: task.followUpAt != nil ? { task.clearFollowUp() } : nil
-            )
-        }
         .sheet(isPresented: $showingLogTime) {
             LogTimeSheet(presetTask: task, presetDate: Date())
         }
@@ -132,10 +123,16 @@ struct TaskRowView: View {
                     .font(.caption2).foregroundStyle(.secondary)
                     .help("Repeats")
             }
-            if task.isWaiting {
+            if task.isFollowUpParked {
                 Image(systemName: "clock.badge.questionmark")
                     .font(.caption2).foregroundStyle(.secondary)
-                    .help("Waiting until a later date")
+                    .help("Following up later — parked until then")
+            }
+            if task.isFollowUpDue {
+                // The date has arrived: read as actionable, like an overdue task.
+                Image(systemName: "clock.badge.exclamationmark")
+                    .font(.caption2).foregroundStyle(AppTheme.destructive)
+                    .help("Follow-up due")
             }
             if task.priority != .none {
                 Chip(label: task.priority.short, color: priorityChipColor)
@@ -157,12 +154,10 @@ struct TaskRowView: View {
                 Chip(label: tag, color: AppTheme.tag)
             }
             if let fu = task.followUpAt {
-                let overdue = fu < Calendar.current.startOfDay(for: Date())
-                Button(action: { showingFollowUpPicker = true }) {
-                    Chip(label: "↻ \(fu.formatted(.dateTime.day().month()))",
-                         color: overdue ? AppTheme.destructive : AppTheme.followUp)
-                }
-                .buttonStyle(.plain)
+                // Read-only: follow-ups are changed from the status control, which sits on this same row.
+                Chip(label: "↻ \(fu.formatted(.dateTime.day().month()))",
+                     color: fu < Calendar.current.startOfDay(for: Date())
+                         ? AppTheme.destructive : AppTheme.followUp)
             }
             if !inlineEditing { InlineRowEditButton(action: onEdit) }
             if !isFocusedInline {
@@ -188,12 +183,6 @@ struct TaskRowView: View {
         if task.status != .completed {
             Button("Mark Complete") { task.markCompleted() }
         }
-        Button("Set Follow-up Date…") {
-            followUpPickerDate = task.followUpAt
-                ?? Calendar.current.date(byAdding: .day, value: 1,
-                                         to: Calendar.current.startOfDay(for: .now))!
-            showingFollowUpPicker = true
-        }
         if task.status != .cancelled {
             Button("Cancel Task") { task.markCancelled() }
         }
@@ -211,46 +200,6 @@ struct TaskRowView: View {
         }
     }
 
-}
-
-struct FollowUpDateSheet: View {
-    let initialDate: Date
-    let onSave: (Date) -> Void
-    var onRemove: (() -> Void)? = nil
-
-    @Environment(\.dismiss) private var dismiss
-    @State private var selectedDate: Date
-
-    init(initialDate: Date, onSave: @escaping (Date) -> Void, onRemove: (() -> Void)? = nil) {
-        self.initialDate = initialDate
-        self.onSave = onSave
-        self.onRemove = onRemove
-        _selectedDate = State(initialValue: initialDate)
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                DatePicker("Follow-up date", selection: $selectedDate, displayedComponents: .date)
-            }
-            .navigationTitle("Set Follow-up Date")
-            .toolbar {
-                if let onRemove {
-                    ToolbarItem(placement: .destructiveAction) {
-                        Button("Remove Follow-up") { onRemove(); dismiss() }
-                            .foregroundStyle(.red)
-                    }
-                }
-                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") { onSave(selectedDate); dismiss() }
-                }
-            }
-        }
-        #if os(macOS)
-        .frame(minWidth: 320, minHeight: 140)
-        #endif
-    }
 }
 
 struct Chip: View {

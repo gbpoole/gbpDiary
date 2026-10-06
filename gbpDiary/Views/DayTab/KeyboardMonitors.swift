@@ -45,6 +45,69 @@ final class EscapeKeyMonitor: @unchecked Sendable {
     }
 }
 
+// Keys for the row-based subtask editor. One monitor rather than four, because every case needs the same
+// question answered first — *is a text field being typed into?* — and that answer decides who gets the key.
+//
+//  • **Return / Delete / Tab** are forwarded ONLY when no NSTextView has focus, i.e. a row is *selected*
+//    rather than being edited. While editing, Return reaches the TextField's `onSubmit` and Tab reaches
+//    `EntryInlineKeyHandling`, exactly as they do today.
+//  • **Backspace (⌫) does two jobs**, split by focus: with no field focused it deletes the *selection*
+//    (on a Mac "Delete" means ⌫, so ⌦ alone would be unreachable without Fn); inside a field it removes
+//    the row only when that field is EMPTY. The field editor's live string is consulted rather than the
+//    model, because the row's text is pushed to SwiftData on a debounce and would still read as non-empty.
+//  • **Escape** is always forwarded (it is the one key that must work mid-edit), mirroring EscapeKeyMonitor.
+//
+// Each closure returns true when it consumed the key, so anything unhandled falls through untouched.
+final class SubtaskRowKeyMonitor: @unchecked Sendable {
+    private var monitor: Any?
+
+    var onReturn: (() -> Bool)?
+    var onDelete: (() -> Bool)?
+    var onTab: (() -> Bool)?
+    var onBackTab: (() -> Bool)?
+    /// Called with the focused field's live text when it is empty (Backspace at the start of an empty row).
+    var onBackspaceInEmptyField: (() -> Bool)?
+    var onEscape: (() -> Bool)?
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            let editor = NSApp.keyWindow?.firstResponder as? NSTextView
+            let isTyping = editor != nil
+
+            let handled: Bool = MainActor.assumeIsolated {
+                switch event.keyCode {
+                case 53:                                        // ⎋ — must work while editing too
+                    return self.onEscape?() ?? false
+                case 51:                                        // ⌫ — two jobs, split by what has focus
+                    guard let editor else { return self.onDelete?() ?? false }   // selection, not typing
+                    guard editor.string.isEmpty else { return false }            // mid-word: leave it alone
+                    return self.onBackspaceInEmptyField?() ?? false
+                case 117:                                       // ⌦ (forward delete), same as ⌫ on a selection
+                    guard !isTyping else { return false }
+                    return self.onDelete?() ?? false
+                case 36, 76:                                    // Return / numpad Enter
+                    guard !isTyping else { return false }
+                    return self.onReturn?() ?? false
+                case 48:                                        // ⇥
+                    guard !isTyping else { return false }
+                    return event.modifierFlags.contains(.shift)
+                        ? (self.onBackTab?() ?? false)
+                        : (self.onTab?() ?? false)
+                default:
+                    return false
+                }
+            }
+            return handled ? nil : event
+        }
+    }
+
+    func stop() {
+        if let m = monitor { NSEvent.removeMonitor(m); monitor = nil }
+    }
+}
+
 // Intercepts Return / numpad-Enter when no NSTextView has focus (i.e. an image block
 // is selected). Passes the event through when a TextEditor is active so normal newline
 // insertion is unaffected.

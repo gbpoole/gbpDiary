@@ -10,7 +10,6 @@ import Foundation
 //  • **open** — finished work isn't due;
 //  • **triaged** — triage is a gate; the board never shows anything still in the inbox (overdue
 //    captures surface in the Triage list's own due group instead);
-//  • **not waiting** — `waitUntil` is a deliberate "not before this date" and is honoured;
 //  • **not standing** — perpetual work carries no deadline (and holds no `dueAt` at all);
 //  • **unplaced** — placing it graduates it into the lane's manual section, so it never appears twice;
 //  • **due today or earlier**.
@@ -19,7 +18,6 @@ enum BoardDueGroup {
     struct Inputs {
         var isOpen: Bool
         var needsTriage: Bool
-        var isWaiting: Bool
         var isStanding: Bool
         var hasHorizon: Bool
         var dueAt: Date?
@@ -27,7 +25,7 @@ enum BoardDueGroup {
 
     /// Whether one task belongs in the derived group.
     static func includes(_ t: Inputs, now: Date = Date(), calendar: Calendar = .current) -> Bool {
-        guard t.isOpen, !t.needsTriage, !t.isWaiting, !t.isStanding, !t.hasHorizon else { return false }
+        guard t.isOpen, !t.needsTriage, !t.isStanding, !t.hasHorizon else { return false }
         guard let due = t.dueAt else { return false }
         return due < calendar.startOfDay(for: now).addingTimeInterval(24 * 60 * 60)
     }

@@ -28,10 +28,16 @@ struct RecurrenceTests {
         #expect(RecurrenceRule(count: 1, unit: .year).next(after: at(2026, 8, 9), calendar: cal) == at(2027, 8, 9))
     }
 
-    @Test func isWaiting_futureOnly() {
+    /// Deferral is now expressed as a follow-up: parked before the date, due on or after it.
+    @Test func followUpParkedAndDue_splitAtTheDate() {
         let now = at(2026, 8, 9)
-        #expect(TaskFlags.isWaiting(waitUntil: at(2026, 8, 15), now: now))
-        #expect(!TaskFlags.isWaiting(waitUntil: at(2026, 8, 1), now: now))
-        #expect(!TaskFlags.isWaiting(waitUntil: nil, now: now))
+        #expect(TaskFlags.isFollowUpParked(followUpAt: at(2026, 8, 15), now: now))
+        #expect(!TaskFlags.isFollowUpParked(followUpAt: at(2026, 8, 1), now: now))
+        #expect(!TaskFlags.isFollowUpParked(followUpAt: nil, now: now))
+
+        #expect(TaskFlags.isFollowUpDue(followUpAt: at(2026, 8, 1), now: now))
+        #expect(TaskFlags.isFollowUpDue(followUpAt: now, now: now), "the date itself counts as due")
+        #expect(!TaskFlags.isFollowUpDue(followUpAt: at(2026, 8, 15), now: now))
+        #expect(!TaskFlags.isFollowUpDue(followUpAt: nil, now: now))
     }
 }

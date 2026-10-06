@@ -2,8 +2,12 @@ import SwiftUI
 
 // A status control that replaces the old click-to-cycle behaviour: click the status icon and pick the
 // target state directly. The label (the status icon) is caller-provided so each surface keeps its own
-// look; the menu items + follow-up flow are shared. Follow-up lives here too (it's just a status):
-// "Follow up…" opens FollowUpDateSheet; when already pending it offers change/clear.
+// look; the menu items + follow-up flow are shared.
+//
+// Follow-up lives here too (it's just a status), as ONE item that always opens `FollowUpSheet`:
+// "Follow up…" when none is pending, "Change follow-up" when one is. Nothing here clears a follow-up —
+// **ending one is choosing another status**, and every other transition below already nulls `followUpAt`.
+// This menu is also the only route into the sheet, so a follow-up is created in exactly one place.
 struct TaskStatusMenu<Icon: View>: View {
     @Bindable var task: Task
     /// Runs just before a status change (e.g. TasksView keeps the row visible during re-filtering).
@@ -19,13 +23,9 @@ struct TaskStatusMenu<Icon: View>: View {
             statusItem("Completed", "checkmark.circle.fill", .completed)
             statusItem("Cancelled", "xmark.circle.fill", .cancelled)
             Divider()
-            if task.status == .followUpPending {
-                Button { showingFollowUp = true } label: { Label("Change follow-up date…", systemImage: "clock.arrow.circlepath") }
-                Button(role: .destructive) { onBeforeChange?(); task.clearFollowUp() } label: {
-                    Label("Clear follow-up", systemImage: "clock.badge.xmark")
-                }
-            } else {
-                Button { showingFollowUp = true } label: { Label("Follow up…", systemImage: "clock.arrow.circlepath") }
+            Button { showingFollowUp = true } label: {
+                Label(task.status == .followUpPending ? "Change follow-up" : "Follow up…",
+                      systemImage: "clock.arrow.circlepath")
             }
         } label: {
             label()
@@ -34,11 +34,7 @@ struct TaskStatusMenu<Icon: View>: View {
         .menuIndicator(.hidden)
         .fixedSize()
         .sheet(isPresented: $showingFollowUp) {
-            FollowUpDateSheet(
-                initialDate: task.followUpAt ?? Calendar.current.date(byAdding: .day, value: 1, to: .now) ?? .now,
-                onSave: { date in onBeforeChange?(); task.setFollowUp(date: date) },
-                onRemove: task.status == .followUpPending ? { onBeforeChange?(); task.clearFollowUp() } : nil
-            )
+            FollowUpSheet(task: task, onBeforeChange: onBeforeChange)
         }
     }
 

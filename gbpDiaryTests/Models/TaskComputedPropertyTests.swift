@@ -152,6 +152,42 @@ struct TaskComputedPropertyTests {
         #expect(task.planHorizon == nil)
     }
 
+    // MARK: - followedUpHistory decoding
+
+    /// Rows written before follow-up notes existed hold a bare `[Date]` JSON array. Decoding must fall
+    /// back to it, or `?? []` would silently erase every stored history.
+    @Test func followedUpHistory_decodesLegacyDateArray() {
+        let task = Task(summary: "t")
+        let first = FixedDates.reference
+        let second = first.addingTimeInterval(86400)
+        task.followedUpHistoryJSON = "[\(first.timeIntervalSinceReferenceDate),"
+            + "\(second.timeIntervalSinceReferenceDate)]"
+
+        // Ids are synthesised (and persisted by the launch migration), so compare what was stored.
+        #expect(task.followedUpHistory.map(\.date) == [first, second])
+        #expect(task.followedUpHistory.map(\.note) == ["", ""])
+    }
+
+    /// The middle legacy shape: entries that already had a date + note but no id. A missing `id` must not
+    /// fail the array — that would send the getter down the `[Date]` path and blank every note.
+    @Test func followedUpHistory_decodesEntriesWithoutIDs() {
+        let task = Task(summary: "t")
+        let when = FixedDates.dayStart(offsetDays: -3)
+        task.followedUpHistoryJSON =
+            "[{\"date\":\(when.timeIntervalSinceReferenceDate),\"note\":\"waiting on Sam\"}]"
+
+        let decoded = task.followedUpHistory
+        #expect(decoded.map(\.date) == [when])
+        #expect(decoded.map(\.note) == ["waiting on Sam"], "the note must survive")
+    }
+
+    @Test func followedUpHistory_roundTripsEntriesWithNotes() {
+        let task = Task(summary: "t")
+        let entries = [FollowUpEntry(date: FixedDates.reference, note: "waiting on Sam")]
+        task.followedUpHistory = entries
+        #expect(task.followedUpHistory == entries)
+    }
+
     @Test func isOverdue_exemptForStandingTasks() {
         let task = Task(summary: "t")
         task.dueAt = FixedDates.reference.addingTimeInterval(-30 * 86400)   // long past

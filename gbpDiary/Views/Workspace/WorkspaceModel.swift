@@ -316,9 +316,6 @@ enum TaskViewMode: String, CaseIterable {
     let chatState = ChatState()
     // Per-tab Tasks-page filter state (remembered across in-tab navigation).
     let tasksFilter = TasksFilterState()
-    // Unsaved subtask-breakdown text, keyed by the task being broken down. Held on the tab (not in the
-    // view) so a half-typed outline survives navigating away and back. Session-only, like chatState.
-    var breakdownDrafts: [UUID: String] = [:]
     // How far through a curation walk this tab is. Session-only: the walk itself is recomputed from
     // live project data, and resuming mid-session after a relaunch would be more surprising than useful.
     var curationIndex: Int = 0

@@ -44,8 +44,22 @@ import SwiftData
         set { tagsJSON = jsonEncode(newValue) }
     }
 
-    var followedUpHistory: [Date] {
-        get { jsonDecode([Date].self, followedUpHistoryJSON) ?? [] }
+    /// Every follow-up you have set on this task, **oldest first (append order)** — the date and the note
+    /// that went with it. Ending a follow-up never rewrites it, so a cancelled follow-up still shows: the
+    /// record is of decisions made, not of what came true. Only the task page's editable list can correct
+    /// or remove an entry; the follow-up modal adds, and corrects the pending one.
+    ///
+    /// Append order is load-bearing — the **pending** entry is the last element (see
+    /// `pendingFollowUpEntry`). Lists render `FollowUpHistory.displayOrder` instead.
+    ///
+    /// Decodes the legacy `[Date]` shape as a fallback (notes empty). Without that, an older row would
+    /// fail to decode, `?? []` would swallow it, and the whole history would vanish silently.
+    var followedUpHistory: [FollowUpEntry] {
+        get {
+            if let entries = jsonDecode([FollowUpEntry].self, followedUpHistoryJSON) { return entries }
+            let legacy = jsonDecode([Date].self, followedUpHistoryJSON) ?? []
+            return legacy.map { FollowUpEntry(date: $0, note: "") }
+        }
         set { followedUpHistoryJSON = jsonEncode(newValue) }
     }
 
@@ -83,7 +97,6 @@ import SwiftData
     @Relationship(deleteRule: .nullify, inverse: \Task.dependsOn) var blocking: [Task] = []
 
     // Deferral + recurrence (all defaulted for migration).
-    var waitUntil: Date?               // hidden from lists until this date
     var until: Date?                   // auto-cancelled once past this date
     var recurrenceRule: String?        // e.g. "1w"/"2mo" — completing spawns the next instance
     var recurrenceParentID: UUID?      // lineage: the task this instance was spawned from
@@ -146,8 +159,23 @@ extension Task {
     /// This task blocks another still-open task.
     var isBlocking: Bool { blocking.contains(where: \.isOpen) }
 
-    /// Deferred: hidden from lists until `waitUntil`.
-    var isWaiting: Bool { TaskFlags.isWaiting(waitUntil: waitUntil) }
+    /// A follow-up is *parked* until its date: it sits at zero urgency, still visible, until then.
+    var isFollowUpParked: Bool {
+        status == .followUpPending && TaskFlags.isFollowUpParked(followUpAt: followUpAt)
+    }
+
+    /// A pending follow-up whose date has arrived — actionable again, and shown like an overdue task.
+    var isFollowUpDue: Bool {
+        status == .followUpPending && TaskFlags.isFollowUpDue(followUpAt: followUpAt)
+    }
+
+    /// The live follow-up's history entry: the **last** one recorded, and only while a follow-up is
+    /// actually pending. `followUpAt` mirrors its date, and it is the only entry the follow-up modal may
+    /// correct — everything older is history, editable solely from the task page.
+    var pendingFollowUpEntry: FollowUpEntry? {
+        guard status == .followUpPending, followUpAt != nil else { return nil }
+        return followedUpHistory.last
+    }
 
     func markCompleted() {
         let now = Date()
@@ -210,25 +238,43 @@ extension Task {
         updatedAt = Date()
     }
 
+    /// Ends a pending follow-up without deciding what the task now is. Follow-up implies *in progress*,
+    /// so this must NOT complete the task — changing the status is what cancels a follow-up.
     func clearFollowUp() {
         followUpAt = nil
-        if status == .followUpPending { status = .completed }
         updatedAt = Date()
     }
 
-    func setFollowUp(date: Date) {
-        followUpAt = date
+    /// Park the task until `date`, recording why. The note is required: it is what makes the history
+    /// worth keeping when you come back to it weeks later. The date is stored **day-granular** — a
+    /// follow-up is a day, never a time — so today's follow-up reads as due and any later day as parked.
+    func setFollowUp(date: Date, note: String) {
+        let day = FollowUpHistory.day(date)
+        followUpAt = day
         status = .followUpPending
+        followedUpHistory = FollowUpHistory.adding(date: day, note: note, to: followedUpHistory)
         updatedAt = Date()
     }
 
-    func markFollowUpDone() {
-        if let due = followUpAt {
-            followedUpHistory = followedUpHistory + [due]
+    /// Edit one history entry in place. When it is the **pending** entry, `followUpAt` moves with it —
+    /// the two mirror each other and must never drift apart.
+    func updateFollowUp(entryID: UUID, date: Date, note: String) {
+        let wasPending = pendingFollowUpEntry?.id == entryID
+        followedUpHistory = FollowUpHistory.updating(entryID: entryID, date: date, note: note,
+                                                    in: followedUpHistory)
+        if wasPending { followUpAt = FollowUpHistory.day(date) }
+        updatedAt = Date()
+    }
+
+    /// Remove one history entry. Removing the **pending** entry ends the follow-up: the date clears and
+    /// the task drops to To do, so it can never be stranded in `.followUpPending` with no date.
+    func removeFollowUp(entryID: UUID) {
+        let wasPending = pendingFollowUpEntry?.id == entryID
+        followedUpHistory = FollowUpHistory.removing(entryID: entryID, from: followedUpHistory)
+        if wasPending {
+            followUpAt = nil
+            status = .todo
         }
-        followUpAt = nil
-        status = .completed
-        if completedAt == nil { completedAt = Date() }
         updatedAt = Date()
     }
 

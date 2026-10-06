@@ -17,6 +17,7 @@ struct CurationView: View {
     @Query(sort: \Task.createdAt) private var allTasks: [Task]
 
     @State private var subtreeCollapsedIds: Set<UUID> = []
+    @State private var subtaskSelection: Set<UUID> = []
     @FocusState private var focusedTaskId: UUID?
 
     // MARK: - Walk
@@ -172,34 +173,36 @@ struct CurationView: View {
     @ViewBuilder private func taskSection(_ project: Project) -> some View {
         let roots = rootTasks(of: project)
         DaySectionHeader(title: "Open tasks (\(openTasks(of: project).count))")
+        // Rendered unconditionally: the row editor's "Add subtask" button lives inside it (so branching on
+        // emptiness would make adding the first task impossible), and a view whose identity comes and goes
+        // as the count crosses zero re-runs its lifecycle hooks against live models mid-update.
         VStack(alignment: .leading, spacing: 4) {
-            if roots.isEmpty {
-                Text("No open tasks.")
-                    .font(AppTheme.bodyFont(size: 12))
-                    .foregroundStyle(AppTheme.mutedText)
-                    .padding(.horizontal)
-            } else {
-                TaskSubtreeView(
+            TaskSubtreeView(
                     tasks: roots,
                     collapsedIds: $subtreeCollapsedIds,
                     focusedId: $focusedTaskId,
                     onEdit: { workspace.focusOrOpen(.task($0.persistentModelID)) },
                     onMakeSubtask: { dragged, target in dragged.parent = target },
                     onPromote: { child in child.parent = nil },
-                    onDelete: { modelContext.delete($0) }
+                    onDelete: { modelContext.delete($0) },
+                    // These rows are the project's top-level tasks, so nil IS the floor.
+                    editing: SubtaskEditing(
+                        floorParentID: nil,
+                        setParent: { child, newParent in
+                            child.parent = newParent
+                            child.updatedAt = Date()
+                        },
+                        selection: $subtaskSelection,
+                        createRow: { parent, order in
+                            TaskBreakdown.makeRow(under: parent, project: project,
+                                                  sortOrder: order, in: modelContext)
+                        },
+                        openTask: { workspace.focusOrOpen(.task($0.persistentModelID)) })
                 )
-            }
-            TaskBreakdownField(parent: nil, project: project, text: breakdownDraft(for: project))
         }
     }
 
     // MARK: - Actions
-
-    /// Drafts are keyed by the project being curated, so stepping between projects keeps each outline.
-    private func breakdownDraft(for project: Project) -> Binding<String> {
-        Binding(get: { workspace.active.breakdownDrafts[project.id] ?? "" },
-                set: { workspace.active.breakdownDrafts[project.id] = $0 })
-    }
 
     private func step(_ delta: Int) {
         workspace.active.curationIndex = min(max(0, index + delta), max(0, walk.count - 1))

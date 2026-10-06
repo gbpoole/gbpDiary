@@ -1,8 +1,10 @@
 import SwiftUI
 import SwiftData
 
-// The diary's always-visible right-hand task panel: a quick-add capture field plus the day's actionable
-// buckets — Overdue / Due today / In-progress / Scheduled / Inbox. Action buckets use `TaskRowView`
+// The diary's always-visible right-hand task panel: a quick-add capture field, then the **board's three
+// lanes** (Today / This Week / Maybe) — so the plan you made on the Tasks page is what you see first while
+// working the day — followed by the day's date-derived buckets (Overdue / Due today / In-progress /
+// Scheduled / To Do / Inbox). A planned task appears in its lane only, never twice. Action buckets use `TaskRowView`
 // (status/log-time/edit); the Inbox uses the inline `TaskTriageRow`. Everything is `@Query`-backed, so
 // edits reflect live in the diary (complete → Completed; log time → Activity; Reviewed → leaves Inbox).
 struct DayTaskPanel: View {
@@ -98,6 +100,10 @@ struct DayTaskPanel: View {
                 // compact), and LazyVStack reuses the old cell keyed by task id, keeping stale styling.
                 VStack(alignment: .leading, spacing: 0) {
                     quickAdd
+                    // The plan first: the same three lanes as the board, in the same order and colours.
+                    laneSection(.today, tasks: buckets.today)
+                    laneSection(.thisWeek, tasks: buckets.thisWeek)
+                    laneSection(.maybe, tasks: buckets.maybe)
                     bucketSection("Overdue", key: "overdue", tasks: buckets.overdue, tint: AppTheme.destructive)
                     bucketSection("Due Today", key: "due", tasks: buckets.dueToday, tint: AppTheme.followUp)
                     bucketSection("In Progress", key: "started", tasks: buckets.inProgress, tint: AppTheme.started)
@@ -154,11 +160,20 @@ struct DayTaskPanel: View {
         quickAddDraft = QuickAddDraft(summary: trimmed)
     }
 
+    // A board lane. Icon + tint come from `PlanHorizonPresentation`, shared with the board's lane headers
+    // and the Tasks table, so all three surfaces teach one vocabulary.
+    @ViewBuilder
+    private func laneSection(_ horizon: PlanHorizon, tasks: [Task]) -> some View {
+        bucketSection(horizon.displayName, key: "plan.\(horizon.rawValue)", tasks: tasks,
+                      tint: horizon.tint, icon: horizon.systemImage)
+    }
+
     // Action buckets (triaged tasks) — compact two-line rows.
     @ViewBuilder
-    private func bucketSection(_ title: String, key: String, tasks: [Task], tint: Color) -> some View {
+    private func bucketSection(_ title: String, key: String, tasks: [Task], tint: Color,
+                               icon: String? = nil) -> some View {
         if !tasks.isEmpty {
-            sectionHeader(title, key: key, count: tasks.count, tint: tint)
+            sectionHeader(title, key: key, count: tasks.count, tint: tint, icon: icon)
             if !collapsed.contains(key) {
                 ForEach(sortedForDisplay(tasks, key: key)) { task in
                     DayTaskPanelRow(task: task, date: date, onEdit: { editingTask = task })
@@ -183,11 +198,15 @@ struct DayTaskPanel: View {
         }
     }
 
-    private func sectionHeader(_ title: String, key: String, count: Int, tint: Color) -> some View {
+    private func sectionHeader(_ title: String, key: String, count: Int, tint: Color,
+                               icon: String? = nil) -> some View {
         Button { toggle(key) } label: {
             HStack(spacing: 6) {
                 Image(systemName: collapsed.contains(key) ? "chevron.right" : "chevron.down")
                     .font(.caption2).foregroundStyle(.tertiary)
+                if let icon {
+                    Image(systemName: icon).font(.caption).foregroundStyle(tint)
+                }
                 Text(title).font(.subheadline.bold()).foregroundStyle(tint)
                 Text("\(count)").font(.caption).foregroundStyle(.secondary)
                 Spacer()
@@ -207,6 +226,8 @@ struct DayTaskPanel: View {
             return tasks.sorted { ($0.dueAt ?? .distantFuture) < ($1.dueAt ?? .distantFuture) }
         case "scheduled":
             return tasks.sorted { ($0.scheduledAt ?? .distantFuture) < ($1.scheduledAt ?? .distantFuture) }
+        case "plan.today", "plan.thisWeek", "plan.maybe":
+            return tasks          // already in the board's planSortOrder
         case "todo":
             // The catch-all is unordered by date — rank it by urgency (same score as the Tasks table).
             return tasks.sorted { TaskUrgency.score(for: $0) > TaskUrgency.score(for: $1) }
@@ -218,13 +239,16 @@ struct DayTaskPanel: View {
 
 // A compact two-line task row for the diary panel (email-list style): status icon + metadata chips
 // (project / assignee / priority / dates / flags) on the first line, the summary on the second.
-// No inline edit button — double-click opens the editor; status/log-time/delete live in the context menu.
+// No inline edit button — **double-click opens the task's page** (the row-tap rule: a rich entity opens in
+// a workspace tab, where every field is editable in place); status/log-time/delete live in the context
+// menu, which also keeps an "Edit…" route to `TaskEditorSheet`.
 private struct DayTaskPanelRow: View {
     @Bindable var task: Task
     var date: Date
     var onEdit: () -> Void
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(WorkspaceModel.self) private var workspace
     @State private var showingLogTime = false
 
     var body: some View {
@@ -249,7 +273,7 @@ private struct DayTaskPanelRow: View {
         }
         .padding(.horizontal).padding(.vertical, 4)
         .contentShape(Rectangle())
-        .onTapGesture(count: 2) { onEdit() }
+        .onTapGesture(count: 2) { workspace.focusOrOpen(.task(task.persistentModelID)) }
         .contextMenu {
             Button("Edit…", action: onEdit)
             Button("Log time today…") { showingLogTime = true }

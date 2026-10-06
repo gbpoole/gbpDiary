@@ -241,6 +241,36 @@ enum DaySlot: String, Codable, CaseIterable {
 // SwiftData/CoreData cannot materialize Array<String> or Array<Date> at runtime.
 // Store them as JSON strings and expose via computed properties instead.
 
+/// One entry in a task's follow-up history: when you said you'd check back, and why.
+///
+/// "Follow-up" means *as done as I can do for now — check later that it's still true*, usually while
+/// waiting on someone. The note is what makes the history reviewable, so it is required at the point
+/// of setting a follow-up.
+struct FollowUpEntry: Codable, Equatable, Identifiable {
+    /// A real stored identity, not one derived from the contents: entries are editable and deletable, and
+    /// chasing twice on the same day with the same words used to produce two entries sharing one derived
+    /// id (which a SwiftUI `ForEach` renders wrongly).
+    var id: UUID
+    var date: Date
+    var note: String
+
+    init(id: UUID = UUID(), date: Date, note: String) {
+        self.id = id
+        self.date = date
+        self.note = note
+    }
+
+    /// Entries written before they carried an id decode with a fresh one (the launch migration persists
+    /// it). `id` MUST stay optional on the wire: a hard failure here would fail the whole array and send
+    /// `Task.followedUpHistory` down its legacy `[Date]` path, blanking every note.
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        self.date = try c.decode(Date.self, forKey: .date)
+        self.note = try c.decode(String.self, forKey: .note)
+    }
+}
+
 func jsonEncode<T: Encodable>(_ value: T) -> String {
     let data = (try? JSONEncoder().encode(value)) ?? Data()
     return String(data: data, encoding: .utf8) ?? "[]"

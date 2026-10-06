@@ -32,11 +32,21 @@ struct TaskSubtreeView: View {
     var onNavigatePrev: (() -> Void)? = nil
     // Called when ↓ is pressed on the last task (navigate to parent context below).
     var onNavigateNext: (() -> Void)? = nil
+    // Row-editing powers (Tab/Shift-Tab depth changes, double-click to the task page). Nil = the subtree
+    // renders exactly as it always has, which is how surfaces that haven't adopted it stay unaffected.
+    var editing: SubtaskEditing? = nil
 
     @Environment(\.modelContext) private var modelContext
     @State private var activeDropZone: Int?
     @State private var dropTargetId: UUID?
     @State private var editingTask: Task?
+    /// Anchor for ⇧-click range selection — the row the current range grew from.
+    @State private var selectionAnchor: UUID?
+    /// Set while confirming a delete that would take descendants with it.
+    @State private var pendingDelete: SubtaskOutlineEdit.DeletionScope?
+    #if os(macOS)
+    @State private var keys = SubtaskRowKeyMonitor()
+    #endif
 
     private static let indentStep: CGFloat = 16
 
@@ -117,6 +127,198 @@ struct TaskSubtreeView: View {
         return search(sortedRoots)
     }
 
+    // Every task in the subtree, collapse ignored — restructuring must see rows that aren't on screen.
+    private var allTasksInSubtree: [Task] {
+        var result: [Task] = []
+        func collect(_ list: [Task]) {
+            for task in list {
+                result.append(task)
+                collect(task.children)
+            }
+        }
+        collect(sortedRoots)
+        return result
+    }
+
+    /// The subtree reduced to what `SubtaskOutlineEdit` needs.
+    private var outlineRows: [OutlineRow] {
+        allTasksInSubtree.map {
+            OutlineRow(id: $0.id, parentID: $0.parent?.id, sortOrder: $0.sortOrder)
+        }
+    }
+
+    /// Tab: become a child of the preceding sibling, landing at the end of its children — directly below
+    /// where the row already sat, so the move reads as an indent rather than a jump.
+    private func indentRow(_ task: Task) {
+        guard let editing else { return }
+        let rows = outlineRows
+        guard case .to(let newParentID) = SubtaskOutlineEdit.indent(task.id, in: rows) else { return }
+        let all = allTasksInSubtree
+        let order = SubtaskOutlineEdit.appendSortOrder(parentID: newParentID, in: rows)
+        // A nil id means the container's root; the caller resolves what that is for its surface.
+        editing.setParent(task, newParentID.flatMap { id in all.first { $0.id == id } })
+        task.sortOrder = order
+    }
+
+    /// Shift-Tab: promote to the grandparent, landing immediately after the parent just left.
+    private func outdentRow(_ task: Task) {
+        guard let editing, let oldParentID = task.parent?.id else { return }
+        let rows = outlineRows
+        guard case .to(let newParentID) = SubtaskOutlineEdit.outdent(task.id, in: rows,
+                                                                    floorParentID: editing.floorParentID)
+        else { return }
+        let all = allTasksInSubtree
+        let placement = SubtaskOutlineEdit.placeAfter(anchorID: oldParentID, parentID: newParentID,
+                                                      moving: task.id, in: rows)
+        editing.setParent(task, newParentID.flatMap { id in all.first { $0.id == id } })
+        task.sortOrder = placement.order
+        for (id, order) in placement.shifted {
+            all.first { $0.id == id }?.sortOrder = order
+        }
+    }
+
+    // MARK: - Selection
+
+    private var selectedIDs: Set<UUID> { editing?.selection.wrappedValue ?? [] }
+
+    /// Click selects (⌘ toggles, ⇧ extends from the anchor) — the same model as the board's cards and the
+    /// Tasks table, so all three selection surfaces behave alike. Editing starts on Return, not on click.
+    private func select(_ task: Task) {
+        guard let editing else { return }
+        let flags = NSEvent.modifierFlags
+        if flags.contains(.shift), let anchor = selectionAnchor {
+            let flat = flatVisibleTasks.map(\.id)
+            if let from = flat.firstIndex(of: anchor), let to = flat.firstIndex(of: task.id) {
+                editing.selection.wrappedValue = Set(flat[min(from, to)...max(from, to)])
+                return
+            }
+        }
+        if flags.contains(.command) {
+            var next = editing.selection.wrappedValue
+            if next.contains(task.id) { next.remove(task.id) } else { next.insert(task.id) }
+            editing.selection.wrappedValue = next
+        } else {
+            editing.selection.wrappedValue = [task.id]
+        }
+        selectionAnchor = task.id
+        // Clicking a row ends any edit in progress elsewhere, flushing its text as it loses focus.
+        if focusedId.wrappedValue != nil { focusedId.wrappedValue = nil }
+    }
+
+    // MARK: - Row lifecycle
+
+    /// The + button: a new row at the end of the container's top level, focused for typing.
+    private func addRow() {
+        guard let editing else { return }
+        let order = SubtaskOutlineEdit.appendSortOrder(parentID: editing.floorParentID, in: outlineRows)
+        guard let row = editing.createRow(nil, order) else { return }
+        editing.selection.wrappedValue = [row.id]
+        selectionAnchor = row.id
+        focusedId.wrappedValue = row.id
+    }
+
+    /// Return while editing: commit the text and open the next sibling. An empty row ends the session
+    /// instead, taking itself with it (mirroring `MarkdownFormatting.returnInList`).
+    private func commitRow(_ task: Task, draft: String) {
+        guard let editing else { return }
+        let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            focusedId.wrappedValue = nil
+            editing.selection.wrappedValue.remove(task.id)
+            dropRow(task)
+            return
+        }
+        task.summary = trimmed
+        let parent = task.parent
+        let tentative = SubtaskOutlineEdit.appendSortOrder(parentID: parent?.id, in: outlineRows)
+        guard let row = editing.createRow(parent, tentative) else { return }
+        // Land directly below the row just finished, not at the end of the level.
+        let placement = SubtaskOutlineEdit.placeAfter(anchorID: task.id, parentID: parent?.id,
+                                                      moving: row.id, in: outlineRows)
+        row.sortOrder = placement.order
+        let all = allTasksInSubtree
+        for (id, order) in placement.shifted { all.first { $0.id == id }?.sortOrder = order }
+        editing.selection.wrappedValue = [row.id]
+        selectionAnchor = row.id
+        focusedId.wrappedValue = row.id
+    }
+
+    /// Backspace in an empty field: drop the row and put the caret at the end of the one above.
+    private func removeEmptyFocusedRow() -> Bool {
+        guard let editing, let focused = focusedId.wrappedValue,
+              let task = allTasksInSubtree.first(where: { $0.id == focused })
+        else { return false }
+        let flat = flatVisibleTasks
+        let previous = flat.firstIndex(where: { $0.id == focused }).flatMap { $0 > 0 ? flat[$0 - 1] : nil }
+        focusedId.wrappedValue = previous?.id
+        editing.selection.wrappedValue = previous.map { [$0.id] } ?? []
+        dropRow(task)
+        return true
+    }
+
+    /// Deleting a row whose view is still mounted must wait for the update pass to finish. Reading a
+    /// deleted SwiftData model's stored properties **traps** (the SIGTRAP class `ModelLiveness` exists for),
+    /// and a delete issued from a key handler or a commit lands while the row — and the page around it — is
+    /// mid-render. Focus and selection are moved off the row first, then this runs a turn later.
+    private func dropRow(_ task: Task) {
+        DispatchQueue.main.async { onDelete(task) }
+    }
+
+    /// Delete over a selection. Confirms only when the cascade would take rows you can't see.
+    private func deleteSelection() -> Bool {
+        guard editing != nil, !selectedIDs.isEmpty else { return false }
+        let scope = SubtaskOutlineEdit.deletionScope(selected: selectedIDs, in: outlineRows)
+        guard !scope.ids.isEmpty else { return false }
+        if scope.needsConfirmation { pendingDelete = scope } else { applyDelete(scope) }
+        return true
+    }
+
+    private func applyDelete(_ scope: SubtaskOutlineEdit.DeletionScope) {
+        let all = allTasksInSubtree
+        // Only the roots are handed over — `Task.children` cascades the descendants.
+        for id in scope.roots {
+            if let task = all.first(where: { $0.id == id }) { dropRow(task) }
+        }
+        editing?.selection.wrappedValue = []
+        selectionAnchor = nil
+        pendingDelete = nil
+    }
+
+
+    /// Return with a selection but nothing being typed: start editing the (first) selected row.
+    private func editSelection() -> Bool {
+        guard editing != nil else { return false }
+        let flat = flatVisibleTasks
+        guard let first = flat.first(where: { selectedIDs.contains($0.id) }) else { return false }
+        focusedId.wrappedValue = first.id
+        return true
+    }
+
+    /// Escape, in three stages: commit the edit → clear the selection → fall through (so a sheet closes).
+    private func escape() -> Bool {
+        guard let editing else { return false }
+        if let focused = focusedId.wrappedValue {
+            focusedId.wrappedValue = nil          // losing focus flushes the field into the model
+            editing.selection.wrappedValue = [focused]
+            return true
+        }
+        if !editing.selection.wrappedValue.isEmpty {
+            editing.selection.wrappedValue = []
+            selectionAnchor = nil
+            return true
+        }
+        return false
+    }
+
+    /// Tab/Shift-Tab over a selection (not while typing — that path is `EntryInlineKeyHandling`).
+    private func depthChangeOnSelection(outdent: Bool) -> Bool {
+        guard editing != nil, selectedIDs.count == 1,
+              let task = allTasksInSubtree.first(where: { selectedIDs.contains($0.id) })
+        else { return false }
+        if outdent { outdentRow(task) } else { indentRow(task) }
+        return true
+    }
+
     private func isDescendant(_ potentialDescendant: Task, of ancestor: Task) -> Bool {
         var current: Task? = potentialDescendant.parent
         while let c = current {
@@ -133,10 +335,50 @@ struct TaskSubtreeView: View {
                 taskGroup(task, rootIndex: idx)
                 dropZone(at: idx + 1)
             }
+            if editing != nil { addRowButton }
         }
         .sheet(item: $editingTask) { task in
             TaskEditorSheet(task: task, defaultDate: defaultDate)
         }
+        .alert("Delete \(pendingDelete?.directCount ?? 0) task\(pendingDelete?.directCount == 1 ? "" : "s")?",
+               isPresented: Binding(get: { pendingDelete != nil },
+                                    set: { if !$0 { pendingDelete = nil } })) {
+            Button("Delete", role: .destructive) { if let s = pendingDelete { applyDelete(s) } }
+            Button("Cancel", role: .cancel) { pendingDelete = nil }
+        } message: {
+            // Name the part that isn't on screen: `Task.children` cascades and there is no undo.
+            Text("This also deletes \(pendingDelete?.descendantCount ?? 0) subtask"
+                 + "\(pendingDelete?.descendantCount == 1 ? "" : "s") beneath "
+                 + "\((pendingDelete?.directCount ?? 0) == 1 ? "it" : "them").")
+        }
+        #if os(macOS)
+        // Only the surfaces that opted into editing install the monitor, so the diary and meetings are
+        // untouched by it. Every key is guarded on whether a field is being typed into — see the monitor.
+        .onAppear {
+            guard editing != nil else { return }
+            keys.onReturn = { editSelection() }
+            keys.onDelete = { deleteSelection() }
+            keys.onTab = { depthChangeOnSelection(outdent: false) }
+            keys.onBackTab = { depthChangeOnSelection(outdent: true) }
+            keys.onBackspaceInEmptyField = { removeEmptyFocusedRow() }
+            keys.onEscape = { escape() }
+            keys.start()
+        }
+        .onDisappear { keys.stop() }
+        #endif
+    }
+
+    /// Adds a row at the container's top level — depth 0 every time, so the button means one thing.
+    private var addRowButton: some View {
+        Button(action: addRow) {
+            Label("Add subtask", systemImage: "plus.circle.fill")
+                .font(AppTheme.bodyFont(size: 12))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(AppTheme.accent)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .keyboardShortcut("n", modifiers: [.command, .shift])
     }
 
     @ViewBuilder
@@ -242,11 +484,17 @@ struct TaskSubtreeView: View {
                 focusId: task.id,
                 struckThrough: task.status == .completed || task.status == .cancelled,
                 foregroundColor: task.status == .cancelled ? .secondary : .primary,
+                onIndent: editing == nil ? nil : { indentRow(task) },
+                onOutdent: editing == nil ? nil : { outdentRow(task) },
                 onMoveToPrevious: prevMove(for: task),
-                onMoveToNext: nextMove(for: task)
+                onMoveToNext: nextMove(for: task),
+                onTap: editing == nil ? nil : { select(task) },
+                onCommit: editing == nil ? nil : { draft in commitRow(task, draft: draft) }
             )
 
-            InlineRowEditButton(action: { editingTask = task })
+            // No pencil: double-click opens the task's page (the row-tap rule for a rich entity), and the
+            // context menu keeps the editor sheet.
+            if editing == nil { InlineRowEditButton(action: { editingTask = task }) }
             if focusedId.wrappedValue != task.id {
                 Spacer(minLength: 0)
             }
@@ -254,6 +502,12 @@ struct TaskSubtreeView: View {
         .contentShape(Rectangle())
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
+        .background {
+            if selectedIDs.contains(task.id) {
+                RoundedRectangle(cornerRadius: 4).fill(Color.accentColor.opacity(0.18))
+            }
+        }
+        .onTapGesture(count: 2) { editing?.openTask(task) }
         .dropDestination(for: String.self) { items, _ in
             guard let uuidString = items.first,
                   let id = UUID(uuidString: uuidString),
@@ -275,6 +529,9 @@ struct TaskSubtreeView: View {
             }
         }
         .contextMenu {
+            if let editing {
+                Button("Open Task Page") { editing.openTask(task) }
+            }
             Button("Edit Task") { editingTask = task }
             Divider()
             if task.parent != nil {

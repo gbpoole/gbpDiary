@@ -72,7 +72,6 @@ struct TasksView: View {
             PickerFilter<Task>(id: "flag.hasDue", label: "Has due", chipColor: AppTheme.mutedText, group: "Flags") { $0.dueAt != nil },
             PickerFilter<Task>(id: "flag.blocked", label: "Blocked", chipColor: AppTheme.destructive, group: "Flags") { $0.isBlocked },
             PickerFilter<Task>(id: "flag.unblocked", label: "Unblocked", chipColor: AppTheme.completed, group: "Flags") { $0.isOpen && !$0.isBlocked },
-            PickerFilter<Task>(id: "flag.waiting", label: "Waiting", chipColor: AppTheme.mutedText, group: "Flags") { $0.isWaiting },
             PickerFilter<Task>(id: "flag.standing", label: "Standing", chipColor: AppTheme.duration, group: "Flags") { $0.isStanding },
             // Reveals the Inbox inside the Reviewed table — the route a fresh capture takes to the
             // planning board, since placing it there marks it reviewed.
@@ -93,7 +92,6 @@ struct TasksView: View {
     private var filteredTasks: [Task] {
         let matched = Set(FilterEngine.apply(allTasks, filters: taskFilters, activeIds: filterState.activeFilterIds).map(\.id))
         let query = filterState.searchText.trimmingCharacters(in: .whitespaces)
-        let showWaiting = filterState.activeFilterIds.contains("flag.waiting")
         let showStanding = filterState.activeFilterIds.contains("flag.standing")
         let showNeedsTriage = filterState.activeFilterIds.contains("flag.needsTriage")
         return allTasks.filter { task in
@@ -101,8 +99,8 @@ struct TasksView: View {
             // Untriaged / waiting / standing tasks are each hidden until their own control reveals
             // them — see TaskTableVisibility for why.
             if TaskTableVisibility.isHidden(isOpen: task.isOpen, needsTriage: task.needsTriage,
-                                            isWaiting: task.isWaiting, isStanding: task.isStanding,
-                                            showWaiting: showWaiting, showStanding: showStanding,
+                                            isStanding: task.isStanding,
+                                            showStanding: showStanding,
                                             showNeedsTriage: showNeedsTriage) {
                 return false
             }
@@ -499,8 +497,7 @@ struct TasksView: View {
     private var triageDueTasks: [Task] {
         BoardDueGroup.members(triageTasks, inputs: {
             .init(isOpen: $0.isOpen, needsTriage: false,   // these ARE the inbox; triage isn't the filter here
-                  isWaiting: $0.isWaiting, isStanding: $0.isStanding,
-                  hasHorizon: false, dueAt: $0.dueAt)
+                  isStanding: $0.isStanding, hasHorizon: false, dueAt: $0.dueAt)
         })
     }
 
@@ -580,10 +577,15 @@ struct TasksView: View {
                             .font(.system(size: 10)).foregroundStyle(AppTheme.destructive)
                             .help("Blocked by an unfinished task")
                     }
-                    if row.task.isWaiting {
+                    if row.task.isFollowUpParked {
                         Image(systemName: "clock.badge.questionmark")
                             .font(.system(size: 10)).foregroundStyle(AppTheme.mutedText)
-                            .help("Waiting until a later date")
+                            .help("Following up later — parked until then")
+                    }
+                    if row.task.isFollowUpDue {
+                        Image(systemName: "clock.badge.exclamationmark")
+                            .font(.system(size: 10)).foregroundStyle(AppTheme.destructive)
+                            .help("Follow-up due")
                     }
                     if row.task.recurrenceRule != nil {
                         Image(systemName: "arrow.clockwise")

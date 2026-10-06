@@ -46,7 +46,7 @@ struct BoardPanel: View {
     /// so `planHorizon` stays purely manual (see BoardDueGroup).
     private var dueGroup: [Task] {
         BoardDueGroup.members(allTasks, inputs: {
-            .init(isOpen: $0.isOpen, needsTriage: $0.needsTriage, isWaiting: $0.isWaiting,
+            .init(isOpen: $0.isOpen, needsTriage: $0.needsTriage,
                   isStanding: $0.isStanding, hasHorizon: $0.planHorizon != nil, dueAt: $0.dueAt)
         })
     }

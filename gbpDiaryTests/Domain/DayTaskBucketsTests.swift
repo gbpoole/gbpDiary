@@ -56,11 +56,54 @@ struct DayTaskBucketsTests {
         #expect(b.inProgress.isEmpty)
     }
 
-    @Test func waitingTasks_excludedFromActionBuckets() {
-        let waiting = reviewed("waiting", status: .started)
-        waiting.waitUntil = dayStart.addingTimeInterval(5 * 86_400)   // deferred past the day
-        let b = DayTaskBuckets.partition(allTasks: [waiting], date: day)
-        #expect(b.isEmpty)   // waiting tasks aren't shown anywhere (not even To Do)
+    /// A parked follow-up is ranked last (urgency 0) but never hidden — the old `waitUntil` rule that
+    /// removed deferred tasks from every bucket is gone.
+    @Test func parkedFollowUpTasks_stayVisibleInToDo() {
+        let parked = reviewed("parked")
+        parked.setFollowUp(date: dayStart.addingTimeInterval(5 * 86_400), note: "waiting on Sam")
+        let b = DayTaskBuckets.partition(allTasks: [parked], date: day)
+        #expect(b.todo.map(\.id) == [parked.id])
+    }
+
+    /// A board placement is a decision already made, so it wins over every date-derived bucket: the task
+    /// shows once, in its lane. (Its row still carries the due chip, so the overdue warning isn't lost.)
+    @Test func boardLanes_takePriorityOverDateBuckets() {
+        let overduePlanned = reviewed("overdue but planned")
+        overduePlanned.dueAt = dayStart.addingTimeInterval(-3 * 86_400)
+        overduePlanned.place(on: .today)
+
+        let startedPlanned = reviewed("started but parked", status: .started)
+        startedPlanned.place(on: .maybe)
+
+        let weekPlanned = reviewed("this week")
+        weekPlanned.scheduledAt = dayStart.addingTimeInterval(9 * 3_600)
+        weekPlanned.place(on: .thisWeek)
+
+        let b = DayTaskBuckets.partition(allTasks: [overduePlanned, startedPlanned, weekPlanned], date: day)
+        #expect(b.today.map(\.id) == [overduePlanned.id])
+        #expect(b.thisWeek.map(\.id) == [weekPlanned.id])
+        #expect(b.maybe.map(\.id) == [startedPlanned.id])
+        #expect(b.overdue.isEmpty && b.inProgress.isEmpty && b.scheduled.isEmpty && b.todo.isEmpty)
+    }
+
+    /// Lanes read in the board's own order, so the panel and the board agree.
+    @Test func lanes_orderByPlanSortOrder_stableOnTies() {
+        let third = reviewed("third");  third.place(on: .today);  third.planSortOrder = 9
+        let first = reviewed("first");  first.place(on: .today);  first.planSortOrder = 1
+        let tieA = reviewed("tieA");    tieA.place(on: .today);   tieA.planSortOrder = 5
+        let tieB = reviewed("tieB");    tieB.place(on: .today);   tieB.planSortOrder = 5
+
+        let b = DayTaskBuckets.partition(allTasks: [third, first, tieA, tieB], date: day)
+        #expect(b.today.map(\.summary) == ["first", "tieA", "tieB", "third"])
+    }
+
+    /// Standing tasks stay out of every bucket even when placed on the board — they are logged from the
+    /// diary's own standing strip, so showing them in a lane too would list them twice in one panel.
+    @Test func placedStandingTask_isStillExcluded() {
+        let standing = reviewed("triage emails")
+        standing.makeStanding()
+        standing.place(on: .today)
+        #expect(DayTaskBuckets.partition(allTasks: [standing], date: day).isEmpty)
     }
 
     @Test func mondayWindow_absorbsWeekendDueAndScheduled() {

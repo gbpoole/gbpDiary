@@ -25,6 +25,9 @@ struct TaskDetailView: View {
     @Query(sort: \Person.name) private var allPeople: [Person]
 
     @State private var subtreeCollapsedIds: Set<UUID> = []
+    @State private var subtaskSelection: Set<UUID> = []
+    /// Set while confirming the removal of the *pending* follow-up, which also ends the follow-up.
+    @State private var followUpDeleteID: UUID?
     @State private var tagsText: String = ""
     @State private var repeatsText: String = ""
     @FocusState private var focusedSubtaskId: UUID?
@@ -87,6 +90,9 @@ struct TaskDetailView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 0) {
                     section("Time Log (\(logItems.count))") { timeLogContent }
+                    if !task.followedUpHistory.isEmpty {
+                        section("Follow-ups (\(task.followedUpHistory.count))") { followUpContent }
+                    }
                     section("Subtasks (\(task.children.count))") { subtasksContent }
                 }
                 .padding(.bottom, 28)
@@ -104,6 +110,17 @@ struct TaskDetailView: View {
             repeatsText = task.recurrenceRule ?? ""
         }
         .sheet(isPresented: $showingAddTime) { LogTimeSheet(presetTask: task, presetDate: Date()) }
+        .alert("End the follow-up?", isPresented: Binding(get: { followUpDeleteID != nil },
+                                                          set: { if !$0 { followUpDeleteID = nil } })) {
+            Button("Remove", role: .destructive) {
+                if let id = followUpDeleteID { task.removeFollowUp(entryID: id) }
+                followUpDeleteID = nil
+            }
+            Button("Cancel", role: .cancel) { followUpDeleteID = nil }
+        } message: {
+            Text("This is the follow-up you are currently waiting on. Removing it clears the date and "
+                 + "returns the task to To do.")
+        }
     }
 
     private var actionItems: [DayActionItem] {
@@ -213,7 +230,6 @@ struct TaskDetailView: View {
                         touch()
                     }
             }
-            metaRow("Wait until") { optionalDatePicker(waitBinding) }
             metaRow("Until") { optionalDatePicker(untilBinding) }
         }
         .padding(10)
@@ -276,9 +292,6 @@ struct TaskDetailView: View {
     private var blockersBinding: Binding<[Task]> {
         Binding(get: { task.dependsOn }, set: { task.dependsOn = $0; touch() })
     }
-    private var waitBinding: Binding<Date?> {
-        Binding(get: { task.waitUntil }, set: { task.waitUntil = $0; touch() })
-    }
     private var untilBinding: Binding<Date?> {
         Binding(get: { task.until }, set: { task.until = $0; touch() })
     }
@@ -290,13 +303,6 @@ struct TaskDetailView: View {
             guard cand.id != task.id else { return false }
             return !TaskDependency.wouldCreateCycle(taskID: task.id, newBlockerID: cand.id, dependsOn: graph)
         }
-    }
-
-    /// The unsaved breakdown outline is stored on the workspace tab, not in this view: the tab's content
-    /// is torn down and rebuilt when you switch tabs, which would otherwise discard whatever was typed.
-    private var breakdownDraft: Binding<String> {
-        Binding(get: { workspace.active.breakdownDrafts[task.id] ?? "" },
-                set: { workspace.active.breakdownDrafts[task.id] = $0 })
     }
 
     private var summaryBinding: Binding<String> {
@@ -447,24 +453,91 @@ struct TaskDetailView: View {
     // TaskSubtreeView supplies the row controls (drag-reorder, drag-onto-a-row to indent, "Detach from
     // Parent" to outdent); TaskBreakdownField supplies the batch outline entry. Together they are the
     // hybrid breakdown workflow.
-    @ViewBuilder private var subtasksContent: some View {
-        if task.children.isEmpty {
-            Text("No subtasks yet.")
-                .font(AppTheme.bodyFont(size: 12))
+    /// Every follow-up ever set on this task, **newest-dated first**, and editable in place — the same
+    /// treatment every other field on this page gets. This is the *only* surface that can correct an older
+    /// entry or remove one; the follow-up modal adds, and corrects the pending entry.
+    ///
+    /// Adding is deliberately absent: a new follow-up is an act on the task's status, so it belongs to the
+    /// status control. Past dates are allowed here (a history entry records the past); only the modal
+    /// restricts you to today onward.
+    @ViewBuilder private var followUpContent: some View {
+        ForEach(FollowUpHistory.displayOrder(task.followedUpHistory)) { entry in
+            let isPending = task.pendingFollowUpEntry?.id == entry.id
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Image(systemName: "clock.badge.questionmark")
+                    .foregroundStyle(AppTheme.mutedText).font(.system(size: 12))
+                    .frame(width: 18)
+                DatePicker("", selection: followUpDateBinding(entry.id), displayedComponents: .date)
+                    .labelsHidden()
+                if isPending {
+                    Chip(label: task.isFollowUpDue ? "due" : "pending",
+                         color: task.isFollowUpDue ? AppTheme.destructive : AppTheme.mutedText)
+                }
+                TextField("Why", text: followUpNoteBinding(entry.id))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: .infinity)
+                Button {
+                    // Removing the pending entry ends the follow-up, so that one asks first.
+                    if isPending { followUpDeleteID = entry.id } else { task.removeFollowUp(entryID: entry.id) }
+                } label: {
+                    Image(systemName: "trash").font(.caption)
+                }
+                .buttonStyle(.plain)
                 .foregroundStyle(AppTheme.mutedText)
-                .padding(.horizontal)
-                .padding(.bottom, 2)
-        } else {
-            TaskSubtreeView(
-                tasks: task.children,
-                collapsedIds: $subtreeCollapsedIds,
-                focusedId: $focusedSubtaskId,
-                onEdit: { workspace.focusOrOpen(.task($0.persistentModelID)) },
-                onMakeSubtask: { dragged, target in dragged.parent = target },
-                onPromote: { [task] child in child.parent = task },
-                onDelete: { modelContext.delete($0) }
-            )
+                .help("Remove this follow-up from the history")
+            }
+            .padding(.vertical, 2)
         }
-        TaskBreakdownField(parent: task, text: breakdownDraft)
+    }
+
+    /// Bindings read the entry back out of the model by id every time, so a keystroke is never applied to
+    /// a stale snapshot captured by the `ForEach`.
+    private func liveFollowUp(_ id: UUID) -> FollowUpEntry? {
+        task.followedUpHistory.first { $0.id == id }
+    }
+
+    private func followUpDateBinding(_ id: UUID) -> Binding<Date> {
+        Binding(get: { liveFollowUp(id)?.date ?? Date() },
+                set: { new in
+                    guard let entry = liveFollowUp(id) else { return }
+                    task.updateFollowUp(entryID: id, date: new, note: entry.note)
+                })
+    }
+
+    private func followUpNoteBinding(_ id: UUID) -> Binding<String> {
+        Binding(get: { liveFollowUp(id)?.note ?? "" },
+                set: { new in
+                    guard let entry = liveFollowUp(id) else { return }
+                    task.updateFollowUp(entryID: id, date: entry.date, note: new)
+                })
+    }
+
+    /// Rendered **unconditionally**, even with no subtasks. Two reasons: the row editor's "Add subtask"
+    /// button lives inside it, so branching on `children.isEmpty` made adding the *first* subtask
+    /// impossible; and the branch gave the subtree view an identity that appeared and disappeared as the
+    /// count crossed zero, re-running its `onAppear` against live models mid-update.
+    @ViewBuilder private var subtasksContent: some View {
+        TaskSubtreeView(
+            tasks: task.children,
+            collapsedIds: $subtreeCollapsedIds,
+            focusedId: $focusedSubtaskId,
+            onEdit: { workspace.focusOrOpen(.task($0.persistentModelID)) },
+            onMakeSubtask: { dragged, target in dragged.parent = target },
+            onPromote: { [task] child in child.parent = task },
+            onDelete: { modelContext.delete($0) },
+            // This page's own task is the floor: Shift-Tab can restructure within the subtree but never
+            // promote a row out of the list you are looking at.
+            editing: SubtaskEditing(
+                floorParentID: task.id,
+                setParent: { [task] child, newParent in
+                    child.parent = newParent ?? task
+                    child.updatedAt = Date()
+                },
+                selection: $subtaskSelection,
+                createRow: { [task] parent, order in
+                    TaskBreakdown.makeRow(under: parent ?? task, sortOrder: order, in: modelContext)
+                },
+                openTask: { workspace.focusOrOpen(.task($0.persistentModelID)) })
+        )
     }
 }

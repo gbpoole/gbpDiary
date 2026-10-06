@@ -15,9 +15,17 @@ enum TaskFlags {
         return calendar.isDate(due, inSameDayAs: now)
     }
 
-    /// Deferred: the wait-until date is still in the future.
-    static func isWaiting(waitUntil: Date?, now: Date = Date()) -> Bool {
-        guard let w = waitUntil else { return false }
-        return now < w
+    /// Parked: a follow-up is set and its date has not arrived. Such a task scores zero urgency —
+    /// "as done as I can do for now" — but stays visible in every list.
+    static func isFollowUpParked(followUpAt: Date?, now: Date = Date()) -> Bool {
+        guard let f = followUpAt else { return false }
+        return now < f
+    }
+
+    /// The follow-up date has arrived: actionable again, and displayed like an overdue task. Nothing
+    /// mutates when this flips — it is derived from the clock.
+    static func isFollowUpDue(followUpAt: Date?, now: Date = Date()) -> Bool {
+        guard let f = followUpAt else { return false }
+        return now >= f
     }
 }
