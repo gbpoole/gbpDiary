@@ -372,8 +372,9 @@ struct ChatView: View {
             timeLedger: { TimeLedgerProjection.ledger(focusBlocks: focusBlocks, tasks: tasks, conversations: conversations,
                                                       meetings: meetings, interval: $0) },
             activityProvider: { activityDigest(for: $0) },
-            projectActivity: { ProjectActivityProjection.report(interval: $0, tasks: tasks, conversations: conversations,
-                                                                meetings: meetings, focusBlocks: focusBlocks) },
+            projectActivity: { TimesheetProjection.report(interval: $0, tasks: tasks, conversations: conversations,
+                                                          meetings: meetings, focusBlocks: focusBlocks,
+                                                          projects: projects) },
             answerer: answerer,
             scopeResolver: FoundationModelsScopeResolver())
         let elapsed = Date().timeIntervalSince(startedAt)

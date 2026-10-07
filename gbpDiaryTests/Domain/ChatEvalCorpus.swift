@@ -42,9 +42,9 @@ enum ChatEvalCorpus {
         }
         // The shared per-project narrative report, from the real projection over the seeded @Model meetings
         // and emails — the same code the Timesheet and Chat use in production.
-        @MainActor func projectActivity(_ interval: Range<Date>?) -> ProjectActivityReport {
-            ProjectActivityProjection.report(interval: interval, tasks: [], conversations: conversations,
-                                             meetings: meetings, focusBlocks: [], calendar: ChatEvalCorpus.calendar)
+        @MainActor func projectActivity(_ interval: Range<Date>?) -> TimesheetReport {
+            TimesheetProjection.report(interval: interval, tasks: [], conversations: conversations,
+                                       meetings: meetings, focusBlocks: [], calendar: ChatEvalCorpus.calendar)
         }
         func key(_ name: String, _ kind: ChatSourceKind) -> ChatSourceKey {
             ChatSourceKey(kind: kind, modelID: ids[name]!)
@@ -116,7 +116,8 @@ enum ChatEvalCorpus {
         // February (outside), and — for "projects I worked on last week" — 1h NODES + 0.5h Other in the
         // last-week window (10/11 Jun).
         func activity(_ key: String, _ d: Date, _ hours: Double, _ project: String) -> LedgerActivity {
-            LedgerActivity(sourceKey: key, date: d, hours: hours, projectNames: [project], blockID: nil, isOvertime: false)
+            LedgerActivity(sourceKey: key, date: d, hours: hours, projects: [LedgerProject(name: project)],
+                           blockID: nil, isOvertime: false)
         }
         let activities = [
             activity("may-meeting", date(2026, 5, 20), 1.0, nodes),

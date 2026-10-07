@@ -37,6 +37,7 @@ struct gbpDiaryApp: App {
             EmailMessage.self,
             EmailThreadSummary.self,
             EmailConversation.self,
+            TimesheetSummary.self,
         ])
         let config = ModelConfiguration(schema: schema, isStoredInMemoryOnly: isUITesting)
         do {
@@ -65,6 +66,7 @@ struct gbpDiaryApp: App {
                 .onAppear {
                     sweepOrphanedAttachments()
                     sweepOrphanedMeetingEntries()
+                    sweepStaleTimesheetSummaries()
                     runBundleImportIfRequested()
                 }
         }
@@ -98,6 +100,18 @@ struct gbpDiaryApp: App {
             .modelContainer(Self.sharedModelContainer)
         }
         #endif
+    }
+
+    // The Timesheet's cached per-project prose is a pure cache keyed by (project, period). Periods are
+    // unbounded (any custom range), so paragraphs not generated or shown for five weeks are swept here —
+    // beside the attachment orphan sweep — rather than accumulating for ever.
+    private func sweepStaleTimesheetSummaries() {
+        let context = Self.sharedModelContainer.mainContext
+        guard let stored = try? context.fetch(FetchDescriptor<TimesheetSummary>()) else { return }
+        let now = Date()
+        for summary in stored where TimesheetSummaryPlanning.isExpired(touchedAt: summary.touchedAt, now: now) {
+            context.delete(summary)
+        }
     }
 
     private func sweepOrphanedAttachments() {

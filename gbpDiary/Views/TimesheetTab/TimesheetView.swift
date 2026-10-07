@@ -4,18 +4,21 @@ import SwiftData
 struct TimesheetView: View {
     @Query(sort: \Task.completedAt, order: .reverse) private var allTasks: [Task]
     @Query(sort: \Project.name) private var projects: [Project]
-    @Query(sort: \TaskTimeEntry.date, order: .reverse) private var allEntries: [TaskTimeEntry]
     @Query private var allFocusBlocks: [FocusBlock]
     @Query private var allConversations: [EmailConversation]
     @Query private var allEmails: [EmailMessage]   // for source navigation (open a message in Mail)
     @Query private var allMeetings: [Minutes]
+    @Query private var allNotes: [Note]
+    @Query private var storedSummaries: [TimesheetSummary]
 
     @Environment(WorkspaceModel.self) private var workspace
     @State private var mailService = MailScriptService()
     @State private var selectedTask: Task?
+    @State private var exportError: String?
+    @State private var copiedMarkdown = false
     private let answerer = FoundationModelsChatAnswerer()
 
-    @State private var selectedRange: TimesheetRange = .pastWeek
+    @State private var selectedRange: TimesheetRange = .thisWeek
     @State private var customStart: Date = Calendar.current.date(byAdding: .day, value: -7, to: Date())!
     @State private var customEnd: Date = Date()
 
@@ -27,53 +30,60 @@ struct TimesheetView: View {
         )
     }
 
-    private var entriesInRange: [TaskTimeEntry] {
-        TimesheetComputation.entriesInRange(allEntries: allEntries, interval: rangeInterval)
+    private var interval: Range<Date> { rangeInterval.start..<rangeInterval.end }
+
+    // The canonical hours. The headline is the ledger's own grandTotal — the same figure the diary shows for
+    // the same days — so the two pages can never contradict each other.
+    private var ledger: LedgerResult {
+        TimeLedgerProjection.ledger(focusBlocks: allFocusBlocks, tasks: allTasks,
+                                    conversations: allConversations, meetings: allMeetings,
+                                    interval: interval)
     }
 
-    // Legacy: tasks with no time entries that have a duration field set.
-    private var legacyTasksInRange: [Task] {
-        TimesheetComputation.tasksInRange(allTasks: allTasks, interval: rangeInterval)
-            .filter { $0.timeEntries.isEmpty }
+    // Per-project hours paired with the rows that account for them (and the mined prose). One assembler,
+    // shared with Chat's time-report lens.
+    private var report: TimesheetReport {
+        TimesheetProjection.report(interval: interval, tasks: allTasks, conversations: allConversations,
+                                   meetings: allMeetings, focusBlocks: allFocusBlocks,
+                                   notes: allNotes, projects: projects)
     }
 
-    // Per-project time + the "what was done" narrative come from one shared, deterministic report
-    // (also used by Chat). Hours split block capacity by in-block activity's project (via TimeLedger);
-    // the narrative pairs each project's meetings, completed tasks, logged comments, and emails.
-    private var rangeReport: ProjectActivityReport {
-        ProjectActivityProjection.report(interval: rangeInterval.start..<rangeInterval.end,
-                                         tasks: allTasks, conversations: allConversations, meetings: allMeetings,
-                                         focusBlocks: allFocusBlocks)
-    }
-
-    // Timesheet stays time-anchored: only projects with logged hours (enriched with their narrative).
-    private var projectSections: [ProjectActivitySection] { rangeReport.sections.filter { $0.hours > 0 } }
-
-    private var totalHours: Double { projectSections.reduce(0) { $0 + $1.hours } }
-    private var totalTaskCount: Int {
-        Set(entriesInRange.compactMap(\.task?.id)).union(Set(legacyTasksInRange.map(\.id))).count
-    }
-    private var overtime: Double {
-        TimeLedgerProjection.ledger(focusBlocks: allFocusBlocks, tasks: allTasks, conversations: allConversations,
-                                    meetings: allMeetings, interval: rangeInterval.start..<rangeInterval.end).overtime
+    /// The cached prose for this period, by node. Written by `TimesheetSummaryDriver`, read here.
+    private var proseByNode: [UUID: String] {
+        let period = interval
+        var map: [UUID: String] = [:]
+        for summary in storedSummaries
+        where summary.rangeStart == period.lowerBound && summary.rangeEnd == period.upperBound {
+            if summary.state == .done, let text = summary.text, !text.isEmpty { map[summary.nodeID] = text }
+        }
+        return map
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        let ledger = ledger
+        let report = report
+        let prose = proseByNode
+        return VStack(spacing: 0) {
             rangeBar
             Divider()
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    totalCard
-                    projectBreakdown
+                    totalCard(ledger: ledger, report: report)
+                    projectBreakdown(report: report, prose: prose)
                 }
                 .padding()
             }
+            // Fills each project's paragraph in the background for the period on screen.
+            TimesheetSummaryDriver(nodes: report.allNodes, interval: interval)
         }
-        .onAppear { answerer.prewarm() }   // warm the on-device model ahead of the first Summarise
+        .onAppear { answerer.prewarm() }   // warm the on-device model ahead of the first summary
+        .onChange(of: selectedRange) { copiedMarkdown = false }
         .sheet(item: $selectedTask) { task in
             TaskEditorSheet(task: task, defaultDate: task.completedAt ?? Date())
         }
+        .alert("Couldn't export", isPresented: .constant(exportError != nil)) {
+            Button("OK") { exportError = nil }
+        } message: { Text(exportError ?? "") }
     }
 
     private var rangeBar: some View {
@@ -84,30 +94,86 @@ struct TimesheetView: View {
                 }
             }
             .pickerStyle(.segmented)
-            if selectedRange == .custom {
-                HStack {
+            HStack(spacing: 8) {
+                if selectedRange == .custom {
                     DatePicker("From", selection: $customStart, displayedComponents: .date)
                     DatePicker("To", selection: $customEnd, displayedComponents: .date)
                 }
-                .labelsHidden()
+                Text(TimesheetExport.periodLabel(interval))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    copyMarkdown()
+                } label: {
+                    Label(copiedMarkdown ? "Copied" : "Copy as Markdown",
+                          systemImage: copiedMarkdown ? "checkmark" : "doc.on.doc")
+                }
+                .buttonStyle(.borderless)
+                #if os(macOS)
+                Button {
+                    exportMarkdown()
+                } label: {
+                    Label("Export…", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderless)
+                #endif
             }
+            .labelsHidden()
         }
         .padding()
     }
 
-    private var totalCard: some View {
-        GroupBox("Total") {
+    private var markdown: String {
+        TimesheetExport.composeMarkdown(report: report, ledger: ledger,
+                                        periodLabel: TimesheetExport.periodLabel(interval),
+                                        prose: proseByNode)
+    }
+
+    private func copyMarkdown() {
+        #if os(macOS)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(markdown, forType: .string)
+        #endif
+        copiedMarkdown = true
+    }
+
+    #if os(macOS)
+    private func exportMarkdown() {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = TimesheetExport.fileName(
+            periodLabel: TimesheetExport.periodLabel(interval))
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try markdown.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            exportError = error.localizedDescription
+        }
+    }
+    #endif
+
+    private func totalCard(ledger: LedgerResult, report: TimesheetReport) -> some View {
+        // Over-logging (more activity inside a block than its capacity) legitimately makes the rows sum
+        // higher than the diary's total. Name the difference rather than quietly showing one or the other.
+        let overLogged = report.totalOwnHours - ledger.grandTotal
+        return GroupBox("Total") {
             HStack {
-                VStack(alignment: .leading) {
-                    Text(TimeFormat.hours(totalHours))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(TimeFormat.hours(ledger.grandTotal))
                         .font(.largeTitle.bold())
-                    Text("\(TimeFormat.days(totalHours))  ·  \(totalTaskCount) tasks")
+                    Text("\(TimeFormat.days(ledger.grandTotal))  ·  \(Self.countsLine(report))")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
-                    if overtime > 0 {
-                        Text("Includes \(TimeFormat.hours(overtime)) overtime")
+                    if ledger.overtime > 0 {
+                        Text("Includes \(TimeFormat.hours(ledger.overtime)) overtime")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+                    if overLogged > 0.05 {
+                        Text("+\(TimeFormat.hours(overLogged)) over-logged — activity inside focus blocks exceeds their capacity")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
                     }
                 }
                 Spacer()
@@ -115,25 +181,36 @@ struct TimesheetView: View {
         }
     }
 
-    private var projectBreakdown: some View {
+    private func projectBreakdown(report: TimesheetReport, prose: [UUID: String]) -> some View {
         GroupBox("By Project") {
-            if projectSections.isEmpty {
+            if report.isEmpty {
                 Text("No logged time in this range.")
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 4)
             } else {
                 VStack(alignment: .leading, spacing: 0) {
-                    ForEach(Array(projectSections.enumerated()), id: \.element.projectName) { index, section in
-                        ProjectActivitySectionView(section: section, totalHours: totalHours,
-                                                   answerer: answerer, onOpen: open)
-                        if index < projectSections.count - 1 { Divider().padding(.vertical, 2) }
+                    ForEach(Array(report.nodes.enumerated()), id: \.element.id) { index, node in
+                        TimesheetNodeView(node: node, depth: 0, totalHours: report.totalOwnHours,
+                                          prose: prose, onOpen: open)
+                        if index < report.nodes.count - 1 { Divider().padding(.vertical, 2) }
                     }
                 }
             }
         }
     }
 
-    // Navigate a narrative bullet to its source (the kinds the report emits).
+    private static func countsLine(_ report: TimesheetReport) -> String {
+        let rows = report.allNodes.flatMap { $0.rows + $0.unloggedRows }
+        func count(_ kinds: Set<TimesheetRowKind>) -> Int {
+            Set(rows.filter { kinds.contains($0.kind) }.map(\.id)).count
+        }
+        let tasks = count([.task, .completedNoTime])
+        let meetings = count([.meeting])
+        let convos = count([.conversation, .unfiledConversation])
+        return "\(tasks) tasks · \(meetings) meetings · \(convos) conversations"
+    }
+
+    // Navigate a row or extract to its source.
     private func open(_ source: ChatSourceReference) {
         switch source.navigationKind {
         case .meeting:
@@ -141,10 +218,16 @@ struct TimesheetView: View {
                 workspace.focusOrOpen(.minutes(m.persistentModelID))
             }
         case .task:
-            selectedTask = allTasks.first { $0.id == source.navigationID }
+            if let t = allTasks.first(where: { $0.id == source.navigationID }) {
+                workspace.focusOrOpen(.task(t.persistentModelID))
+            }
         case .email:
             if let e = allEmails.first(where: { $0.id == source.navigationID }) {
                 mailService.openMessage(e) { _ in }
+            }
+        case .note:
+            if let n = allNotes.first(where: { $0.id == source.navigationID }) {
+                workspace.reveal(note: n)
             }
         case .project:
             if let p = projects.first(where: { $0.id == source.navigationID }) {
@@ -156,135 +239,133 @@ struct TimesheetView: View {
     }
 }
 
-// One expandable project: the header keeps the time figures; expanding reveals the grouped "what was
-// done" bullets (each tappable to its source) plus an on-demand, on-device prose summary. The summary
-// only rephrases the app-built items — it never invents (rephrase-only contract).
-private struct ProjectActivitySectionView: View {
-    let section: ProjectActivitySection
+// One project (and, nested inside it, its subprojects). The header carries the time figures; the prose
+// summarises the whole subtree; the rows that ACCOUNT for the hours sit behind a disclosure, collapsed by
+// default, each detail clipped to one line (the markdown export carries them in full).
+private struct TimesheetNodeView: View {
+    let node: TimesheetNode
+    let depth: Int
     let totalHours: Double
-    let answerer: FoundationModelsChatAnswerer
+    let prose: [UUID: String]
     let onOpen: (ChatSourceReference) -> Void
 
-    @State private var expanded = true
-    @State private var prose: String?
-    @State private var proseError: String?
-    @State private var isSummarizing = false
-    @State private var summarizeToken: UUID?
+    @State private var showRows = false
 
-    private var percent: Int { totalHours > 0 ? Int((section.hours / totalHours * 100).rounded()) : 0 }
-
-    private struct ItemGroup { let title: String; let items: [ChatActivityItem] }
-    private var groups: [ItemGroup] {
-        let order: [(String, ChatActivityKind)] = [
-            ("Meetings", .meeting), ("Completed", .completedTask),
-            ("Logged notes", .loggedComment), ("Emails", .email),
-        ]
-        return order.compactMap { title, kind in
-            let items = section.items.filter { $0.kind == kind }
-            return items.isEmpty ? nil : ItemGroup(title: title, items: items)
-        }
-    }
+    private var percent: Int { totalHours > 0 ? Int((node.ownHours / totalHours * 100).rounded()) : 0 }
+    private var paragraph: String? { prose[node.id] }
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            expandedContent
-        } label: {
-            headerRow
-        }
-        .padding(.vertical, 4)
-        .task(id: summarizeToken) { await runSummarize() }
-    }
-
-    private var headerRow: some View {
-        HStack(spacing: 8) {
-            Text(section.projectName).font(.headline)
-            Spacer()
-            Text(TimeFormat.hours(section.hours)).monospacedDigit()
-            Text("·").foregroundStyle(.secondary)
-            Text(TimeFormat.days(section.hours)).foregroundStyle(.secondary).monospacedDigit()
-            Text("·").foregroundStyle(.secondary)
-            Text(ChatTimeTotals.weeksText(section.distinctWeeks)).foregroundStyle(.secondary)
-            Text("(\(percent)%)").foregroundStyle(.secondary).monospacedDigit()
-        }
-    }
-
-    private var expandedContent: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            if section.items.isEmpty {
-                Text("No recorded meetings, tasks, notes, or emails in this range.")
-                    .font(.caption).foregroundStyle(.secondary)
-            } else {
-                ForEach(groups, id: \.title) { group in
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(group.title.uppercased())
-                            .font(.caption2).foregroundStyle(.secondary)
-                        ForEach(Array(group.items.enumerated()), id: \.offset) { _, item in
-                            itemRow(item)
-                        }
-                    }
-                }
-            }
-            summarizeArea
-        }
-        .padding(.top, 6)
-        .padding(.leading, 4)
-    }
-
-    private func itemRow(_ item: ChatActivityItem) -> some View {
-        let hasSource = item.source != nil
-        return HStack(alignment: .top, spacing: 6) {
-            Text("•").foregroundStyle(.secondary)
-            Text(item.label)
-                .foregroundStyle(hasSource ? Color.accentColor : .primary)
-            Spacer(minLength: 0)
-        }
-        .font(.callout)
-        .contentShape(Rectangle())
-        .onTapGesture { if let s = item.source { onOpen(s) } }
-    }
-
-    private var summarizeArea: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Button {
-                    summarizeToken = UUID()
-                } label: {
-                    Label(isSummarizing ? "Summarising…" : "Summarise", systemImage: "sparkles")
-                }
-                .buttonStyle(.borderless)
-                .disabled(isSummarizing || section.items.isEmpty)
-                if isSummarizing { ProgressView().controlSize(.small) }
-            }
-            if let prose {
-                Text(prose)
+            headerRow
+            if let paragraph {
+                Text(paragraph)
                     .font(.callout).textSelection(.enabled)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(AppTheme.cardRaised.opacity(0.3), in: RoundedRectangle(cornerRadius: 6))
+            } else if !node.subtreeRows.isEmpty {
+                // The driver fills this in the background; the rows below are the answer until it does.
+                Text("Summarising…").font(.caption).foregroundStyle(.tertiary)
             }
-            if let proseError {
-                Text(proseError).font(.caption).foregroundStyle(.secondary)
+            controls
+            if showRows { evidence }
+            ForEach(node.children) { child in
+                TimesheetNodeView(node: child, depth: depth + 1, totalHours: totalHours,
+                                  prose: prose, onOpen: onOpen)
             }
         }
-        .padding(.top, 2)
+        .padding(.vertical, 4)
+        .padding(.leading, CGFloat(depth) * 16)
     }
 
-    private func runSummarize() async {
-        guard summarizeToken != nil else { return }   // skip the initial nil-id run
-        guard answerer.isAvailable else {
-            proseError = answerer.unavailableReason ?? "Summaries need Apple Intelligence, which isn't available."
-            return
+    private var headerRow: some View {
+        HStack(spacing: 8) {
+            Text(node.name)
+                .font(depth == 0 ? .headline : .subheadline.weight(.semibold))
+                .foregroundStyle(node.isUnattributed ? .orange : .primary)
+            Spacer()
+            Text(TimeFormat.hours(node.ownHours)).monospacedDigit()
+            Text("·").foregroundStyle(.secondary)
+            Text(TimeFormat.days(node.ownHours)).foregroundStyle(.secondary).monospacedDigit()
+            Text("·").foregroundStyle(.secondary)
+            Text(ChatTimeTotals.weeksText(node.distinctWeeks)).foregroundStyle(.secondary)
+            Text("(\(percent)%)").foregroundStyle(.secondary).monospacedDigit()
         }
-        isSummarizing = true
-        proseError = nil
-        defer { isSummarizing = false }
-        let bundle = ChatPromptBundle(prompt: ProjectActivityReport.phrasingPrompt(section: section),
-                                      sources: [], requiresCitation: false)
-        do {
-            let answer = try await answerer.answer(request: ChatAnswerRequest(prompt: bundle))
-            prose = answer.text
-        } catch {
-            proseError = (error as? LocalizedError)?.errorDescription ?? "Couldn't generate a summary."
+    }
+
+    private var controls: some View {
+        HStack(spacing: 10) {
+            if !node.children.isEmpty {
+                Text("subtree \(TimeFormat.hours(node.subtreeHours))")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Button {
+                showRows.toggle()
+            } label: {
+                Label(showRows ? "Hide detail" : "Detail (\(node.rows.count + node.unloggedRows.count))",
+                      systemImage: showRows ? "chevron.up" : "chevron.down")
+                    .font(.caption)
+            }
+            .buttonStyle(.borderless)
+            .disabled(!node.hasContent)
+            Spacer()
+        }
+    }
+
+    private var evidence: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            ForEach(node.groups, id: \.title) { group in
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(group.title.uppercased())
+                        .font(.caption2).foregroundStyle(.secondary)
+                    ForEach(group.rows) { row in rowView(row) }
+                }
+            }
+            if !node.extracts.isEmpty {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("NOTES").font(.caption2).foregroundStyle(.secondary)
+                    ForEach(node.extracts) { extract in
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(extract.title).font(.caption.weight(.semibold))
+                            Text(extract.text).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture { if let s = extract.source { onOpen(s) } }
+                    }
+                }
+            }
+        }
+        .padding(.top, 4)
+        .padding(.leading, 4)
+    }
+
+    private func rowView(_ row: TimesheetRow) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text("•").foregroundStyle(.secondary)
+                Text(row.title)
+                    .foregroundStyle(row.source != nil ? Color.accentColor : .primary)
+                if let status = row.status {
+                    Text(status).font(.caption).foregroundStyle(.secondary)
+                }
+                if let badge = row.badge {
+                    Text(badge).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 4)
+                if row.hours > 0 {
+                    Text(TimeFormat.hours(row.hours)).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+            .font(.callout)
+            .contentShape(Rectangle())
+            .onTapGesture { if let s = row.source { onOpen(s) } }
+            ForEach(row.details) { detail in
+                Text("↳ \(detail.label)")
+                    .font(.caption)
+                    .foregroundStyle(detail.isUnspecified ? .tertiary : .secondary)
+                    .lineLimit(1)
+                    .padding(.leading, 14)
+            }
         }
     }
 }

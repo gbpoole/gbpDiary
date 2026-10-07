@@ -1,11 +1,16 @@
 import Foundation
 
+// The Timesheet's reporting periods. Every one is a CLOSED, whole-day interval — a report describes a
+// period a third party recognises, never "up to whenever I pressed the button" (the old rolling
+// `now − 7d ..< now` also silently dropped the earliest day's block capacity, whose date is start-of-day).
+// Week periods are the diary's Mon–Fri work week, since weekend work folds back into Friday.
 enum TimesheetRange: String, CaseIterable {
-    case today = "Today"
-    case yesterday = "Yesterday"
-    case pastWeek = "Past Week"
-    case currentMonth = "This Month"
-    case currentYear = "This Year"
+    case thisWeek = "This Week"
+    case lastWeek = "Last Week"
+    case last7Days = "Last 7 Days"
+    case thisMonth = "This Month"
+    case lastMonth = "Last Month"
+    case thisYear = "This Year"
     case custom = "Custom"
 }
 
@@ -17,27 +22,53 @@ enum TimesheetComputation {
         now: Date = Date(),
         calendar: Calendar = .current
     ) -> DateInterval {
+        let today = calendar.startOfDay(for: now)
+        let tomorrow = calendar.date(byAdding: .day, value: 1, to: today) ?? today
+        // An in-progress period still ends on a day boundary (end of today), never mid-day.
+        func clamped(_ periodEnd: Date) -> Date { min(periodEnd, tomorrow) }
+
         switch selectedRange {
-        case .today:
-            let start = calendar.startOfDay(for: now)
-            return DateInterval(start: start, end: calendar.date(byAdding: .day, value: 1, to: start) ?? start)
-        case .yesterday:
-            let yesterday = calendar.date(byAdding: .day, value: -1, to: now) ?? now
-            let start = calendar.startOfDay(for: yesterday)
-            return DateInterval(start: start, end: calendar.date(byAdding: .day, value: 1, to: start) ?? start)
-        case .pastWeek:
-            return DateInterval(start: calendar.date(byAdding: .day, value: -7, to: now) ?? now, end: now)
-        case .currentMonth:
-            let comps = calendar.dateComponents([.year, .month], from: now)
-            let start = calendar.date(from: comps) ?? now
-            return DateInterval(start: start, end: now)
-        case .currentYear:
-            let comps = calendar.dateComponents([.year], from: now)
-            let start = calendar.date(from: comps) ?? now
-            return DateInterval(start: start, end: now)
+        case .thisWeek:
+            return workWeek(containing: now, calendar: calendar)
+        case .lastWeek:
+            let anchor = calendar.date(byAdding: .day, value: -7,
+                                       to: WeekendPolicy.workWeekday(for: now, calendar: calendar)) ?? now
+            return workWeek(containing: anchor, calendar: calendar)
+        case .last7Days:
+            let start = calendar.date(byAdding: .day, value: -6, to: today) ?? today
+            return DateInterval(start: start, end: tomorrow)
+        case .thisMonth:
+            let start = calendar.date(from: calendar.dateComponents([.year, .month], from: now)) ?? today
+            let next = calendar.date(byAdding: .month, value: 1, to: start) ?? tomorrow
+            return DateInterval(start: start, end: clamped(next))
+        case .lastMonth:
+            let thisMonth = calendar.date(from: calendar.dateComponents([.year, .month], from: now)) ?? today
+            let start = calendar.date(byAdding: .month, value: -1, to: thisMonth) ?? thisMonth
+            return DateInterval(start: start, end: thisMonth)
+        case .thisYear:
+            let start = calendar.date(from: calendar.dateComponents([.year], from: now)) ?? today
+            let next = calendar.date(byAdding: .year, value: 1, to: start) ?? tomorrow
+            return DateInterval(start: start, end: clamped(next))
         case .custom:
-            return DateInterval(start: customStart, end: customEnd)
+            // The pickers choose DAYS, and the chosen end day is included in full.
+            let start = calendar.startOfDay(for: min(customStart, customEnd))
+            let endDay = calendar.startOfDay(for: max(customStart, customEnd))
+            return DateInterval(start: start, end: calendar.date(byAdding: .day, value: 1, to: endDay) ?? endDay)
         }
+    }
+
+    /// The Mon–Fri work week a date belongs to, as a whole-day half-open interval `[Mon, Sat)`. A weekend
+    /// date resolves BACK to the Friday its work folds into, so "This Week" on a Saturday is the week just
+    /// worked rather than the one about to start.
+    static func workWeek(containing date: Date, calendar: Calendar = .current) -> DateInterval {
+        let anchor = WeekendPolicy.workWeekday(for: date, calendar: calendar)
+        let days = WeekendPolicy.weekdays(ofWeekContaining: anchor, calendar: calendar)
+        guard let first = days.first, let last = days.last,
+              let end = calendar.date(byAdding: .day, value: 1, to: last) else {
+            let start = calendar.startOfDay(for: anchor)
+            return DateInterval(start: start, end: calendar.date(byAdding: .day, value: 1, to: start) ?? start)
+        }
+        return DateInterval(start: first, end: end)
     }
 
     static func tasksInRange(allTasks: [Task], interval: DateInterval) -> [Task] {

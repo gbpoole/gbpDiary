@@ -90,10 +90,12 @@ struct FocusBlockEditorSheet: View {
         FocusBlockTaskPickerRow(selectedTask: $selectedTask, dayDate: dayRecord.date)
     }
 
+    // A block's net (capacity minus what was logged inside it) is reported as work on its backing task, so
+    // this note is the only thing that can describe those hours on the Timesheet. Bordered + plainly asked.
     private var commentSection: some View {
-        GroupBox("Comment") {
-            TextField("Optional note", text: $comment)
-                .textFieldStyle(.plain)
+        GroupBox("What did you do?") {
+            TextField("e.g. drafted the EoI", text: $comment)
+                .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
