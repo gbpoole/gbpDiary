@@ -8,7 +8,7 @@ struct ActivitySection: View {
     var dayRecord: DayRecord?
     var date: Date
     var todayEntries: [TaskTimeEntry]   // the day's time entries — task-, email-, and conversation-linked
-    var meetings: [DayEntry] = []
+    var meetings: [Minutes] = []
     var completedTasks: [Task] = []
     // Lazily creates the DayRecord for `date` if it does not exist yet.
     var findOrCreateDayRecord: (() -> DayRecord)? = nil
@@ -114,15 +114,15 @@ struct ActivitySection: View {
         return (blockItems + entryItems).sorted { $0.0 < $1.0 }.map(\.1)
     }
 
-    private func meetings(for block: FocusBlock) -> [DayEntry] {
+    private func meetings(for block: FocusBlock) -> [Minutes] {
         switch block.slot {
         case .allDay:
             return meetings
         case .morning, .afternoon:
             // Only meetings that actually occupy time in this slot — so a meeting spanning 12:30 shows (and
             // counts) in each block by its portion, and one ending exactly at 12:30 isn't a phantom afternoon row.
-            return meetings.filter { entry in
-                guard let m = entry.minutes, let d = m.duration else { return false }
+            return meetings.filter { m in
+                guard let d = m.duration else { return false }
                 return MeetingSlotHours.overlapHours(start: m.meetingAt, durationHours: d.hoursNormalized,
                                                      slot: block.slot, on: date) > 0
             }
@@ -134,10 +134,9 @@ struct ActivitySection: View {
     // Meetings not already shown inside a FocusBlock, sorted by start time.
     private var standaloneMeetings: [Minutes] {
         let assignedMinutesIds = Set(
-            blocks.flatMap { meetings(for: $0) }.compactMap { $0.minutes?.id }
+            blocks.flatMap { meetings(for: $0) }.map(\.id)
         )
         return meetings
-            .compactMap(\.minutes)
             .filter { !assignedMinutesIds.contains($0.id) }
             .sorted { $0.meetingAt < $1.meetingAt }
     }
@@ -231,7 +230,7 @@ struct ActivitySection: View {
     private var dayLedger: LedgerResult {
         TimeLedgerProjection.diaryLedger(focusBlocks: blocks, taskEntries: todayEntries,
                                          completedTasks: completedTasks,
-                                         meetings: meetings.compactMap(\.minutes))
+                                         meetings: meetings)
     }
     private var totalHours: Double { dayLedger.standardTotal }
     private var overtimeHours: Double { dayLedger.overtime }
@@ -283,17 +282,15 @@ struct ActivitySection: View {
 
     // MARK: - Add meeting
 
+    // A meeting's DAY is its own `meetingAt` — nothing else stores it — so a new meeting is stamped on the
+    // day you are looking at (at now's time-of-day, via the same `WeekendPolicy.logNowDate` rule the task
+    // panel and LogTimeSheet use). It used to stamp `now` while anchoring a `DayEntry` to the viewed day,
+    // so adding a meeting while viewing Tuesday created a meeting dated Thursday that showed on Tuesday —
+    // and editing its date could never move it.
     private func addMeeting() {
-        let record = findOrCreateDayRecord?() ?? dayRecord
-        guard let record else { return }
-        let meeting = Minutes(meetingAt: nearestQuarterHour())
+        let meeting = Minutes(meetingAt: WeekendPolicy.logNowDate(viewedDate: date))
         meeting.duration = Duration(value: 1, unit: .h)
         modelContext.insert(meeting)
-        let entry = DayEntry(kind: .meeting, text: "",
-                             sortOrder: (record.entries.map(\.sortOrder).max() ?? -1) + 1)
-        entry.minutes = meeting
-        entry.dayRecord = record
-        modelContext.insert(entry)
         isNewMeeting = true
         selectedMeetingMinutes = meeting
     }

@@ -99,14 +99,14 @@ path a day time entry attributes to its `conversation` → else legacy `email` �
 
 ### Day view architecture
 
-The Day tab renders a `DayPageContent` view with four typed sections. Meetings are the only diary `DayEntry` blocks still used; tasks are anchored directly to a `DayRecord` via `Task.dayRecord`.
+The Day tab renders a `DayPageContent` view with four typed sections. **`DayEntry` is fully vestigial** — nothing in the diary reads it any more: meetings are anchored by their own `Minutes.meetingAt` (see Meeting entries) and tasks directly to a `DayRecord` via `Task.dayRecord`.
 
 ```
 DayPageContent
   └── ScrollView
         └── VStack
               ├── activitySection     ActivitySection — Focus blocks (morning/afternoon/all-day/evening) + their Activities
-              ├── meetingsSection     EntryRowView (kind == .meeting) per DayEntry
+              │                       (meetings render inside activitySection, by their own meetingAt)
               ├── newTasksSection     DiaryTaskRow per Task with dayRecord == thisRecord
               ├── completedTasksSection  CompletedTaskRow for tasks completedAt in day
               ├── documentsSection    DayDocumentRow per Document.dayRecord == thisRecord
@@ -148,7 +148,7 @@ Old `DayEntry(kind:.note)` entries are auto-migrated into `DayRecord.notes` the 
 | Notes | Inline | `dayRecord.noteItems` sorted by `sortOrder`; reorderable by drag |
 | New Tasks | Inline | `task.dayRecord == thisRecord`, parent == nil — **all statuses shown** |
 | Completed | Inline | `status == .completed && completedAt` in `[dayStart, dayEnd)`, excluding dayRecord tasks |
-| Meetings | Inline | `DayEntry.kind == .meeting` in this DayRecord |
+| Meetings | Inline (in Activity) | `Minutes.meetingAt` within `WeekendPolicy.workRange(for: date)` — derived, never stored; via `DayMeetingFiltering.meetings(on:from:meetingAt:)` |
 | Documents | Inline | `Document.dayRecord == thisRecord` |
 | Today / This Week / Maybe | Task panel | `planHorizon` == that lane (triaged, open, top-level, non-standing) — checked **before** the date buckets, via `DayTaskBuckets` |
 | Scheduled | Task panel | `scheduledAt` in `[dayStart, dayEnd)` AND status todo/started (triaged), and **not** placed on the board — via `DayTaskBuckets` |
@@ -275,7 +275,8 @@ Institution
 Minutes
   summary   : String?        (one-line summary; editable inline in diary)
   duration  : Duration?      (optional; same h/d/w format as tasks)
-  meetingAt : Date           (defaults to nearest quarter-hour when created)
+  meetingAt : Date           (THE day anchor — the diary derives membership from it; a new meeting is
+                              stamped on the VIEWED day via WeekendPolicy.logNowDate)
   minutesContent: String?    (legacy plain-text field; migrated into note.blocks on first open; nil afterward)
   note      → Note?          (cascade delete; block-based meeting minutes; created on first open via ensureNoteExists()/onAppear migration)
   newTasks  → [Task]     ↔ Task.originMinutes  (nullify on delete; the meeting's action items)
@@ -570,7 +571,7 @@ User input is a string like `"1.5h"`, `"2d"`, `"1w"`. Parse with `Duration.parse
 
 ### Meeting entries
 
-When a meeting `DayEntry` is created, `addMeeting()` automatically creates and links a `Minutes` object with `meetingAt` defaulting to the nearest quarter-hour (rounding from `Date()`). Deleting a meeting entry requires confirmation (alert) because it also deletes the linked `Minutes`. The meeting's one-line summary is stored on `Minutes.summary`, edited inline in the diary row (tapping the row line edits the summary; it no longer opens the meeting). The **"Minutes" chip** opens the meeting in a **new workspace tab** (`MinutesDetailView`), a single unified editor for both metadata (summary, projects, time, duration, attendees, laid out compactly) and the minutes markdown. `MinutesEditorSheet` remains only for quick new-meeting creation.
+**RULE: a meeting's day is its own `meetingAt` and nothing else.** `DayView.dayMeetings` derives the day's meetings through the pure `DayMeetingFiltering.meetings(on:from:meetingAt:)` (`WeekendPolicy.workRange`, so a weekend meeting folds back into Friday like all other work), so a meeting appears on the day — and at the time — it says, and **re-dating it moves it**. `ActivitySection.addMeeting()` creates only a `Minutes`, stamped on the **viewed** day at now's time-of-day (`WeekendPolicy.logNowDate(viewedDate:)`), and creates **no `DayEntry`**. This replaced a stored `DayEntry`/`DayRecord` anchor that was a second source of truth: it disagreed with `meetingAt` from the moment of creation (adding a meeting while viewing Tuesday stamped `now` = Thursday but filed it under Tuesday) and never moved when the date was corrected. Legacy meeting `DayEntry` rows are left in place, unread; `gbpDiaryApp`'s launch sweep still clears any dangling onto a deleted `Minutes`. `MeetingDeleteButton` deletes the `Minutes` (plus any legacy entry pointing at it) behind a confirmation alert. The meeting's one-line summary is stored on `Minutes.summary`, edited inline in the diary row (tapping the row line edits the summary; it no longer opens the meeting). The **"Minutes" chip** opens the meeting in a **new workspace tab** (`MinutesDetailView`), a single unified editor for both metadata (summary, projects, time, duration, attendees, laid out compactly) and the minutes markdown. `MinutesEditorSheet` remains only for quick new-meeting creation.
 
 **Import a meeting from the macOS Calendar (macOS only).** Meeting import (EventKit → `CalendarService`, `CalendarEventImport`, `AttendeeMatcher`, the `resolve(granted:)` first-grant gotcha, and the calendars entitlement) is documented in the **`calendar-import`** skill (`.claude/skills/calendar-import/SKILL.md`). Load it before working on calendar/meeting import.
 
@@ -1126,6 +1127,7 @@ Maintain this table and keep it current whenever this file changes behavior rule
 | `TimeFormat.short(hours:)` renders minute-scale email time: "Nm" under an hour, "Nh" for whole hours, else "Hh Mm"; a tiny non-zero value rounds up to "1m"; 0 → "0m" | Email time-logging / activity | gbpDiaryTests/Domain/TimeFormatTests.swift | `short_zero_isZeroMinutes`, `short_tinyValue_roundsUpToOneMinute`, `short_minutesUnderAnHour`, `short_wholeHours`, `short_mixedHoursAndMinutes` |
 | Timesheet includes only completed tasks with duration in selected interval | Timesheet | gbpDiaryTests/Domain/TimesheetComputationTests.swift | `tasksInRange_requiresCompletedAtAndDuration` |
 | Scheduled filter uses `scheduledAt` in `[dayStart, dayEnd)` and todo/started status | Day view sections | gbpDiaryTests/Domain/DayTaskFilteringTests.swift | `scheduled_requiresTodoOrStartedAndWithinDayBounds`, `scheduled_excludesTasksAlreadyInEntries` |
+| Meeting day membership is derived, never stored: `DayMeetingFiltering.meetings(on:from:meetingAt:)` returns the meetings whose own `meetingAt` falls in `WeekendPolicy.workRange(for: date)`, earliest first — so a meeting shows on the day it says (a Thursday meeting never on Tuesday), **re-dating it moves it between days**, a weekend meeting folds back into Friday and never onto the following Monday, and an empty store is empty | Day view sections / meetings | `gbpDiaryTests/Domain/DayMeetingFilteringTests.swift` | `aMeetingAppearsOnTheDayItSaysItIsOn`, `aThursdayMeetingIsNotOnTuesday`, `reDatingMovesTheMeetingBetweenDays`, `orderedByStartTime`, `aWeekendMeetingFoldsBackIntoFriday`, `emptyInput_isEmpty` |
 | Inbox filter: open (todo/started), top-level (parent == nil), `needsTriage` — enriching no longer removes a task, only Review does | Task inbox / triage | gbpDiaryTests/Domain/DayTaskFilteringTests.swift | `inbox_includesUntriagedTopLevelActiveTasks`, `inbox_includesStartedButExcludesOtherStatuses` |
 | Task inbox flag: a freshly `init`-ed Task has `needsTriage == true`; `markReviewed()` clears it (and is a no-op / doesn't bump `updatedAt` when already reviewed) | Task inbox / triage | `gbpDiaryTests/Models/TaskStateTransitionTests.swift` | `newTask_needsTriageByDefault`, `markReviewed_clearsNeedsTriage`, `markReviewed_noOpWhenAlreadyReviewed` |
 | Diary task-panel buckets: `DayTaskBuckets.partition(allTasks:date:)` splits into mutually-exclusive `inbox` (untriaged, open, top-level) and — for triaged, open, top-level tasks — the **board lanes first** (`planHorizon` → `today`/`thisWeek`/`maybe`, ordered by `planSortOrder`, stable on ties), which **win over every date-derived bucket** so a planned task appears once; then `overdue → dueToday → inProgress(.started) → scheduled(today) → todo` by priority (`todo` is the catch-all so undated tasks stay visible); the due/scheduled "today window" is `WeekendPolicy.forwardRange(for: date)`, so on a Monday weekend-dated due/scheduled tasks are due-today/scheduled (not overdue); completed/subtasks excluded; a **parked follow-up stays visible** (ranked last, not hidden); empty → empty | Diary task panel | `gbpDiaryTests/Domain/DayTaskBucketsTests.swift` | `emptyInput_isEmpty`, `inbox_isUntriagedTopLevelOpen`, `actionBuckets_assignByPriority`, `mutuallyExclusive_overdueWinsOverStarted`, `boardLanes_takePriorityOverDateBuckets`, `lanes_orderByPlanSortOrder_stableOnTies`, `placedStandingTask_isStillExcluded`, `parkedFollowUpTasks_stayVisibleInToDo`, `completedAndSubtasks_excludedEverywhere`, `mondayWindow_absorbsWeekendDueAndScheduled` |

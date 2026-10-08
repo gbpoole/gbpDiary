@@ -47,6 +47,7 @@ struct DayPageContent: View {
     @Query(sort: \EmailMessage.date, order: .reverse) private var allEmails: [EmailMessage]
     @Query private var allConversations: [EmailConversation]
     @Query private var allPeople: [Person]
+    @Query(sort: \Minutes.meetingAt) private var allMeetings: [Minutes]
     @State private var reconcilingConversation: EmailConversation?
 
     // Weekend folding: inbound content (received mail) folds forward into Monday; work (time entries,
@@ -148,15 +149,15 @@ struct DayPageContent: View {
         }.sorted { ($0.completedAt ?? .distantPast) < ($1.completedAt ?? .distantPast) }
     }
 
-    private var dayMeetings: [DayEntry] {
-        // A meeting entry can outlive its Minutes (a deleted-in-context object, or — after relaunch — a
-        // dangling reference to a row that no longer exists). Reading ANY backing property (meetingAt) on
-        // such a reference traps and crash-loops the diary. So validate by IDENTITY against the live
-        // Minutes set (persistentModelID doesn't fault) and drop invalid entries before sorting.
-        let live = Set((try? modelContext.fetch(FetchDescriptor<Minutes>()))?.map(\.persistentModelID) ?? [])
-        return (dayRecord?.entries ?? [])
-            .filter { $0.kind == .meeting && ($0.minutes.map { live.contains($0.persistentModelID) } ?? false) }
-            .sorted { ($0.minutes?.meetingAt ?? .distantPast) < ($1.minutes?.meetingAt ?? .distantPast) }
+    // A meeting's day is derived from its OWN `meetingAt`, never from stored membership: it belongs to the
+    // day it says it does, and re-dating it moves it. It used to be anchored by a `DayEntry` on a
+    // `DayRecord`, which could disagree with `meetingAt` from the moment of creation and never moved when
+    // the date was edited. `workRange` so a weekend meeting folds back into Friday like all other work.
+    // Deriving membership also needs no migration: existing meetings simply land on their own date. Their
+    // legacy meeting `DayEntry` rows are left in place but never read again (the launch sweep in
+    // `gbpDiaryApp` still clears any that dangle onto a deleted `Minutes`).
+    private var dayMeetings: [Minutes] {
+        DayMeetingFiltering.meetings(on: date, from: allMeetings, meetingAt: \.meetingAt)
     }
 
     private var dayNotes: [Note] {
