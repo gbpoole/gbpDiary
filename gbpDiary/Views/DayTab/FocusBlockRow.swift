@@ -18,15 +18,19 @@ struct FocusBlockRow: View {
         entries.sorted { $0.date < $1.date }
     }
 
-    private var netHours: Double {
+    /// Hours logged INSIDE this block (task entries + the in-slot portion of its meetings + email time).
+    private var loggedInsideHours: Double {
         let taskHours = entries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
         // A meeting counts only for the portion that falls inside this block's slot (so a meeting spanning the
         // 12:30 boundary isn't double-counted at full duration in both morning and afternoon).
         let meetingHours = meetings.compactMap(\.minutes).reduce(0.0) { sum, m in
             slotHours(for: m) + sum
         }
-        return FocusBlockMath.netHours(capacity: block.duration.hoursNormalized,
-                                       loggedHours: taskHours + meetingHours + emailHours)
+        return taskHours + meetingHours + emailHours
+    }
+
+    private var netHours: Double {
+        FocusBlockMath.netHours(capacity: block.duration.hoursNormalized, loggedHours: loggedInsideHours)
     }
 
     private func slotHours(for m: Minutes) -> Double {
@@ -118,9 +122,11 @@ struct FocusBlockRow: View {
     private var durationChips: some View {
         HStack(spacing: 4) {
             Chip(label: block.slot.displayName, color: AppTheme.project)
-            if netHours > 0 && (!blockActivities.isEmpty || !meetings.isEmpty || emailHours > 0) {
-                let netDur = Duration(value: netHours, unit: .h)
-                Chip(label: netDur.displayString, color: AppTheme.duration)
+            // Always state the block's time: its capacity is hours the Timesheet credits to the backing
+            // task, so a block with nothing logged inside must not render as a row with no number.
+            if let label = FocusBlockMath.timeChipLabel(capacity: block.duration.hoursNormalized,
+                                                        loggedHours: loggedInsideHours) {
+                Chip(label: label, color: AppTheme.duration)
             }
         }
     }
