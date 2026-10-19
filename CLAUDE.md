@@ -60,6 +60,19 @@ Note: opening Project / Person / Institution / Document detail from their list v
 
 All persistence is SwiftData. Models live in `gbpDiary/Models/`. The `ModelContainer` is created in `gbpDiaryApp` and injected via `.modelContainer()`.
 
+**External read-only access (MCP).** `tools/gbpdiary_mcp.py` is a stdlib-only MCP server (stdio JSON-RPC)
+that exposes the SwiftData store to a local agent — registered for `opencode` under `mcp.gbpdiary`, driven by
+a local Ollama model. It opens the live store `mode=ro` and accepts a **single SELECT/WITH** only: writing
+from outside would bypass every invariant the app maintains (`needsTriage`, `updatedAt`, the meeting-day
+anchor, relationship inverses). Twelve TEMP views hide Core Data's storage (Z-prefixed tables, the
+`+978307200` epoch, `Duration` split across `ZVALUE`/`ZUNIT`/`ZHOURSNORMALIZED`, join tables like
+`Z_10PROJECTS`), and each model's `@Attribute(.unique) id` BLOB is hex-split back into its UUID string.
+Tools: `schema` · `query` · `search` · `counts`. **RULE: the MCP server must never compute time.** Hours in
+those views are raw records; the canonical rules (block net, weekend fold, meeting slot-split, source-key
+dedupe, conversation-owned email time) live in `TimeLedger`/`TimeLedgerProjection`, so a bare `SUM(hours)`
+there disagrees with the Timesheet — hence the `TIME_WARNING` carried in the server instructions, the
+`query` description, `schema` output, and auto-appended to any hours-bearing result.
+
 **Obsidian import** is staged and documented in the **`obsidian-import`** skill (`.claude/skills/obsidian-import/SKILL.md`) — the JSON bundle format, `ObsidianBundleImporter`, `tools/obsidian_import_bundle.py`, and the `--import-obsidian-bundle` launch args. Load it before working on the import pipeline.
 
 **`AttachmentStorage`** (`gbpDiary/Models/AttachmentStorage.swift`) is a pure domain helper (no SwiftData) that manages the on-disk location for attachment files. On macOS files are copied to `~/Library/Application Support/Attachments/`; on iOS to the app's `Documents/Attachments/`. When iCloud is enabled, uncomment the ubiquity-container block in `attachmentsDirectory` and run a one-time migration.
