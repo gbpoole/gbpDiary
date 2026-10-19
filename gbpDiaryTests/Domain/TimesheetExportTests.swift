@@ -45,6 +45,19 @@ struct TimesheetExportTests {
         #expect(md.contains("**Meetings**"))
     }
 
+    @Test func composeMarkdown_linksTheContentTreeWhenThereIsOne() {
+        let report = TimesheetReport(nodes: [
+            TimesheetNode(id: UUID(), key: "a", name: "NODES", ownHours: 3, distinctWeeks: 1,
+                          rows: [row("x", 3)]),
+        ], interval: d(5)..<d(10))
+        let linked = TimesheetExport.composeMarkdown(report: report, ledger: ledger(3), periodLabel: "p",
+                                                     contentDirectory: "content")
+        #expect(linked.contains("[content/README.md](content/README.md)"))
+        // A report-only export has no tree to point at.
+        #expect(!TimesheetExport.composeMarkdown(report: report, ledger: ledger(3), periodLabel: "p")
+            .contains("_Full content:"))
+    }
+
     @Test func composeMarkdown_includesProseWhenCached() {
         let id = UUID()
         let report = TimesheetReport(nodes: [
@@ -89,5 +102,16 @@ struct TimesheetExportTests {
         #expect(TimesheetExport.fileName(periodLabel: "5 Jan 2026 – 9 Jan 2026")
                 == "Timesheet 5 Jan 2026 - 9 Jan 2026.md")
         #expect(TimesheetExport.fileName(periodLabel: "") == "Timesheet.md")
+    }
+
+    // An export is a FOLDER: NSSavePanel grants exactly the URL you name, so a sibling file or directory is
+    // refused by the sandbox (the .md saved and the .json was denied). Everything lives inside one URL.
+    @Test func folderName_isTheFileNameWithoutAnExtension() {
+        #expect(TimesheetExport.folderName(periodLabel: "5 Jan 2026 – 9 Jan 2026")
+                == "Timesheet 5 Jan 2026 - 9 Jan 2026")
+        #expect(TimesheetExport.folderName(periodLabel: "") == "Timesheet")
+        #expect(TimesheetExport.summaryFileName == "summary.md")
+        #expect(TimesheetExport.dataFileName == "data.json")
+        #expect(TimesheetExport.contentDirectoryName == "content")
     }
 }

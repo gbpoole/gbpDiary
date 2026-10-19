@@ -16,6 +16,20 @@ struct TimesheetView: View {
     @State private var selectedTask: Task?
     @State private var exportError: String?
     @State private var copiedMarkdown = false
+    @State private var bodyRun: TimesheetBodyRun?
+    @State private var pendingTree: PendingTree?
+
+    /// `sheet(item:)` needs an Identifiable value; the run itself is a reference type.
+    private struct RunBox: Identifiable {
+        let run: TimesheetBodyRun
+        var id: Int { ObjectIdentifier(run).hashValue }
+    }
+
+    /// The tree waiting on its email bodies, held while the progress sheet runs.
+    private struct PendingTree {
+        let content: TimesheetExportSnapshot.FullContent
+        let url: URL
+    }
     private let answerer = FoundationModelsChatAnswerer()
 
     @State private var selectedRange: TimesheetRange = .thisWeek
@@ -43,9 +57,32 @@ struct TimesheetView: View {
     // Per-project hours paired with the rows that account for them (and the mined prose). One assembler,
     // shared with Chat's time-report lens.
     private var report: TimesheetReport {
+        TimesheetFilter.apply(unfilteredReport, selected: selectedProjectIDs)
+    }
+
+    private var unfilteredReport: TimesheetReport {
         TimesheetProjection.report(interval: interval, tasks: allTasks, conversations: allConversations,
                                    meetings: allMeetings, focusBlocks: allFocusBlocks,
                                    notes: allNotes, projects: projects)
+    }
+
+    /// The project filter lives on the page's persisted `ListPageFilter`, like every other list page's, so
+    /// it survives tab switches and relaunches. Ids are stored as `project.<uuid>`.
+    private var filterState: ListPageFilter { workspace.pageFilter(for: .timesheet) }
+
+    private var selectedProjectIDs: Set<UUID> {
+        Set(filterState.activeFilterIds.compactMap { id in
+            id.hasPrefix("project.") ? UUID(uuidString: String(id.dropFirst("project.".count))) : nil
+        })
+    }
+
+    private var selectedProjects: [Project] {
+        let ids = selectedProjectIDs
+        return projects.filter { ids.contains($0.id) }
+    }
+
+    private func setSelectedProjects(_ chosen: [Project]) {
+        filterState.activeFilterIds = Set(chosen.map { "project.\($0.id.uuidString)" })
     }
 
     /// The cached prose for this period, by node. Written by `TimesheetSummaryDriver`, read here.
@@ -81,6 +118,14 @@ struct TimesheetView: View {
         .sheet(item: $selectedTask) { task in
             TaskEditorSheet(task: task, defaultDate: task.completedAt ?? Date())
         }
+        .sheet(item: Binding(get: { bodyRun.map { RunBox(run: $0) } },
+                             set: { if $0 == nil { bodyRun = nil } })) { box in
+            TimesheetExportProgressSheet(run: box.run, mailService: mailService) { outcomes in
+                if let pending = pendingTree { writeTree(content: pending.content, bodies: outcomes, to: pending.url) }
+                pendingTree = nil
+                bodyRun = nil
+            }
+        }
         .alert("Couldn't export", isPresented: .constant(exportError != nil)) {
             Button("OK") { exportError = nil }
         } message: { Text(exportError ?? "") }
@@ -102,6 +147,18 @@ struct TimesheetView: View {
                 Text(TimesheetExport.periodLabel(interval))
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Divider().frame(height: 14)
+                // Narrows the page AND everything it exports. Selecting a project takes its subprojects.
+                FuzzyPickerField(
+                    allItems: projects,
+                    selected: Binding(get: { selectedProjects }, set: { setSelectedProjects($0) }),
+                    label: \.name,
+                    chipColor: AppTheme.project,
+                    placeholder: "Search projects…",
+                    tapArea: true,
+                    emptyLabel: "All projects"
+                )
+                .frame(maxWidth: 320)
                 Spacer()
                 Button {
                     copyMarkdown()
@@ -111,12 +168,15 @@ struct TimesheetView: View {
                 }
                 .buttonStyle(.borderless)
                 #if os(macOS)
-                Button {
-                    exportMarkdown()
+                Menu {
+                    Button("Report…") { exportMarkdown(fullContent: false, bodies: false) }
+                    Button("Full content…") { exportMarkdown(fullContent: true, bodies: false) }
+                    Button("Full content with email bodies…") { exportMarkdown(fullContent: true, bodies: true) }
                 } label: {
-                    Label("Export…", systemImage: "square.and.arrow.down")
+                    Label("Export", systemImage: "square.and.arrow.down")
                 }
-                .buttonStyle(.borderless)
+                .menuStyle(.borderlessButton)
+                .fixedSize()
                 #endif
             }
             .labelsHidden()
@@ -139,19 +199,84 @@ struct TimesheetView: View {
     }
 
     #if os(macOS)
-    private func exportMarkdown() {
+    // The export is a FOLDER containing summary.md + data.json (+ content/ for a full export).
+    //
+    // It has to be: NSSavePanel grants the sandbox access to exactly the URL you name, so writing a
+    // sibling file or creating a sibling directory is refused — which is what happened the first time this
+    // ran (the .md saved, the .json was denied). Naming a folder puts every artefact under the one granted
+    // URL. It also gives an agent a predictable shape: point it at the folder and the names are fixed.
+    //
+    // `fullContent` adds the markdown tree an agent can read directly; `bodies` additionally reads each
+    // relevant message's body from local Mail at export time (serial, slow, shown in a progress sheet) and
+    // writes it into that tree ONLY — never into data.json, which is what an external reader picks up.
+    private func exportMarkdown(fullContent: Bool, bodies: Bool) {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = TimesheetExport.fileName(
+        panel.nameFieldStringValue = TimesheetExport.folderName(
             periodLabel: TimesheetExport.periodLabel(interval))
+        panel.nameFieldLabel = "Export folder:"
+        panel.message = "Choose where to create the export folder."
+        panel.prompt = "Export"
         panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+
+        let treeURL = folder.appendingPathComponent(TimesheetExport.contentDirectoryName, isDirectory: true)
+        let jsonURL = folder.appendingPathComponent(TimesheetExport.dataFileName)
         do {
-            try markdown.write(to: url, atomically: true, encoding: .utf8)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            // The fast path first, so it survives whatever the body fetch does.
+            try TimesheetExport.composeMarkdown(
+                report: report, ledger: ledger, periodLabel: TimesheetExport.periodLabel(interval),
+                prose: proseByNode,
+                contentDirectory: fullContent ? TimesheetExport.contentDirectoryName : nil)
+                .write(to: folder.appendingPathComponent(TimesheetExport.summaryFileName),
+                       atomically: true, encoding: .utf8)
+            try TimesheetDataExport.write(dataSnapshot(fullContent: fullContent), to: jsonURL)
+            AppSettingsStore.lastTimesheetExportPath = jsonURL.path
+        } catch {
+            exportError = error.localizedDescription
+            return
+        }
+        guard fullContent else { return }
+
+        let content = TimesheetFilter.apply(
+            TimesheetContentProjection.build(interval: interval, meetings: allMeetings,
+                                             notes: allNotes, conversations: allConversations),
+            projectNames: TimesheetFilter.projectNames(in: unfilteredReport, selected: selectedProjectIDs))
+        guard bodies else {
+            writeTree(content: content, bodies: [:], to: treeURL)
+            return
+        }
+        let resolved = TimesheetBodyPlanProjection.resolve(content: content,
+                                                           conversations: allConversations,
+                                                           emails: allEmails)
+        guard !resolved.messages.isEmpty else {
+            writeTree(content: content, bodies: resolved.plan.skipped, to: treeURL)
+            return
+        }
+        pendingTree = PendingTree(content: content, url: treeURL)
+        bodyRun = TimesheetBodyRun(messages: resolved.messages, preSkipped: resolved.plan.skipped)
+    }
+
+    private func writeTree(content: TimesheetExportSnapshot.FullContent,
+                           bodies: [UUID: TimesheetEmailBody], to url: URL) {
+        do {
+            let files = TimesheetContentTree.compose(
+                content: content, periodLabel: TimesheetExport.periodLabel(interval), bodies: bodies)
+            try TimesheetContentTreeWriter.write(files, to: url)
         } catch {
             exportError = error.localizedDescription
         }
     }
     #endif
+
+    private func dataSnapshot(fullContent: Bool) -> TimesheetExportSnapshot {
+        TimesheetDataExport.snapshot(
+            report: report, ledger: ledger, interval: interval,
+            periodLabel: TimesheetExport.periodLabel(interval), prose: proseByNode,
+            content: fullContent ? TimesheetContentProjection.build(
+                interval: interval, meetings: allMeetings, notes: allNotes,
+                conversations: allConversations) : nil)
+    }
 
     private func totalCard(ledger: LedgerResult, report: TimesheetReport) -> some View {
         // Over-logging (more activity inside a block than its capacity) legitimately makes the rows sum
@@ -160,17 +285,27 @@ struct TimesheetView: View {
         return GroupBox("Total") {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(TimeFormat.hours(ledger.grandTotal))
+                    // Filtered, the headline is the selected projects' own hours — otherwise it would
+                    // report a period total for work the page isn't showing.
+                    let filtered = !selectedProjectIDs.isEmpty
+                    let headline = filtered ? report.totalOwnHours : ledger.grandTotal
+                    Text(TimeFormat.hours(headline))
                         .font(.largeTitle.bold())
-                    Text("\(TimeFormat.days(ledger.grandTotal))  ·  \(Self.countsLine(report))")
+                    Text("\(TimeFormat.days(headline))  ·  \(Self.countsLine(report))")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                    if filtered {
+                        Text("\(selectedProjects.count) project\(selectedProjects.count == 1 ? "" : "s")"
+                             + " · of \(TimeFormat.hours(ledger.grandTotal)) in this period")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if ledger.overtime > 0 {
                         Text("Includes \(TimeFormat.hours(ledger.overtime)) overtime")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    if overLogged > 0.05 {
+                    if overLogged > 0.05, selectedProjectIDs.isEmpty {
                         Text("+\(TimeFormat.hours(overLogged)) over-logged — activity inside focus blocks exceeds their capacity")
                             .font(.caption)
                             .foregroundStyle(.orange)

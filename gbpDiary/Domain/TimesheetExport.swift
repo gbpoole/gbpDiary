@@ -8,8 +8,10 @@ import Foundation
 nonisolated enum TimesheetExport {
 
     /// `# Timesheet — 5 Jan 2026 – 9 Jan 2026`, the totals, then one section per project.
+    /// `contentDirectory`, when given, adds a line pointing at the markdown tree written beside this file.
     static func composeMarkdown(report: TimesheetReport, ledger: LedgerResult, periodLabel: String,
-                                prose: [UUID: String] = [:]) -> String {
+                                prose: [UUID: String] = [:],
+                                contentDirectory: String? = nil) -> String {
         var out: [String] = ["# Timesheet — \(periodLabel)", ""]
 
         out.append("**Total:** \(TimeFormat.hours(ledger.grandTotal)) · \(TimeFormat.days(ledger.grandTotal))")
@@ -20,6 +22,9 @@ nonisolated enum TimesheetExport {
         if overLogged > 0.05 {
             out.append("**Over-logged:** +\(TimeFormat.hours(overLogged)) — activity inside focus blocks "
                        + "exceeds their capacity, so the rows below sum higher than the total.")
+        }
+        if let contentDirectory {
+            out.append("_Full content: [\(contentDirectory)/README.md](\(contentDirectory)/README.md)_")
         }
         out.append("")
 
@@ -82,10 +87,21 @@ nonisolated enum TimesheetExport {
 
     /// A safe file base name, mirroring `MinutesExport.exportBaseName`.
     static func fileName(periodLabel: String) -> String {
+        folderName(periodLabel: periodLabel) + ".md"
+    }
+
+    /// The export is a FOLDER, not a loose file: `NSSavePanel` grants access to exactly the URL you name,
+    /// so a sibling write (the JSON) or a sibling directory (the content tree) is refused by the sandbox —
+    /// which is precisely what happened. Everything therefore lives inside the one chosen URL.
+    static func folderName(periodLabel: String) -> String {
         let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: " -_"))
         let cleaned = String(periodLabel.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" })
             .trimmingCharacters(in: .whitespaces)
-        let base = cleaned.isEmpty ? "Timesheet" : "Timesheet \(cleaned)"
-        return base + ".md"
+        return cleaned.isEmpty ? "Timesheet" : "Timesheet \(cleaned)"
     }
+
+    /// Fixed names inside the export folder, so an agent given the folder knows where everything is.
+    static let summaryFileName = "summary.md"
+    static let dataFileName = "data.json"
+    static let contentDirectoryName = "content"
 }

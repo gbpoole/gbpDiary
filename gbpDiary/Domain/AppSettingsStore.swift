@@ -26,6 +26,16 @@ enum AppSettingsStore {
         set { UserDefaults.standard.set(newValue.rawValue, forKey: pagePaletteKey) }
     }
 
+    private static let lastTimesheetExportKey = "timesheet.lastExportPath"
+
+    /// The JSON file written by the most recent Timesheet export. Exports go only where the user chose, so
+    /// nothing accumulates in the app container — this POINTER is how an external reader (the MCP server)
+    /// still finds the latest figures.
+    static var lastTimesheetExportPath: String? {
+        get { UserDefaults.standard.string(forKey: lastTimesheetExportKey) }
+        set { UserDefaults.standard.set(newValue, forKey: lastTimesheetExportKey) }
+    }
+
     private static let taskPanelShownKey = "diaryTaskPanelShown"
 
     /// Whether the diary's right-hand task panel is shown (defaults to true on first launch).

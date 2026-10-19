@@ -28,6 +28,7 @@ import json
 import os
 import re
 import sqlite3
+import subprocess
 import sys
 
 # Core Data stores timestamps as seconds since 2001-01-01.
@@ -38,12 +39,44 @@ DEFAULT_STORE = os.path.expanduser(
     "Application Support/default.store"
 )
 
+
+# Exports go only where the user chose, so nothing accumulates in the app container. The app records the
+# path of the JSON it last wrote; this is how an external reader finds it.
+LEGACY_SNAPSHOT = os.path.expanduser(
+    "~/Library/Containers/io.github.gbpoole.gbpDiary/Data/Library/"
+    "Application Support/Exports/timesheet-latest.json"
+)
+APP_DEFAULTS_DOMAIN = "io.github.gbpoole.gbpDiary"
+
+
+def _recorded_snapshot_path():
+    """The JSON written by the app's most recent Timesheet export, from its own preferences."""
+    try:
+        out = subprocess.run(["defaults", "read", APP_DEFAULTS_DOMAIN, "timesheet.lastExportPath"],
+                             capture_output=True, text=True, timeout=5)
+    except Exception:
+        return None
+    path = out.stdout.strip()
+    return path if path and os.path.exists(path) else None
+
+
+def resolve_snapshot(explicit=None):
+    """explicit argument -> environment override -> the app's recorded export -> the legacy fixed path."""
+    for candidate in (explicit,
+                      os.environ.get("GBPDIARY_TIMESHEET_SNAPSHOT"),
+                      _recorded_snapshot_path(),
+                      LEGACY_SNAPSHOT):
+        if candidate and os.path.exists(os.path.expanduser(candidate)):
+            return os.path.expanduser(candidate)
+    return None
+
 TIME_WARNING = (
     "TIME WARNING: hours in these views are RAW records. The app's reported time (the Timesheet) "
     "applies rules this database does not encode — focus-block net (capacity minus in-block logged "
     "time), weekend work folded back to Friday, meetings split across blocks by slot overlap, "
     "de-duplication by source key, and email time owned by the conversation. Do NOT sum hours here "
-    "and present it as time spent; it will disagree with the app. Report raw records as raw records."
+    "and present it as time spent; it will disagree with the app. Report raw records as raw records. "
+    "For time spent, call `timesheet_report` instead — it carries the app's own computed figures."
 )
 
 def _uuid(column: str) -> str:
@@ -313,7 +346,150 @@ def tool_counts(store: Store, _args: dict) -> str:
     return json.dumps(counts, indent=2)
 
 
+
+def tool_timesheet_report(_store: Store, args: dict) -> str:
+    """The app's OWN time figures, exported from the Timesheet page — the only trustworthy source of
+    hours here. Everything else in this server is raw records."""
+    path = resolve_snapshot(args.get("path"))
+    if path is None:
+        return ("No timesheet export was found. In gbpDiary open the Timesheet page, choose the period you "
+                "want, and use Export \u25b8 Report… (or Full content…) — that writes the authoritative "
+                "figures this tool reads, and records where they went. Until then, hours cannot be answered "
+                "correctly from this database.")
+    with open(path) as handle:
+        snap = json.load(handle)
+
+    if snap.get("formatVersion") != 1:
+        return f"Unsupported snapshot formatVersion {snap.get('formatVersion')!r}; this server expects 1."
+
+    project = (args.get("project") or "").strip().lower()
+    include_detail = bool(args.get("include_detail"))
+
+    def walk(nodes, depth=0, out=None):
+        out = [] if out is None else out
+        for node in nodes:
+            out.append((depth, node))
+            walk(node.get("children") or [], depth + 1, out)
+        return out
+
+    period, totals = snap["period"], snap["totals"]
+    # An export is a folder: data.json + summary.md + content/.
+    tree = os.path.join(os.path.dirname(path), "content")
+    if not os.path.isdir(tree):   # pre-folder exports wrote <base>_content beside <base>.json
+        tree = os.path.splitext(path)[0] + "_content"
+    lines = [
+        f"Source: {path}",
+    ] + ([f"Full content tree (read these markdown files directly): {tree}"]
+         if os.path.isdir(tree) else []) + [
+        f"Period: {period['label']}  ({period['start']} .. {period['end']} exclusive)",
+        f"Exported: {snap['generatedAt']}  — these are the app's computed figures, not raw sums.",
+        f"Total: {totals['hours']:.2f}h ({totals['days']:.2f}d); overtime {totals['overtimeHours']:.2f}h; "
+        f"standard {totals['standardHours']:.2f}h",
+    ]
+    if totals.get("overLoggedHours", 0) > 0.05:
+        lines.append(f"Over-logged by {totals['overLoggedHours']:.2f}h "
+                     "(activity inside focus blocks exceeds their capacity), so project hours sum higher "
+                     "than the total.")
+    lines.append("")
+
+    matched = 0
+    for depth, node in walk(snap.get("projects") or []):
+        if project and project not in node["name"].lower():
+            continue
+        matched += 1
+        pad = "  " * depth
+        suffix = ""
+        if abs(node["subtreeHours"] - node["hours"]) > 0.001:
+            suffix = f" (with subprojects {node['subtreeHours']:.2f}h)"
+        lines.append(f"{pad}{node['name']} — {node['hours']:.2f}h, "
+                     f"{node['distinctWeeks']} week(s){suffix}")
+        if node.get("summary"):
+            lines.append(f"{pad}  {node['summary']}")
+        if include_detail:
+            for row in node.get("rows") or []:
+                hours = f" {row['hours']:.2f}h" if row["hours"] else ""
+                lines.append(f"{pad}  • [{row['kind']}] {row['title']}{hours}")
+                for detail in row.get("details") or []:
+                    lines.append(f"{pad}    - {detail['text']} ({detail['hours']:.2f}h)")
+            for note in node.get("notes") or []:
+                lines.append(f"{pad}  • note: {note['title']}: {note['text'][:300]}")
+
+    if project and matched == 0:
+        names = ", ".join(n["name"] for _, n in walk(snap.get("projects") or []))
+        lines.append(f"No project matching {project!r} in this period. Present: {names}")
+
+    content = snap.get("content")
+    if args.get("include_content"):
+        if not content:
+            lines.append("")
+            lines.append("No full content in this snapshot — it was exported as Export ▸ Report…. "
+                         "Re-export with Export ▸ Full content… to include meeting minutes, note "
+                         "markdown and the email correspondence.")
+        else:
+            lines.append("")
+            lines.append(content.get("notice", ""))
+            for meeting in content.get("meetings") or []:
+                if project and project not in " ".join(meeting.get("projects") or []).lower():
+                    continue
+                lines.append("")
+                lines.append(f"### Meeting: {meeting.get('summary') or '(no summary)'} "
+                             f"({meeting['meetingAt']}) — {', '.join(meeting.get('projects') or []) or 'no project'}")
+                if meeting.get("attendees"):
+                    lines.append(f"Attendees: {', '.join(meeting['attendees'])}")
+                if meeting.get("minutesMarkdown"):
+                    lines.append(meeting["minutesMarkdown"])
+            for note in content.get("notes") or []:
+                if project and project != (note.get("project") or "").lower():
+                    continue
+                lines.append("")
+                lines.append(f"### Note: {note.get('title') or '(untitled)'} "
+                             f"({note['updatedAt']}) — {note.get('project') or 'no project'}")
+                lines.append(note.get("markdown", ""))
+            for convo in content.get("conversations") or []:
+                if project and project not in " ".join(convo.get("projects") or []).lower():
+                    continue
+                lines.append("")
+                lines.append(f"### Email thread: {convo.get('subject')} — "
+                             f"{', '.join(convo.get('projects') or []) or 'no project'}"
+                             f" (importance {convo.get('importance')}, "
+                             f"{convo.get('loggedHours', 0):.2f}h logged)")
+                for message in convo.get("messages") or []:
+                    lines.append(f"- {message['direction']} {message['date']} from {message['from']}: "
+                                 f"{message.get('summary') or message.get('subject')}")
+    elif content:
+        lines.append("")
+        lines.append("This snapshot also carries full content (meeting minutes, note markdown, email "
+                     "correspondence). Call again with include_content=true to read it.")
+    return "\n".join(lines)
+
+
 TOOLS = [
+    {
+        "name": "timesheet_report",
+        "description": (
+            "The app's OWN computed time figures for the period last exported from the Timesheet page "
+            "(per project, nested, with the generated prose). USE THIS for any question about time spent — "
+            "the `query` tool's hours are raw records and will disagree."
+        ),
+        "handler": tool_timesheet_report,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "project": {"type": "string", "description": "Only projects whose name contains this."},
+                "include_detail": {"type": "boolean",
+                                   "description": "Include the rows and notes that account for the hours."},
+                "path": {"type": "string",
+                         "description": ("A specific exported timesheet JSON to read. Defaults to the "
+                                         "app's most recent export.")},
+                "include_content": {"type": "boolean",
+                                    "description": ("Include the full text behind the period — complete "
+                                                    "meeting minutes, note markdown and email "
+                                                    "correspondence (subjects + on-device summaries; "
+                                                    "bodies are never stored). Requires a snapshot "
+                                                    "exported with Export > Full content.")},
+            },
+        },
+    },
     {
         "name": "schema",
         "description": "List the readable views available, their columns and row counts. Call this first.",
