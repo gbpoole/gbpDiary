@@ -109,6 +109,29 @@ enum CalendarEventImport {
               let end = calendar.date(byAdding: .day, value: daysAfter + 1, to: base) else { return nil }
         return (start, end)
     }
+
+    /// The windows to query so the picker is never empty for the wrong reason.
+    ///
+    /// A new meeting is stamped on the **viewed diary day**, so that day is the right anchor — you are
+    /// usually logging a meeting that happened on the day you are looking at. But when you are reviewing
+    /// an earlier (or later) day, the event you want may well be today's, and a single window around the
+    /// anchor silently excludes it. So: the anchor's window always, plus today's window when `now` falls
+    /// outside it. Merged into one window when they touch or overlap, so a caller never queries the same
+    /// range twice. Callers should order results by proximity to the **anchor**, not to `now`, or today's
+    /// events jump the queue on a day you are not looking at.
+    static func importWindows(around day: Date, now: Date, daysBefore: Int, daysAfter: Int,
+                              calendar: Calendar = .current) -> [(start: Date, end: Date)] {
+        guard let anchor = importWindow(around: day, daysBefore: daysBefore, daysAfter: daysAfter,
+                                        calendar: calendar) else { return [] }
+        guard let today = importWindow(around: now, daysBefore: daysBefore, daysAfter: daysAfter,
+                                       calendar: calendar) else { return [anchor] }
+        if now >= anchor.start && now < anchor.end { return [anchor] }
+        let (first, second) = anchor.start <= today.start ? (anchor, today) : (today, anchor)
+        // Adjacent or overlapping ranges collapse — with a +/-3 day window either side, an anchor a week
+        // out is the only case that really stays separate.
+        if second.start <= first.end { return [(start: first.start, end: max(first.end, second.end))] }
+        return [first, second]
+    }
 }
 
 enum AttendeeMatcher {

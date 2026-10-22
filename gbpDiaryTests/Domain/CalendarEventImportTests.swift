@@ -132,4 +132,56 @@ struct CalendarEventImportTests {
         #expect(atNoon?.start == atMidnight?.start)
         #expect(atNoon?.end == atMidnight?.end)
     }
+
+    // MARK: - importWindows (anchor + today)
+
+    private func day(_ d: Int, month: Int = 1) -> Date {
+        calendar.date(from: DateComponents(year: 2024, month: month, day: d))!
+    }
+
+    @Test func importWindows_nowInsideAnchorWindow_isJustThatWindow() {
+        // Anchored on the 15th (±3 → [12, 19)) with now on the 16th: one window, nothing added.
+        let windows = CalendarEventImport.importWindows(around: date(hour: 8), now: day(16),
+                                                        daysBefore: 3, daysAfter: 3, calendar: calendar)
+        #expect(windows.count == 1)
+        #expect(windows.first?.start == day(12))
+        #expect(windows.first?.end == day(19))
+    }
+
+    @Test func importWindows_distantNow_addsTodaysWindow() {
+        // Reviewing the 15th on the 31st: today's events must still be reachable, as a second window.
+        let windows = CalendarEventImport.importWindows(around: date(hour: 8), now: day(31),
+                                                        daysBefore: 3, daysAfter: 3, calendar: calendar)
+        #expect(windows.count == 2)
+        #expect(windows[0].start == day(12))
+        #expect(windows[0].end == day(19))
+        #expect(windows[1].start == day(28))
+        #expect(windows[1].end == day(4, month: 2))
+    }
+
+    @Test func importWindows_earlierNow_ordersWindowsByStart() {
+        // An anchor in the future (planning ahead) puts today's window first.
+        let windows = CalendarEventImport.importWindows(around: date(hour: 8), now: day(1),
+                                                        daysBefore: 3, daysAfter: 3, calendar: calendar)
+        #expect(windows.count == 2)
+        #expect(windows[0].start < windows[1].start)
+        #expect(windows[1].start == day(12))
+    }
+
+    @Test func importWindows_touchingWindows_collapseToOne() {
+        // Anchor [12,19) and today [19,26) abut exactly — one range, never the same day queried twice.
+        let windows = CalendarEventImport.importWindows(around: date(hour: 8), now: day(22),
+                                                        daysBefore: 3, daysAfter: 3, calendar: calendar)
+        #expect(windows.count == 1)
+        #expect(windows.first?.start == day(12))
+        #expect(windows.first?.end == day(26))
+    }
+
+    @Test func importWindows_overlappingWindows_collapseToTheUnion() {
+        let windows = CalendarEventImport.importWindows(around: date(hour: 8), now: day(20),
+                                                        daysBefore: 3, daysAfter: 3, calendar: calendar)
+        #expect(windows.count == 1)
+        #expect(windows.first?.start == day(12))
+        #expect(windows.first?.end == day(24))
+    }
 }

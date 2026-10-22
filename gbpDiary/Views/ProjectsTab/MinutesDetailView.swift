@@ -33,9 +33,14 @@ struct MinutesDetailView: View {
     @State private var minutesInsertion: MarkdownDocumentEditor.EditorInsertionRequest?
     #if os(macOS)
     // Calendar import (new meetings only): pick an event to populate the fields.
-    @State private var calendarService = CalendarService()
+    // One app-wide store (see CalendarService.shared) — a per-view store answers its first query empty.
+    private let calendarService = CalendarService.shared
     @State private var calendarAccess: CalendarAccess = .notDetermined
     @State private var calendarEvents: [CalendarEventDraft] = []
+    // What the last fetch asked for and got — stated under the picker when it came back empty.
+    @State private var calendarDiagnostics: CalendarImportDiagnostics?
+    @State private var calendarLoadAttempt = 0            // bumped by Retry to re-run the load task
+    @State private var isLoadingCalendar = false
     @State private var importedEvent: CalendarEventDraft?
     // Scraped attendees that matched no existing Person — flagged for reconciliation, session-only.
     @State private var unresolvedAttendees: [CalendarAttendee] = []
@@ -181,13 +186,13 @@ struct MinutesDetailView: View {
                 let matchesPreset = durationPresets.contains { abs($0.hours - d.hoursNormalized) < 0.01 }
                 durationText = matchesPreset ? "" : d.displayString
             }
-            #if os(macOS)
-            if isNew { setupCalendarImport() }
-            #endif
         }
         #if os(macOS)
-        .onChange(of: minutes.meetingAt) {
-            if isNew && calendarAccess == .authorized { loadCalendarEvents() }
+        // Loading is keyed on the anchor so re-dating the meeting re-queries, and lives in a task rather
+        // than onAppear so it can wait for EventKit (see loadCalendarEvents).
+        .task(id: CalendarLoadKey(anchor: minutes.meetingAt, attempt: calendarLoadAttempt)) {
+            guard isNew else { return }
+            await setupCalendarImport()
         }
         #endif
         .onDisappear {
@@ -488,11 +493,34 @@ struct MinutesDetailView: View {
             .onChange(of: importedEvent) { _, ev in
                 if let ev { applyImportedEvent(ev); importedEvent = nil }
             }
+            calendarStatusLine
         }
     }
 
+    // Shown only when there is nothing to pick: an empty EventKit fetch is indistinguishable from an
+    // empty stretch of calendar, so say which it was rather than leaving a blank picker.
+    @ViewBuilder private var calendarStatusLine: some View {
+        if calendarEvents.isEmpty {
+            HStack(spacing: 6) {
+                if isLoadingCalendar {
+                    ProgressView().controlSize(.small)
+                    Text("Reading calendar…")
+                } else {
+                    Text(calendarDiagnostics.map { "No events — \($0.summary())" } ?? "No calendar events")
+                    Button("Retry") { calendarLoadAttempt += 1 }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(AppTheme.accent)
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    // Closest to the meeting's own date first. Sorting by `now` instead put today's events at the top of
+    // a list queried around a day you are reviewing, burying the ones you came for.
     private var sortedImportEvents: [CalendarEventDraft] {
-        CalendarEventImport.sortedByProximity(calendarEvents, to: Date())
+        CalendarEventImport.sortedByProximity(calendarEvents, to: minutes.meetingAt)
     }
 
     // Default calendar filters (from Settings) intersected with the calendars that actually have
@@ -525,26 +553,67 @@ struct MinutesDetailView: View {
         return "\(title) · \(when)"
     }
 
-    private func setupCalendarImport() {
+    private func setupCalendarImport() async {
         calendarAccess = calendarService.access
-        switch calendarAccess {
-        case .authorized:
-            loadCalendarEvents()
-        case .notDetermined:
-            calendarService.requestAccess { granted in
-                calendarAccess = granted
-                if granted == .authorized { loadCalendarEvents() }
-            }
-        default:
-            break
+        if calendarAccess == .notDetermined {
+            calendarAccess = await requestCalendarAccess()
+        }
+        guard calendarAccess == .authorized else {
+            calendarDiagnostics = CalendarImportDiagnostics(access: "\(calendarAccess)")
+            return
+        }
+        await loadCalendarEvents()
+    }
+
+    /// `requestAccess` is completion-handler based (`Swift.Task` does not compile in this module, so the
+    /// service cannot expose an async form); bridge it here for the loading task.
+    private func requestCalendarAccess() async -> CalendarAccess {
+        await withCheckedContinuation { continuation in
+            calendarService.requestAccess { continuation.resume(returning: $0) }
         }
     }
 
-    private func loadCalendarEvents() {
-        // A few days either side so you can import an event from a nearby day (e.g. catching up the
-        // morning after, or a recurring event that only lands on certain weekdays). Proximity
-        // ordering keeps the closest to now at the top.
-        calendarEvents = calendarService.events(around: minutes.meetingAt, daysBefore: 3, daysAfter: 3)
+    private func loadCalendarEvents() async {
+        // A few days either side of the meeting's own date so you can import an event from a nearby day
+        // (catching up the morning after, or a recurring event that only lands on certain weekdays), plus
+        // today's window when the meeting sits outside it — otherwise reviewing an older day hides the
+        // event you are actually trying to log.
+        let windows = CalendarEventImport.importWindows(around: minutes.meetingAt, now: Date(),
+                                                        daysBefore: 3, daysAfter: 3)
+        // An empty result is ambiguous: it can mean "nothing in these days" or "the store has not finished
+        // loading its accounts yet", and EventKit reports no error for the second. So retry a few times,
+        // briefly, resetting + refreshing the store's sources on EVERY attempt (a retry that reuses the
+        // same cached snapshot is not a retry). A real empty window costs ~1s of waiting in the
+        // background; the alternative was a list that came up blank until you reopened the sheet.
+        isLoadingCalendar = true
+        defer { isLoadingCalendar = false }
+        for attempt in 0..<4 {
+            let events = calendarService.events(inWindows: windows, refreshingSources: true)
+            record(events: events, windows: windows, attempts: attempt + 1)
+            if !events.isEmpty {
+                calendarEvents = events
+                return
+            }
+            // Clear any list left over from a previous anchor on the first pass, so re-dating into an
+            // empty stretch of calendar doesn't keep showing the old day's events.
+            if attempt == 0 { calendarEvents = events }
+            // Sleeping throws on cancellation (the sheet closed, or the date changed and this task was
+            // replaced) — stop rather than burning through the remaining attempts.
+            do { try await ContinuousClock().sleep(for: .milliseconds(300)) } catch { return }
+        }
+    }
+
+    private func record(events: [CalendarEventDraft], windows: [(start: Date, end: Date)], attempts: Int) {
+        let diagnostics = CalendarImportDiagnostics(
+            access: "\(calendarAccess)",
+            windows: windows,
+            calendarsWithEvents: Set(events.map(\.calendarId)).count,
+            eventsFound: events.count,
+            attempts: attempts
+        )
+        calendarDiagnostics = diagnostics
+        // Logged as well as shown, so a failure can be read back after the fact.
+        CalendarImportLog.record(diagnostics.summary())
     }
 
     // Populate the meeting from a chosen event; unmatched attendee People are created immediately
