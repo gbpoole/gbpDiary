@@ -45,6 +45,21 @@ enum WorkspaceTab: Hashable, Identifiable {
             return x
         }
     }
+
+    /// Whether this tab's entity still exists. Identity only — never reads a stored property, which is
+    /// what traps on a model deleted out from under an open tab.
+    func isLive(in context: ModelContext) -> Bool {
+        switch self {
+        case .project(let id), .curation(let id): return context.isLive(id, as: Project.self)
+        case .person(let id):        return context.isLive(id, as: Person.self)
+        case .institution(let id):   return context.isLive(id, as: Institution.self)
+        case .minutes(let id):       return context.isLive(id, as: Minutes.self)
+        case .document(let id):      return context.isLive(id, as: Document.self)
+        case .contentNote(let id):   return context.isLive(id, as: Note.self)
+        case .task(let id):          return context.isLive(id, as: Task.self)
+        case .emailExplorer(let id): return context.isLive(id, as: EmailMessage.self)
+        }
+    }
 }
 
 // The fixed browse categories shown in the sidebar.
@@ -693,5 +708,16 @@ enum TaskViewMode: String, CaseIterable {
     /// Whether any open tab shows this model id (e.g. a meeting shown in a tab).
     func references(_ id: PersistentIdentifier) -> Bool {
         tabs.contains { $0.references(id) }
+    }
+
+    /// Closes any tab whose entity no longer exists. Self-healing: a delete anywhere in the app — including
+    /// the many sites that don't call `closeEntity` — can otherwise leave a tab pointing at a dead row, and
+    /// after the delete is SAVED nothing in memory marks that row as gone. Driven from `WorkspaceView` on
+    /// every context save, which is exactly when deletes commit.
+    @discardableResult
+    func pruneDeadTabs(using context: ModelContext) -> Int {
+        let dead = tabs.filter { !$0.tab.isLive(in: context) }
+        for tab in dead { closeTab(tab.id) }
+        return dead.count
     }
 }
