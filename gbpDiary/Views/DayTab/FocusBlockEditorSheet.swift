@@ -185,7 +185,9 @@ private struct FocusBlockTaskPickerRow: View {
     @Binding var selectedTask: Task?
     var dayDate: Date
 
-    @State private var projectFilter: Project?
+    // Ids of the project filters active inside the task picker. The picker owns the narrowing; this
+    // mirror exists only so "create new" can seed the new task's project from what you filtered to.
+    @State private var activeProjectFilterIds: Set<String> = []
     @State private var pickerOpen = false
     @State private var newTaskRequest: NewTaskRequest?
 
@@ -198,30 +200,43 @@ private struct FocusBlockTaskPickerRow: View {
 
     private var liveProjects: [Project] { allProjects.filter { !$0.isCompleted } }
 
-    private var filteredTasks: [Task] {
+    // A block is backed by a TASK and takes its project from that task, so there is no project field
+    // here to set — narrowing by project belongs inside the task picker, as filter chips. (The picker
+    // renders a group as a searchable dropdown, so this scales past the ~57 active projects that made
+    // a flat chip row unusable.)
+    private var projectFilters: [PickerFilter<Task>] {
+        liveProjects.map { project in
+            PickerFilter(id: FocusBlockTaskFiltering.projectFilterID(project.id), label: project.name,
+                         chipColor: AppTheme.project, group: "Project") {
+                $0.project?.id == project.id
+            }
+        }
+    }
+
+    // Only the active-status rule is applied here; the picker applies the project filter itself.
+    private var selectableTasks: [Task] {
         FocusBlockTaskFiltering.filter(
             allTasks,
             isActive: { $0.status == .todo || $0.status == .started },
             projectID: { $0.project?.id },
-            activeProjectIDs: projectFilter.map { [$0.id] } ?? []   // single-select → set of 0 or 1
+            activeProjectIDs: []
         )
+    }
+
+    /// The project to seed a newly created task with: the one being filtered to, when that is
+    /// unambiguous. Several active filters (or none) means there is nothing to infer, and
+    /// `requireProject` makes the editor ask.
+    private var presetProjectForNewTask: Project? {
+        let id = FocusBlockTaskFiltering.soleProjectID(activeFilterIDs: activeProjectFilterIds,
+                                                       among: liveProjects.map(\.id))
+        return id.flatMap { pid in liveProjects.first { $0.id == pid } }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            GroupBox("Project") {
-                FuzzyPickerField(
-                    allItems: liveProjects,
-                    selectedItem: $projectFilter,
-                    label: { $0.name },
-                    chipColor: AppTheme.project,
-                    tapArea: true,
-                    emptyLabel: "All projects — tap to filter"
-                )
-            }
             GroupBox("Task") {
                 FuzzyPickerField(
-                    allItems: filteredTasks,
+                    allItems: selectableTasks,
                     selectedItem: $selectedTask,
                     label: { $0.summary },
                     chipColor: AppTheme.completed,
@@ -233,7 +248,9 @@ private struct FocusBlockTaskPickerRow: View {
                     },
                     tapArea: true,
                     emptyLabel: "None — tap to select task",
-                    isPresented: $pickerOpen
+                    filters: projectFilters.isEmpty ? nil : projectFilters,
+                    isPresented: $pickerOpen,
+                    onActiveFiltersChange: { activeProjectFilterIds = $0 }
                 )
             }
         }
@@ -242,7 +259,7 @@ private struct FocusBlockTaskPickerRow: View {
                 task: nil,
                 defaultDate: dayDate,
                 onTaskCreated: { selectedTask = $0 },
-                presetProject: projectFilter,
+                presetProject: presetProjectForNewTask,
                 requireProject: true,
                 presetSummary: request.name.isEmpty ? nil : request.name
             )
