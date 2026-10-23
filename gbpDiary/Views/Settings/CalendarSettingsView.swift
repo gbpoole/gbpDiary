@@ -5,7 +5,7 @@ import SwiftUI
 // importing an event into a new meeting. None selected = all calendars shown. Persisted via
 // AppSettingsStore.defaultCalendarIDs.
 struct CalendarSettingsView: View {
-    @State private var service = CalendarService()
+    private let service = CalendarService.shared
     @State private var calendars: [CalendarInfo] = []
     @State private var selected: Set<String> = []
     @State private var access: CalendarAccess = .notDetermined

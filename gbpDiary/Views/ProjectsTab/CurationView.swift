@@ -56,7 +56,7 @@ struct CurationView: View {
         // The model can be deleted while this view is still mounted (its tab is closed, but
         // the view renders once more in the same pass; a sheet is not a tab at all). Reading a
         // deleted model's stored properties traps, so bail out before the content is built.
-        if root.isDeletedOrDetached {
+        if root.isMissing(in: modelContext) {
             DeletedEntityPlaceholder(noun: "project")
         } else {
             VStack(alignment: .leading, spacing: 0) {

@@ -22,6 +22,7 @@ struct LogTimeSheet: View {
     @State private var durationError = false
     @State private var comment = ""
     @State private var showingDeleteConfirm = false
+    @FocusState private var commentFocused: Bool
 
     private var isEditing: Bool { existingEntry != nil }
     private var effectiveTask: Task? { existingEntry?.task ?? presetTask ?? selectedTask }
@@ -103,6 +104,7 @@ struct LogTimeSheet: View {
                 selectedTask = presetTask
                 entryDate = currentTimeOn(presetDate)
             }
+            commentFocused = true
         }
         #if os(macOS)
         .frame(minWidth: 400, minHeight: 300)
@@ -177,10 +179,13 @@ struct LogTimeSheet: View {
         }
     }
 
+    // The note is what makes the Timesheet readable weeks later, so it leads the eye: a real bordered field
+    // (a `.plain` one read as static help text and stayed empty), focused on open.
     private var commentSection: some View {
-        GroupBox("Comment") {
-            TextField("Optional note", text: $comment)
-                .textFieldStyle(.plain)
+        GroupBox("What did you do?") {
+            TextField("e.g. rebuilt the manifest parser", text: $comment)
+                .textFieldStyle(.roundedBorder)
+                .focused($commentFocused)
         }
     }
 

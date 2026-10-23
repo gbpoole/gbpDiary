@@ -119,6 +119,12 @@ struct WorkspaceView: View {
             if phase != .active { workspace.save(using: modelContext) }
         }
         #if os(macOS)
+        // Self-healing tabs: a delete anywhere in the app can leave a tab pointing at a dead row, and once
+        // that delete is SAVED nothing in memory marks the row as gone — reading any of its fields then
+        // traps. Saving is exactly when deletes commit, so prune there.
+        .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { _ in
+            workspace.pruneDeadTabs(using: modelContext)
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.willTerminateNotification)) { _ in
             workspace.save(using: modelContext)
         }

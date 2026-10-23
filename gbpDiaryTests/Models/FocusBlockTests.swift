@@ -11,6 +11,16 @@ struct FocusBlockTests {
         #expect(FocusBlockMath.netHours(capacity: 2.0, loggedHours: 1.0) == 1.0)
     }
 
+    // The reported bug: a morning block backed by one task, with nothing logged inside it, rendered with no
+    // time at all — while the Timesheet credited its full 3.8h net to that task. A block's capacity is
+    // accounted time, so the row always states it.
+    @Test func focusBlockMath_timeChipLabel_alwaysStatesTheBlocksTime() {
+        #expect(FocusBlockMath.timeChipLabel(capacity: 3.8, loggedHours: 0) == "3.8h")
+        #expect(FocusBlockMath.timeChipLabel(capacity: 3.8, loggedHours: 0.5) == "3.3h of 3.8h")
+        #expect(FocusBlockMath.timeChipLabel(capacity: 3.8, loggedHours: 5) == "0h of 3.8h")   // over-logged
+        #expect(FocusBlockMath.timeChipLabel(capacity: 0, loggedHours: 0) == nil)              // evening container
+    }
+
     @Test func focusBlockMath_netHours_clampsToZero() {
         #expect(FocusBlockMath.netHours(capacity: 1.0, loggedHours: 2.0) == 0.0)
     }

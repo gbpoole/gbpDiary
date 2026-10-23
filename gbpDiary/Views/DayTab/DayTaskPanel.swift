@@ -296,7 +296,8 @@ private struct DayTaskPanelRow: View {
             Button("1.5 hours") { logTime(90) }
             Button("2 hours")   { logTime(120) }
             Divider()
-            Button("Custom…")   { showingLogTime = true }
+            // The noted route: an entry with a comment is what the Timesheet can actually describe.
+            Button("With a note…") { showingLogTime = true }
         } label: {
             Image(systemName: "plus.circle").font(.system(size: 13)).foregroundStyle(AppTheme.action)
         }

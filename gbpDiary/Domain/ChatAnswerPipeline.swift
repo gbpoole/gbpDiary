@@ -50,7 +50,7 @@ struct ChatAnswerPipeline {
              retrieve: (String, Int) async -> (chunks: [ChatRankedChunk], error: String?),
              timeLedger: (Range<Date>?) -> LedgerResult,
              activityProvider: (Range<Date>) -> ChatActivityDigest = { _ in ChatActivityDigest(items: []) },
-             projectActivity: (Range<Date>?) -> ProjectActivityReport = { ProjectActivityReport(sections: [], interval: $0) },
+             projectActivity: (Range<Date>?) -> TimesheetReport = { TimesheetReport(nodes: [], interval: $0) },
              answerer: any ChatAnswering,
              scopeResolver: any ChatScopeResolving = HeuristicScopeResolver()) async -> ChatPipelineResult {
         let question = input.question

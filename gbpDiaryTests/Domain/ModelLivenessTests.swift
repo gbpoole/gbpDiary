@@ -56,8 +56,12 @@ struct ModelLivenessTests {
         #expect(!m.isDeleted, "post-save SwiftData clears the flag")
         #expect(m.modelContext == nil)
         #expect(m.isDeletedOrDetached)
-        #expect(ctx.liveModel(id, as: Minutes.self) != nil,
-                "liveModel only scans pending deletions, so it stops reporting this one after the save")
+        // This assertion used to expect a non-nil result, documenting that `liveModel` only scanned
+        // pending deletions and so went blind once the save cleared them. That blindness is what let a
+        // stale tab chip and a mounted detail view read a deleted model and crash the app (SIGTRAP), so
+        // `liveModel` now validates identity against the rows that actually exist.
+        #expect(ctx.liveModel(id, as: Minutes.self) == nil,
+                "a deleted-and-saved model must not resolve, or its fields get read and trap")
     }
 
     /// `persistentModelID` stays readable on a tombstone — it is what delete paths match on.

@@ -43,139 +43,121 @@ struct TimesheetComputationTests {
         #expect(TimesheetComputation.hours(for: projectA, tasks: tasks) == 9.6)
     }
 
-    @Test func rangeInterval_today_startsAtDayBoundary() {
-        let now = FixedDates.atHour(10)
-        let interval = TimesheetComputation.rangeInterval(
-            selectedRange: .today,
-            customStart: now,
-            customEnd: now,
-            now: now
-        )
+    // Reporting periods are CLOSED and whole-day. The old rolling `now − 7d ..< now` both truncated the
+    // edge days (dropping a whole day of block capacity, whose date is start-of-day) and made an exported
+    // report cover "up to whenever I pressed the button".
 
-        let expectedEnd = Calendar.current.date(byAdding: .day, value: 1, to: Calendar.current.startOfDay(for: now))
-        #expect(interval.start == Calendar.current.startOfDay(for: now))
-        #expect(interval.end == expectedEnd)
+    private var gregorianUTC: Calendar {
+        var c = Calendar(identifier: .gregorian)
+        c.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
+        return c
     }
 
-    @Test func rangeInterval_yesterday_coversPreviousDayOnly() {
-        let now = FixedDates.atHour(10)
-        let interval = TimesheetComputation.rangeInterval(
-            selectedRange: .yesterday,
-            customStart: now,
-            customEnd: now,
-            now: now
-        )
-
-        let yesterday = Calendar.current.date(byAdding: .day, value: -1, to: now) ?? now
-        let expectedStart = Calendar.current.startOfDay(for: yesterday)
-        let expectedEnd = Calendar.current.date(byAdding: .day, value: 1, to: expectedStart) ?? expectedStart
-        #expect(interval.start == expectedStart)
-        #expect(interval.end == expectedEnd)
+    @Test func rangeInterval_thisWeek_isMondayToFridayWholeDays() {
+        let cal = gregorianUTC
+        let wednesday = cal.date(from: DateComponents(year: 2026, month: 1, day: 7, hour: 14))!
+        let interval = TimesheetComputation.rangeInterval(selectedRange: .thisWeek, customStart: wednesday,
+                                                         customEnd: wednesday, now: wednesday, calendar: cal)
+        #expect(interval.start == cal.date(from: DateComponents(year: 2026, month: 1, day: 5))!)   // Mon
+        #expect(interval.end == cal.date(from: DateComponents(year: 2026, month: 1, day: 10))!)    // Sat 00:00
     }
 
-    @Test func rangeInterval_custom_usesProvidedBounds() {
-        let start = FixedDates.reference.addingTimeInterval(-7200)
-        let end = FixedDates.reference.addingTimeInterval(1800)
-        let interval = TimesheetComputation.rangeInterval(
-            selectedRange: .custom,
-            customStart: start,
-            customEnd: end,
-            now: FixedDates.reference
-        )
-
-        #expect(interval.start == start)
-        #expect(interval.end == end)
+    // Parked on the weekend, "This Week" is the week just worked — weekend work folds back into Friday.
+    @Test func rangeInterval_thisWeek_onASaturday_isTheWeekJustWorked() {
+        let cal = gregorianUTC
+        let saturday = cal.date(from: DateComponents(year: 2026, month: 1, day: 10, hour: 11))!
+        let interval = TimesheetComputation.rangeInterval(selectedRange: .thisWeek, customStart: saturday,
+                                                         customEnd: saturday, now: saturday, calendar: cal)
+        #expect(interval.start == cal.date(from: DateComponents(year: 2026, month: 1, day: 5))!)   // Mon
+        #expect(interval.end == cal.date(from: DateComponents(year: 2026, month: 1, day: 10))!)    // Sat 00:00
     }
 
-    @Test func rangeInterval_pastWeek_spansSevenDaysToNow() {
-        let now = FixedDates.atHour(10)
-        let interval = TimesheetComputation.rangeInterval(
-            selectedRange: .pastWeek,
-            customStart: now,
-            customEnd: now,
-            now: now
-        )
-
-        #expect(interval.end == now)
-        #expect(interval.start == Calendar.current.date(byAdding: .day, value: -7, to: now))
+    @Test func rangeInterval_lastWeek_isThePrecedingMonToFri() {
+        let cal = gregorianUTC
+        let wednesday = cal.date(from: DateComponents(year: 2026, month: 1, day: 7, hour: 14))!
+        let interval = TimesheetComputation.rangeInterval(selectedRange: .lastWeek, customStart: wednesday,
+                                                         customEnd: wednesday, now: wednesday, calendar: cal)
+        #expect(interval.start == cal.date(from: DateComponents(year: 2025, month: 12, day: 29))!)
+        #expect(interval.end == cal.date(from: DateComponents(year: 2026, month: 1, day: 3))!)
     }
 
-    @Test func rangeInterval_currentMonth_startsAtMonthBoundary() {
-        var comps = DateComponents()
-        comps.year = 2026
-        comps.month = 3
-        comps.day = 17
-        comps.hour = 10
-        let now = Calendar.current.date(from: comps) ?? FixedDates.reference
-
-        let interval = TimesheetComputation.rangeInterval(
-            selectedRange: .currentMonth,
-            customStart: now,
-            customEnd: now,
-            now: now
-        )
-
-        let expectedStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: now))
-        #expect(interval.start == expectedStart)
-        #expect(interval.end == now)
+    @Test func rangeInterval_last7Days_isSevenWholeDaysEndingToday() {
+        let cal = gregorianUTC
+        let now = cal.date(from: DateComponents(year: 2026, month: 1, day: 7, hour: 14))!
+        let interval = TimesheetComputation.rangeInterval(selectedRange: .last7Days, customStart: now,
+                                                         customEnd: now, now: now, calendar: cal)
+        #expect(interval.start == cal.date(from: DateComponents(year: 2026, month: 1, day: 1))!)
+        #expect(interval.end == cal.date(from: DateComponents(year: 2026, month: 1, day: 8))!)
+        #expect(interval.duration == 7 * 24 * 60 * 60)
     }
 
-    @Test func rangeInterval_currentYear_startsAtYearBoundary() {
-        var comps = DateComponents()
-        comps.year = 2026
-        comps.month = 9
-        comps.day = 4
-        comps.hour = 10
-        let now = Calendar.current.date(from: comps) ?? FixedDates.reference
-
-        let interval = TimesheetComputation.rangeInterval(
-            selectedRange: .currentYear,
-            customStart: now,
-            customEnd: now,
-            now: now
-        )
-
-        let expectedStart = Calendar.current.date(from: Calendar.current.dateComponents([.year], from: now))
-        #expect(interval.start == expectedStart)
-        #expect(interval.end == now)
+    @Test func rangeInterval_thisMonth_startsAtTheMonthAndEndsAtEndOfToday() {
+        let cal = gregorianUTC
+        let now = cal.date(from: DateComponents(year: 2026, month: 3, day: 17, hour: 10))!
+        let interval = TimesheetComputation.rangeInterval(selectedRange: .thisMonth, customStart: now,
+                                                         customEnd: now, now: now, calendar: cal)
+        #expect(interval.start == cal.date(from: DateComponents(year: 2026, month: 3, day: 1))!)
+        #expect(interval.end == cal.date(from: DateComponents(year: 2026, month: 3, day: 18))!)   // not `now`
     }
 
-    @Test func rangeInterval_pastWeek_crossesYearBoundary() {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = TimeZone(secondsFromGMT: 0) ?? .current
-
-        let now = calendar.date(from: DateComponents(year: 2026, month: 1, day: 2, hour: 10)) ?? FixedDates.reference
-        let interval = TimesheetComputation.rangeInterval(
-            selectedRange: .pastWeek,
-            customStart: now,
-            customEnd: now,
-            now: now,
-            calendar: calendar
-        )
-
-        let expectedStart = calendar.date(byAdding: .day, value: -7, to: now)
-        #expect(interval.start == expectedStart)
-        #expect(interval.end == now)
+    @Test func rangeInterval_lastMonth_isTheWholePreviousMonth() {
+        let cal = gregorianUTC
+        let now = cal.date(from: DateComponents(year: 2026, month: 3, day: 17, hour: 10))!
+        let interval = TimesheetComputation.rangeInterval(selectedRange: .lastMonth, customStart: now,
+                                                         customEnd: now, now: now, calendar: cal)
+        #expect(interval.start == cal.date(from: DateComponents(year: 2026, month: 2, day: 1))!)
+        #expect(interval.end == cal.date(from: DateComponents(year: 2026, month: 3, day: 1))!)
     }
 
-    @Test func rangeInterval_today_usesCalendarAwareDayLengthAcrossDST() {
+    @Test func rangeInterval_thisYear_startsAtTheYearAndEndsAtEndOfToday() {
+        let cal = gregorianUTC
+        let now = cal.date(from: DateComponents(year: 2026, month: 9, day: 4, hour: 10))!
+        let interval = TimesheetComputation.rangeInterval(selectedRange: .thisYear, customStart: now,
+                                                         customEnd: now, now: now, calendar: cal)
+        #expect(interval.start == cal.date(from: DateComponents(year: 2026, month: 1, day: 1))!)
+        #expect(interval.end == cal.date(from: DateComponents(year: 2026, month: 9, day: 5))!)
+    }
+
+    // The pickers choose DAYS: the chosen end day is included in full, whatever o'clock the picker holds.
+    @Test func rangeInterval_custom_includesBothWholeDays() {
+        let cal = gregorianUTC
+        let from = cal.date(from: DateComponents(year: 2026, month: 1, day: 5, hour: 16))!
+        let to = cal.date(from: DateComponents(year: 2026, month: 1, day: 9, hour: 9))!
+        let interval = TimesheetComputation.rangeInterval(selectedRange: .custom, customStart: from,
+                                                         customEnd: to, now: to, calendar: cal)
+        #expect(interval.start == cal.date(from: DateComponents(year: 2026, month: 1, day: 5))!)
+        #expect(interval.end == cal.date(from: DateComponents(year: 2026, month: 1, day: 10))!)
+    }
+
+    @Test func rangeInterval_custom_toleratesReversedPickers() {
+        let cal = gregorianUTC
+        let from = cal.date(from: DateComponents(year: 2026, month: 1, day: 9))!
+        let to = cal.date(from: DateComponents(year: 2026, month: 1, day: 5))!
+        let interval = TimesheetComputation.rangeInterval(selectedRange: .custom, customStart: from,
+                                                         customEnd: to, now: from, calendar: cal)
+        #expect(interval.start == cal.date(from: DateComponents(year: 2026, month: 1, day: 5))!)
+        #expect(interval.end == cal.date(from: DateComponents(year: 2026, month: 1, day: 10))!)
+    }
+
+    @Test func rangeInterval_usesCalendarAwareDayLengthAcrossDST() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "America/New_York") ?? .current
+        // 8 Mar 2026 springs forward: that day is 23h long.
+        let springForward = calendar.date(from: DateComponents(year: 2026, month: 3, day: 8, hour: 12))!
+        let interval = TimesheetComputation.rangeInterval(selectedRange: .last7Days, customStart: springForward,
+                                                         customEnd: springForward, now: springForward,
+                                                         calendar: calendar)
+        #expect(interval.start == calendar.date(from: DateComponents(year: 2026, month: 3, day: 2))!)
+        #expect(interval.end == calendar.date(from: DateComponents(year: 2026, month: 3, day: 9))!)
+        #expect(interval.duration == (7 * 24 - 1) * 60 * 60)   // one hour lost to the DST shift
+    }
 
-        let springForwardDay = calendar.date(from: DateComponents(year: 2026, month: 3, day: 8, hour: 12)) ?? FixedDates.reference
-        let interval = TimesheetComputation.rangeInterval(
-            selectedRange: .today,
-            customStart: springForwardDay,
-            customEnd: springForwardDay,
-            now: springForwardDay,
-            calendar: calendar
-        )
-
-        let expectedStart = calendar.startOfDay(for: springForwardDay)
-        let expectedEnd = calendar.date(byAdding: .day, value: 1, to: expectedStart)
-        #expect(interval.start == expectedStart)
-        #expect(interval.end == expectedEnd)
-        #expect(interval.duration == 23 * 60 * 60)
+    @Test func workWeek_ofAMondayIsThatWeek() {
+        let cal = gregorianUTC
+        let monday = cal.date(from: DateComponents(year: 2026, month: 1, day: 5, hour: 9))!
+        let interval = TimesheetComputation.workWeek(containing: monday, calendar: cal)
+        #expect(interval.start == cal.startOfDay(for: monday))
+        #expect(interval.end == cal.date(from: DateComponents(year: 2026, month: 1, day: 10))!)
     }
 
     @Test func tasksInRange_excludesTaskBeforeIntervalStartBoundary() {

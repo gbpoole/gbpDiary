@@ -130,6 +130,36 @@ struct WorkspaceModelTests {
         #expect(ws.selectedCategory == .tasks)
     }
 
+    // MARK: - Dead-tab pruning
+    //
+    // Deleting an entity leaves its tab behind; after the save that commits the delete, every in-memory
+    // signal says the model is alive while reading a field traps. The prune runs on didSave so the tab
+    // goes without waiting to be clicked.
+
+    @Test func pruneDeadTabs_closesTabsWhoseEntityIsGone() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        ws.openInNewTab(f.b)
+
+        f.ctx.delete(f.projectB)
+        try f.ctx.save()
+
+        #expect(ws.pruneDeadTabs(using: f.ctx) == 1)
+        #expect(ws.tabs.map(\.tab) == [f.a])
+        #expect(ws.activeTab?.tab == f.a, "the surviving tab takes over from the one that was removed")
+    }
+
+    @Test func pruneDeadTabs_leavesLiveTabsAlone() throws {
+        let f = try Fixture()
+        let ws = WorkspaceModel()
+        ws.openInNewTab(f.a)
+        ws.openInNewTab(f.t)
+
+        #expect(ws.pruneDeadTabs(using: f.ctx) == 0)
+        #expect(ws.tabs.count == 2)
+    }
+
     @Test func moveTab_reordersAndPreservesActive() throws {
         let f = try Fixture()
         let ws = WorkspaceModel()

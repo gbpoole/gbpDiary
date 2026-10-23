@@ -45,4 +45,18 @@ enum FocusBlockMath {
     static func netHours(capacity: Double, loggedHours: Double) -> Double {
         max(0, capacity - loggedHours)
     }
+
+    /// What a block's time chip should read. A block's capacity is time accounted for — the Timesheet
+    /// credits its net to the backing task — so the row ALWAYS states it. Only once something is logged
+    /// inside does "remaining of capacity" become the interesting figure.
+    ///
+    /// Previously the chip was suppressed entirely whenever nothing was logged inside, which hid the time
+    /// on exactly the blocks where the whole capacity IS the work: a full morning on one task read as a
+    /// row with no number at all.
+    static func timeChipLabel(capacity: Double, loggedHours: Double) -> String? {
+        guard capacity > 0 else { return nil }
+        guard loggedHours > 0 else { return TimeFormat.hours(capacity) }
+        let net = netHours(capacity: capacity, loggedHours: loggedHours)
+        return "\(TimeFormat.hours(net)) of \(TimeFormat.hours(capacity))"
+    }
 }

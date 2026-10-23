@@ -73,6 +73,10 @@ struct FuzzyPickerField<Item: Identifiable>: View {
     /// Optional view injected at the top of the filter area, above any filter chips.
     /// Use this to show a context row (e.g. a current project filter with a link to change it).
     var filterLeadContent: AnyView? = nil
+    /// Reports the active filter ids whenever they change, so a caller can react to what the user
+    /// narrowed to — e.g. the focus-block task picker seeds a new task's project from the project
+    /// filter in force. Observation only; the picker still owns the filtering.
+    var onActiveFiltersChange: ((Set<String>) -> Void)? = nil
     /// When true, the tap-area button steals keyboard focus on appear so the user
     /// can press Return to open the picker without clicking first.
     var autoFocus: Bool = false
@@ -183,6 +187,7 @@ struct FuzzyPickerField<Item: Identifiable>: View {
             defaultFilterId: defaultFilterId,
             defaultActiveFilterIds: defaultActiveFilterIds,
             filterLeadContent: filterLeadContent,
+            onActiveFiltersChange: onActiveFiltersChange,
             dismiss: { popoverIsOpen.wrappedValue = false }
         )
         .frame(width: 340)
@@ -206,6 +211,7 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
     var defaultFilterId: String? = nil
     var defaultActiveFilterIds: Set<String> = []
     var filterLeadContent: AnyView? = nil
+    var onActiveFiltersChange: ((Set<String>) -> Void)? = nil
     var dismiss: () -> Void
 
     @State private var searchText = ""
@@ -402,6 +408,7 @@ private struct PickerPopoverContent<Item: Identifiable>: View {
         }
         // Keep localSelected in sync if chips are removed from the form while open.
         .onChange(of: selected.count) { _, _ in localSelected = selected }
+        .onChange(of: activeFilterIds) { _, ids in onActiveFiltersChange?(ids) }
         .onChange(of: searchText) { _, _ in highlightedIndex = nil }
     }
 
@@ -530,6 +537,7 @@ extension FuzzyPickerField {
         defaultActiveFilterIds: Set<String> = [],
         isPresented: Binding<Bool>? = nil,
         filterLeadContent: AnyView? = nil,
+        onActiveFiltersChange: ((Set<String>) -> Void)? = nil,
         autoFocus: Bool = false
     ) {
         self.allItems = allItems
@@ -548,6 +556,7 @@ extension FuzzyPickerField {
         self.defaultActiveFilterIds = defaultActiveFilterIds
         self.isPresented = isPresented
         self.filterLeadContent = filterLeadContent
+        self.onActiveFiltersChange = onActiveFiltersChange
         self.autoFocus = autoFocus
         self._selected = Binding(
             get: { selectedItem.wrappedValue.map { [$0] } ?? [] },

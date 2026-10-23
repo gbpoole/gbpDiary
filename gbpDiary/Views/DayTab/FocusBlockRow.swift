@@ -8,7 +8,7 @@ struct FocusBlockRow: View {
     var date: Date
     // Entries whose time falls in this block's range (derived by ActivitySection, not stored).
     var entries: [TaskTimeEntry] = []
-    var meetings: [DayEntry] = []
+    var meetings: [Minutes] = []
     // The block's email/conversation-linked logged time (hours) — not rendered here (emails live in the
     // Email section); used only so it reduces this block's net remaining, consistent with the canonical
     // TimeLedger.
@@ -18,15 +18,17 @@ struct FocusBlockRow: View {
         entries.sorted { $0.date < $1.date }
     }
 
-    private var netHours: Double {
+    /// Hours logged INSIDE this block (task entries + the in-slot portion of its meetings + email time).
+    private var loggedInsideHours: Double {
         let taskHours = entries.reduce(0.0) { $0 + $1.duration.hoursNormalized }
         // A meeting counts only for the portion that falls inside this block's slot (so a meeting spanning the
         // 12:30 boundary isn't double-counted at full duration in both morning and afternoon).
-        let meetingHours = meetings.compactMap(\.minutes).reduce(0.0) { sum, m in
-            slotHours(for: m) + sum
-        }
-        return FocusBlockMath.netHours(capacity: block.duration.hoursNormalized,
-                                       loggedHours: taskHours + meetingHours + emailHours)
+        let meetingHours = meetings.reduce(0.0) { sum, m in slotHours(for: m) + sum }
+        return taskHours + meetingHours + emailHours
+    }
+
+    private var netHours: Double {
+        FocusBlockMath.netHours(capacity: block.duration.hoursNormalized, loggedHours: loggedInsideHours)
     }
 
     private func slotHours(for m: Minutes) -> Double {
@@ -118,9 +120,11 @@ struct FocusBlockRow: View {
     private var durationChips: some View {
         HStack(spacing: 4) {
             Chip(label: block.slot.displayName, color: AppTheme.project)
-            if netHours > 0 && (!blockActivities.isEmpty || !meetings.isEmpty || emailHours > 0) {
-                let netDur = Duration(value: netHours, unit: .h)
-                Chip(label: netDur.displayString, color: AppTheme.duration)
+            // Always state the block's time: its capacity is hours the Timesheet credits to the backing
+            // task, so a block with nothing logged inside must not render as a row with no number.
+            if let label = FocusBlockMath.timeChipLabel(capacity: block.duration.hoursNormalized,
+                                                        loggedHours: loggedInsideHours) {
+                Chip(label: label, color: AppTheme.duration)
             }
         }
     }
@@ -128,7 +132,7 @@ struct FocusBlockRow: View {
     // A block's meetings and time entries interleaved in chronological order. (Sent emails are
     // collected into one collapsible group rendered after these — see activityRows.)
     private enum BlockItem: Identifiable {
-        case meeting(DayEntry)
+        case meeting(Minutes)
         case entry(TaskTimeEntry)
         var id: String {
             switch self {
@@ -140,7 +144,7 @@ struct FocusBlockRow: View {
 
     private var orderedBlockItems: [BlockItem] {
         var items: [(Date, BlockItem)] = []
-        for meeting in meetings { items.append((meeting.minutes?.meetingAt ?? .distantPast, .meeting(meeting))) }
+        for meeting in meetings { items.append((meeting.meetingAt, .meeting(meeting))) }
         for entry in entries { items.append((entry.date, .entry(entry))) }
         return items.sorted { $0.0 < $1.0 }.map(\.1)
     }
@@ -149,10 +153,8 @@ struct FocusBlockRow: View {
     private var activityRows: some View {
         ForEach(orderedBlockItems) { item in
             switch item {
-            case .meeting(let entry):
-                if let minutes = entry.minutes {
-                    MeetingActivityRow(minutes: minutes, displayHours: slotHours(for: minutes))
-                }
+            case .meeting(let minutes):
+                MeetingActivityRow(minutes: minutes, displayHours: slotHours(for: minutes))
             case .entry(let entry):
                 ActivityEntryRow(entry: entry)
             }

@@ -133,12 +133,12 @@ struct MinutesListView: View {
                     .contextMenu { editMenuItem(minutes) }
             }
             .width(min: 160, ideal: 260)
+            // Inline-editable: the project(s) are clickable pills (a Menu, not a tap gesture — see
+            // MinutesProjectCell). Sorting still goes through `projectsKey`.
             TableColumn("Projects", value: \.projectsKey) { minutes in
-                Text(minutes.projects.map(\.name).joined(separator: ", "))
-                    .foregroundStyle(AppTheme.project)
-                    .lineLimit(1)
+                MinutesProjectCell(minutes: minutes, allProjects: allProjects)
             }
-            .width(min: 120, ideal: 160)
+            .width(min: 140, ideal: 200)
             TableColumn("Attendees", value: \.attendeeCount) { minutes in
                 Text("\(minutes.attendeeCount)")
                     .foregroundStyle(AppTheme.mutedText)

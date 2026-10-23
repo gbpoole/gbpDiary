@@ -16,14 +16,16 @@ enum TimeLedgerProjection {
         let ctx = Context(focusBlocks: focusBlocks, calendar: calendar)
         var activities: [LedgerActivity] = []
         for task in tasks {
-            let names = [task.project?.name].compactMap { $0 }
+            let names = ledgerProjects(task.project)
             if task.timeEntries.isEmpty {
                 if let c = task.completedAt, let d = task.duration {
-                    activities.append(ctx.legacyTask(id: task.id.uuidString, completedAt: c, hours: d.hoursNormalized, projects: names))
+                    activities.append(ctx.legacyTask(id: task.id.uuidString, completedAt: c, hours: d.hoursNormalized, projects: names,
+                                                     origin: LedgerOrigin(kind: .legacyTask, modelID: task.id, ownerID: task.id)))
                 }
             } else {
                 for e in task.timeEntries where e.email == nil && e.conversation == nil {
-                    activities.append(ctx.entry(id: e.id.uuidString, date: e.date, hours: e.duration.hoursNormalized, projects: names))
+                    activities.append(ctx.entry(id: e.id.uuidString, date: e.date, hours: e.duration.hoursNormalized, projects: names,
+                                                origin: LedgerOrigin(kind: .taskEntry, modelID: e.id, ownerID: task.id)))
                 }
             }
         }
@@ -58,16 +60,20 @@ enum TimeLedgerProjection {
         // The day's time entries are already day-filtered by the caller; attribute each to its owner's
         // project — a conversation (conversation-owned email time), else a legacy email, else its task.
         for e in taskEntries {
-            let names: [String]
-            if let convo = e.conversation { names = convo.projects.map(\.name) }
-            else if let email = e.email { names = email.projects.map(\.name) }
-            else { names = [e.task?.project?.name].compactMap { $0 } }
-            activities.append(ctx.entry(id: e.id.uuidString, date: e.date, hours: e.duration.hoursNormalized, projects: names))
+            let names: [LedgerProject]
+            if let convo = e.conversation { names = ledgerProjects(convo.projects) }
+            else if let email = e.email { names = ledgerProjects(email.projects) }
+            else { names = ledgerProjects(e.task?.project) }
+            activities.append(ctx.entry(id: e.id.uuidString, date: e.date, hours: e.duration.hoursNormalized, projects: names,
+                                       origin: LedgerOrigin(kind: e.conversation != nil ? .conversationEntry : .taskEntry,
+                                                            modelID: e.id,
+                                                            ownerID: e.conversation?.id ?? e.task?.id)))
         }
         for task in completedTasks where task.timeEntries.isEmpty {
             if let c = task.completedAt, let d = task.duration {
                 activities.append(ctx.legacyTask(id: task.id.uuidString, completedAt: c, hours: d.hoursNormalized,
-                                                 projects: [task.project?.name].compactMap { $0 }))
+                                                 projects: ledgerProjects(task.project),
+                                                 origin: LedgerOrigin(kind: .legacyTask, modelID: task.id, ownerID: task.id)))
             }
         }
         activities += meetingActivities(meetings, ctx)
@@ -83,12 +89,24 @@ enum TimeLedgerProjection {
 
     // MARK: Shared
 
+    /// A project's ledger identity: keyed on its stable `id`, carrying the name for display.
+    static func ledgerProject(_ project: Project?) -> LedgerProject? {
+        project.map { LedgerProject(key: $0.id.uuidString, name: $0.name) }
+    }
+    private static func ledgerProjects(_ project: Project?) -> [LedgerProject] {
+        [ledgerProject(project)].compactMap { $0 }
+    }
+    private static func ledgerProjects(_ projects: [Project]) -> [LedgerProject] {
+        projects.compactMap { ledgerProject($0) }
+    }
+
     // A conversation OWNS its logged time, attributed to the conversation's project(s) at each entry's date.
     private static func conversationActivities(_ conversations: [EmailConversation], _ ctx: Context) -> [LedgerActivity] {
         conversations.flatMap { convo -> [LedgerActivity] in
-            let names = convo.projects.map(\.name)
+            let names = ledgerProjects(convo.projects)
             return convo.timeEntries.map {
-                ctx.entry(id: $0.id.uuidString, date: $0.date, hours: $0.duration.hoursNormalized, projects: names)
+                ctx.entry(id: $0.id.uuidString, date: $0.date, hours: $0.duration.hoursNormalized, projects: names,
+                          origin: LedgerOrigin(kind: .conversationEntry, modelID: $0.id, ownerID: convo.id))
             }
         }
     }
@@ -97,7 +115,8 @@ enum TimeLedgerProjection {
         meetings.flatMap { m -> [LedgerActivity] in
             guard let hours = m.duration?.hoursNormalized, hours > 0 else { return [] }
             return ctx.meetingSplit(id: m.id.uuidString, start: m.meetingAt, hours: hours,
-                                    projects: m.projects.map(\.name))
+                                    projects: ledgerProjects(m.projects),
+                                    origin: LedgerOrigin(kind: .meeting, modelID: m.id, ownerID: m.id))
         }
     }
 
@@ -116,7 +135,7 @@ enum TimeLedgerProjection {
                 byDay[calendar.startOfDay(for: d), default: []].append(fb)
                 ledgerBlocks.append(LedgerBlock(id: fb.id, date: WeekendPolicy.workWeekday(for: d, calendar: calendar),
                                                 capacityHours: fb.duration.hoursNormalized,
-                                                projectName: fb.project?.name ?? fb.task?.project?.name,
+                                                project: TimeLedgerProjection.ledgerProject(fb.project ?? fb.task?.project),
                                                 isOvertime: fb.isOvertime))
             }
             blocks = ledgerBlocks
@@ -130,29 +149,33 @@ enum TimeLedgerProjection {
         private func fold(_ date: Date) -> Date { WeekendPolicy.workWeekday(for: date, calendar: calendar) }
         private func isWeekend(_ date: Date) -> Bool { WeekendPolicy.isWeekend(date, calendar: calendar) }
 
-        func entry(id: String, date: Date, hours: Double, projects: [String]) -> LedgerActivity {
+        func entry(id: String, date: Date, hours: Double, projects: [LedgerProject],
+                   origin: LedgerOrigin? = nil) -> LedgerActivity {
             let weekend = isWeekend(date)
             let block = weekend ? nil : containing(date)
-            return LedgerActivity(sourceKey: id, date: fold(date), hours: hours, projectNames: projects,
-                                  blockID: block?.id, isOvertime: weekend || (block?.isOvertime ?? false))
+            return LedgerActivity(sourceKey: id, date: fold(date), hours: hours, projects: projects,
+                                  blockID: block?.id, isOvertime: weekend || (block?.isOvertime ?? false),
+                                  origin: origin)
         }
-        func legacyTask(id: String, completedAt: Date, hours: Double, projects: [String]) -> LedgerActivity {
-            LedgerActivity(sourceKey: id, date: fold(completedAt), hours: hours, projectNames: projects,
-                           blockID: nil, isOvertime: isWeekend(completedAt))
+        func legacyTask(id: String, completedAt: Date, hours: Double, projects: [LedgerProject],
+                        origin: LedgerOrigin? = nil) -> LedgerActivity {
+            LedgerActivity(sourceKey: id, date: fold(completedAt), hours: hours, projects: projects,
+                           blockID: nil, isOvertime: isWeekend(completedAt), origin: origin)
         }
         // A weekday meeting is split across the day's standard blocks by the portion in each slot (so a meeting
         // spanning 12:30 reduces each block's net by only its part — not double-counted at full duration in both);
         // any part covered by no block is a standalone-standard remainder. A weekend meeting is overtime, whole.
-        func meetingSplit(id: String, start: Date, hours: Double, projects: [String]) -> [LedgerActivity] {
+        func meetingSplit(id: String, start: Date, hours: Double, projects: [LedgerProject],
+                          origin: LedgerOrigin? = nil) -> [LedgerActivity] {
             let folded = fold(start)
             if isWeekend(start) {
-                return [LedgerActivity(sourceKey: id, date: folded, hours: hours, projectNames: projects,
-                                       blockID: nil, isOvertime: true)]
+                return [LedgerActivity(sourceKey: id, date: folded, hours: hours, projects: projects,
+                                       blockID: nil, isOvertime: true, origin: origin)]
             }
             let dayBlocks = (blocksByDay[calendar.startOfDay(for: start)] ?? []).filter { !$0.isOvertime }
             guard !dayBlocks.isEmpty else {
-                return [LedgerActivity(sourceKey: id, date: folded, hours: hours, projectNames: projects,
-                                       blockID: nil, isOvertime: false)]
+                return [LedgerActivity(sourceKey: id, date: folded, hours: hours, projects: projects,
+                                       blockID: nil, isOvertime: false, origin: origin)]
             }
             var activities: [LedgerActivity] = []
             var covered = 0.0
@@ -162,17 +185,17 @@ enum TimeLedgerProjection {
                 guard overlap > 0 else { continue }
                 covered += overlap
                 activities.append(LedgerActivity(sourceKey: "\(id)#\(fb.id.uuidString)", date: folded,
-                                                 hours: overlap, projectNames: projects,
-                                                 blockID: fb.id, isOvertime: false))
+                                                 hours: overlap, projects: projects,
+                                                 blockID: fb.id, isOvertime: false, origin: origin))
             }
             let remainder = hours - covered
             if remainder > 0.0001 {
                 activities.append(LedgerActivity(sourceKey: "\(id)#rest", date: folded, hours: remainder,
-                                                 projectNames: projects, blockID: nil, isOvertime: false))
+                                                 projects: projects, blockID: nil, isOvertime: false, origin: origin))
             }
             return activities.isEmpty
-                ? [LedgerActivity(sourceKey: id, date: folded, hours: hours, projectNames: projects,
-                                  blockID: nil, isOvertime: false)]
+                ? [LedgerActivity(sourceKey: id, date: folded, hours: hours, projects: projects,
+                                  blockID: nil, isOvertime: false, origin: origin)]
                 : activities
         }
     }

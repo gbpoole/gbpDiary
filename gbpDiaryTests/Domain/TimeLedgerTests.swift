@@ -8,10 +8,12 @@ struct TimeLedgerTests {
     private func day(_ d: Int) -> Date { cal.date(from: DateComponents(year: 2024, month: 1, day: d, hour: 10))! }
 
     private func block(_ id: UUID, _ date: Date, _ cap: Double, _ project: String?, overtime: Bool = false) -> LedgerBlock {
-        LedgerBlock(id: id, date: date, capacityHours: cap, projectName: project, isOvertime: overtime)
+        LedgerBlock(id: id, date: date, capacityHours: cap, project: project.map { LedgerProject(name: $0) },
+                    isOvertime: overtime)
     }
     private func act(_ key: String, _ date: Date, _ hours: Double, _ projects: [String], block: UUID? = nil, overtime: Bool = false) -> LedgerActivity {
-        LedgerActivity(sourceKey: key, date: date, hours: hours, projectNames: projects, blockID: block, isOvertime: overtime)
+        LedgerActivity(sourceKey: key, date: date, hours: hours, projects: projects.map { LedgerProject(name: $0) },
+                       blockID: block, isOvertime: overtime)
     }
     private func hours(_ r: LedgerResult, _ name: String) -> Double? { r.perProject.first { $0.name == name }?.hours }
 

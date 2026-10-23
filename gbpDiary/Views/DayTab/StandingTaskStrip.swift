@@ -15,6 +15,7 @@ struct StandingTaskStrip: View {
     @Query(sort: \Person.name) private var allPeople: [Person]
 
     @State private var isExpanded = true
+    @State private var noteTask: Task?
 
     private var me: Person? {
         AppSettingsStore.myPersonID.flatMap { id in allPeople.first { $0.id == id } }
@@ -67,6 +68,9 @@ struct StandingTaskStrip: View {
                 }
             }
             .background(AppTheme.cardRaised.opacity(0.25))
+            .sheet(item: $noteTask) { task in
+                LogTimeSheet(presetTask: task, presetDate: date)
+            }
         }
     }
 
@@ -92,6 +96,15 @@ struct StandingTaskStrip: View {
                     .background(AppTheme.chipBackground(AppTheme.duration), in: Capsule())
                     .foregroundStyle(AppTheme.duration)
             }
+            // The one-click chips log undescribed time; this is the route that leaves a note behind, which is
+            // all the Timesheet has to describe standing work with.
+            Button { noteTask = task } label: {
+                Image(systemName: "ellipsis").font(AppTheme.bodyFont(size: 10))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 5).padding(.vertical, 2)
+            .background(AppTheme.chipBackground(AppTheme.duration), in: Capsule())
+            .foregroundStyle(AppTheme.duration)
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { workspace.focusOrOpen(.task(task.persistentModelID)) }
